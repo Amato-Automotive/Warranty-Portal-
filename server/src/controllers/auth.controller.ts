@@ -39,7 +39,9 @@ const getRoleBasedCookieMaxAge = (role?: string): number => {
   const roleDefaults: Record<string, number> = {
     admin: 7 * 24 * 60 * 60 * 1000,
     customer: 7 * 24 * 60 * 60 * 1000,
-    vendor: 30 * 24 * 60 * 60 * 1000
+    vendor: 30 * 24 * 60 * 60 * 1000,
+    // In the field on their phones, like franchises.
+    asm: 30 * 24 * 60 * 60 * 1000
   };
 
   const envOverride =
@@ -49,7 +51,9 @@ const getRoleBasedCookieMaxAge = (role?: string): number => {
         ? process.env.AUTH_COOKIE_MAX_AGE_VENDOR_MS
         : role === 'customer'
           ? process.env.AUTH_COOKIE_MAX_AGE_CUSTOMER_MS
-          : process.env.AUTH_COOKIE_MAX_AGE_MS;
+          : role === 'asm'
+            ? process.env.AUTH_COOKIE_MAX_AGE_ASM_MS
+            : process.env.AUTH_COOKIE_MAX_AGE_MS;
 
   const parsed = Number(envOverride);
   if (Number.isFinite(parsed) && parsed > 0) {
@@ -303,6 +307,29 @@ export class AuthController {
       }
 
       const userRole = roles[0].role;
+
+      // The ASM login is a page we hand out, not one the main login links to,
+      // so the main login must not point anyone at it: an ASM's number there
+      // reads as unknown. The ASM page in turn takes only ASMs.
+      if (userRole === 'asm' && role !== 'asm') {
+        return res.status(401).json({ error: 'User not found. Please register first.' });
+      }
+      if (role === 'asm' && userRole !== 'asm') {
+        return res.status(403).json({ error: 'This number is not registered as an ASM.' });
+      }
+
+      if (userRole === 'asm') {
+        const [asmRows]: any = await executeWithRetry(
+          'SELECT is_active FROM asms WHERE profile_id = ?',
+          [user.id]
+        );
+        const activeVal = asmRows[0]?.is_active;
+        if (!(activeVal === 1 || activeVal === true || activeVal === '1')) {
+          return res.status(403).json({
+            error: 'Your ASM access has been turned off. Please contact Autoform.'
+          });
+        }
+      }
 
       if (userRole !== role) {
         return res.status(403).json({
@@ -608,8 +635,23 @@ export class AuthController {
       const userRole = roles[0].role;
 
       // Get verification and activation status for vendors
-      let isValidated = userRole === 'customer';
+      let isValidated = userRole === 'customer' || userRole === 'asm';
       let isActive = true;
+
+      // Switched off between asking for the code and entering it.
+      if (userRole === 'asm') {
+        const [asmRows]: any = await db.execute(
+          'SELECT is_active FROM asms WHERE profile_id = ?',
+          [userId]
+        );
+        const activeVal = asmRows[0]?.is_active;
+        if (!(activeVal === 1 || activeVal === true || activeVal === '1')) {
+          return res.status(403).json({
+            error: 'Your ASM access has been turned off. Please contact Autoform.'
+          });
+        }
+      }
+
       if (userRole === 'vendor') {
         const [verification]: any = await db.execute(
           'SELECT is_verified, is_active FROM vendor_verification WHERE user_id = ?',
@@ -796,7 +838,7 @@ export class AuthController {
       const userRole = roles[0].role;
 
       // Get verification and activation status for vendors
-      let isValidated = userRole === 'customer';
+      let isValidated = userRole === 'customer' || userRole === 'asm';
       let isActive = true;
       if (userRole === 'vendor') {
         const [verification]: any = await db.execute(

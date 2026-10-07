@@ -18,6 +18,7 @@ const AdminWarranties = lazy(() => import("../modules/AdminWarranties").then(({ 
 const AdminVendors = lazy(() => import("../modules/AdminVendors").then(({ AdminVendors }) => ({ default: AdminVendors })));
 const AdminDistributors = lazy(() => import("../modules/AdminDistributors").then(({ AdminDistributors }) => ({ default: AdminDistributors })));
 const AdminManpower = lazy(() => import("../modules/AdminManpower").then(({ AdminManpower }) => ({ default: AdminManpower })));
+const AdminAsmManagement = lazy(() => import("../modules/AdminAsmManagement").then(({ AdminAsmManagement }) => ({ default: AdminAsmManagement })));
 const AdminLeadManagement = lazy(() => import("../modules/AdminLeadManagement").then(({ AdminLeadManagement }) => ({ default: AdminLeadManagement })));
 const AdminCustomers = lazy(() => import("../modules/AdminCustomers").then(({ AdminCustomers }) => ({ default: AdminCustomers })));
 const AdminAdmins = lazy(() => import("../modules/AdminAdmins").then(({ AdminAdmins }) => ({ default: AdminAdmins })));
@@ -103,6 +104,8 @@ export const AdminLayout = () => {
                 return <AdminAudits />;
             case 'leads':
                 return <AdminLeadManagement />;
+            case 'asm-management':
+                return <AdminAsmManagement />;
             case 'posm':
                 return <AdminPOSM />;
             case 'uid-management':

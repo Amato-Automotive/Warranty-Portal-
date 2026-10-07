@@ -16,6 +16,8 @@ export interface AttentionCounts {
     posm?: number;
     franchises?: number;
     manpower?: number;
+    /** ASM expense claims waiting for a decision. */
+    asmExpenses?: number;
 }
 
 type Perms = Record<string, { read: boolean; write: boolean }> | undefined;
@@ -76,6 +78,17 @@ export async function getAttentionCounts(user: { isSuperAdmin?: boolean; permiss
                 OR (m.request_status = 'pending' AND m.request_type = 'remove')`
         );
         counts.manpower = Number(m[0]?.n || 0);
+    }
+
+    if (canRead(user, 'asms')) {
+        try {
+            const [rows]: any = await db.execute(
+                "SELECT COUNT(*) AS n FROM asm_expense_claims WHERE status = 'submitted'"
+            );
+            counts.asmExpenses = Number(rows[0]?.n || 0);
+        } catch {
+            // Table not created yet (first boot of this release) — no badge.
+        }
     }
 
     return counts;

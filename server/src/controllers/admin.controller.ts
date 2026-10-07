@@ -3583,6 +3583,8 @@ export class AdminController {
                 warranty_form: { read: false, write: false },
                 vendors: { read: false, write: false },
                 audits: { read: false, write: false },
+                leads: { read: false, write: false },
+                asms: { read: false, write: false },
                 distributors: { read: false, write: false },
                 order_management: { read: false, write: false },
                 customers: { read: false, write: false },

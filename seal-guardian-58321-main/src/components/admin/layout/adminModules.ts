@@ -3,6 +3,7 @@ import {
     Archive,
     BellRing,
     BookOpen,
+    BriefcaseBusiness,
     ChartColumn,
     ClipboardCheck,
     FileText,
@@ -54,6 +55,7 @@ export type AdminModule =
     | 'franchise-distributor-map'
     | 'audits'
     | 'leads'
+    | 'asm-management'
     | 'profile';
 
 // Maps sidebar module IDs to permission keys
@@ -86,6 +88,7 @@ const moduleToPermKey: Record<string, string> = {
     'franchise-distributor-map': 'distributors',
     'audits': 'audits',
     'leads': 'leads',
+    'asm-management': 'asms',
     'profile': 'profile',  // Always visible
 };
 
@@ -136,6 +139,7 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
             { id: 'audits', label: "Store Audits", icon: ClipboardCheck, keywords: ['audit & compliance', 'compliance'] },
             { id: 'posm', label: "POSM Requests", icon: Flag, keywords: ['posm requirements', 'marketing material', 'branding'] },
             { id: 'grievances', label: "Grievances", icon: MessageSquareWarning, keywords: ['complaints', 'tickets'] },
+            { id: 'asm-management', label: "ASM Management", icon: BriefcaseBusiness, keywords: ['asm', 'area sales manager', 'expenses', 'sales team'] },
         ]
     },
     {
@@ -152,7 +156,7 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
         label: "Customers",
         items: [
             { id: 'customers', label: "Customers", icon: Users },
-            { id: 'leads', label: "Leads", icon: MapPin, keywords: ['lead management', 'enquiries', 'asm', 'instagram'] },
+            { id: 'leads', label: "Leads", icon: MapPin, keywords: ['lead management', 'enquiries', 'areas', 'coverage', 'instagram'] },
         ]
     },
     {

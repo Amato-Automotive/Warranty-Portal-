@@ -34,6 +34,8 @@ const AssignmentUpdatePanel = lazy(() => import("./pages/AssignmentUpdatePanel")
 const PublicLayout = lazy(() => import("./components/layouts/PublicLayout"));
 const ConnectStorePage = lazy(() => import("./pages/public/ConnectStorePage"));
 const ThankYouPage = lazy(() => import("./pages/ThankYouPage"));
+const AsmLogin = lazy(() => import("./pages/asm/AsmLogin"));
+const AsmHome = lazy(() => import("./pages/asm/AsmHome"));
 
 const queryClient = new QueryClient();
 
@@ -81,6 +83,9 @@ const App = () => (
                 <Route path="/category/:categoryId" element={<CategoryPage />} />
                 <Route path="/product/:productId" element={<ProductPage />} />
 
+                {/* ASM portal — the login URL is handed out, never linked */}
+                <Route path="/asm/login" element={<AsmLogin />} />
+                <Route path="/asm" element={<AsmHome />} />
                 <Route path="/assignment/update/:token" element={<AssignmentUpdatePanel />} />
                 {/* Public QR Registration Route */}
                 <Route element={<PublicLayout />}>

@@ -4,7 +4,6 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
@@ -13,8 +12,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminLeadsList } from "./AdminLeadsList";
 import { AdminStoreLocator } from "./AdminStoreLocator";
 import {
-    Loader2, Plus, Trash2, Search, MapPin, Phone, UserRound,
-    RefreshCw, X, AlertTriangle, Power, Inbox, Store as StoreIcon
+    Loader2, Plus, Search, MapPin, Phone, UserRound,
+    RefreshCw, X, AlertTriangle, Inbox, Store as StoreIcon
 } from "lucide-react";
 
 /**
@@ -72,13 +71,6 @@ export const AdminLeadManagement = () => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [search, setSearch] = useState("");
-    const [busyId, setBusyId] = useState<string | null>(null);
-
-    // Add / edit an ASM
-    const [asmDialogOpen, setAsmDialogOpen] = useState(false);
-    const [editing, setEditing] = useState<Asm | null>(null);
-    const [form, setForm] = useState({ name: "", phone_number: "", email: "" });
-    const [saving, setSaving] = useState(false);
 
     // Assign an area
     const [areaTarget, setAreaTarget] = useState<Asm | null>(null);
@@ -127,82 +119,6 @@ export const AdminLeadManagement = () => {
             (areasByAsm[a.id] || []).some(ar => ar.area_label.toLowerCase().includes(q))
         );
     }, [asms, search, areasByAsm]);
-
-    const openAdd = () => {
-        setEditing(null);
-        setForm({ name: "", phone_number: "", email: "" });
-        setAsmDialogOpen(true);
-    };
-
-    const openEdit = (asm: Asm) => {
-        setEditing(asm);
-        setForm({ name: asm.name, phone_number: asm.phone_number, email: asm.email || "" });
-        setAsmDialogOpen(true);
-    };
-
-    const saveAsm = async () => {
-        if (!form.name.trim() || !form.phone_number.trim()) {
-            toast({ title: "Name and WhatsApp number are required", variant: "destructive" });
-            return;
-        }
-        setSaving(true);
-        try {
-            if (editing) {
-                await api.put(`/asm/${editing.id}`, form);
-                toast({ title: "ASM updated" });
-            } else {
-                await api.post("/asm", form);
-                toast({ title: "ASM added" });
-            }
-            setAsmDialogOpen(false);
-            fetchAll(true);
-        } catch (error: any) {
-            toast({
-                title: editing ? "Update failed" : "Could not add ASM",
-                description: getErrorMessage(error, "Please try again"),
-                variant: "destructive",
-            });
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const toggleActive = async (asm: Asm) => {
-        setBusyId(asm.id);
-        try {
-            await api.put(`/asm/${asm.id}`, { is_active: !asm.is_active });
-            toast({
-                title: asm.is_active ? "ASM deactivated" : "ASM activated",
-                description: asm.is_active
-                    ? "Enquiries for their areas will queue as unmatched until reassigned."
-                    : undefined,
-            });
-            fetchAll(true);
-        } catch (error: any) {
-            toast({ title: "Update failed", description: getErrorMessage(error, ""), variant: "destructive" });
-        } finally {
-            setBusyId(null);
-        }
-    };
-
-    const removeAsm = async (asm: Asm) => {
-        const areaCount = (areasByAsm[asm.id] || []).length;
-        if (!window.confirm(
-            `Remove ${asm.name}?` +
-            (areaCount ? `\n\nTheir ${areaCount} area${areaCount > 1 ? "s" : ""} will become unassigned — enquiries from ${areaCount > 1 ? "them" : "it"} will queue as unmatched until someone else covers ${areaCount > 1 ? "them" : "it"}.` : "")
-        )) return;
-
-        setBusyId(asm.id);
-        try {
-            await api.delete(`/asm/${asm.id}`);
-            toast({ title: "ASM removed" });
-            fetchAll(true);
-        } catch (error: any) {
-            toast({ title: "Could not remove", description: getErrorMessage(error, ""), variant: "destructive" });
-        } finally {
-            setBusyId(null);
-        }
-    };
 
     /*
      * Places matching what is typed — states, districts, or a pincode — from
@@ -287,7 +203,7 @@ export const AdminLeadManagement = () => {
                         <Inbox className="h-3.5 w-3.5" /> Enquiries
                     </TabsTrigger>
                     <TabsTrigger value="asms" className="rounded-lg text-xs font-black uppercase gap-1.5">
-                        <UserRound className="h-3.5 w-3.5" /> ASMs &amp; Areas
+                        <UserRound className="h-3.5 w-3.5" /> Areas
                     </TabsTrigger>
                     <TabsTrigger value="locator" className="rounded-lg text-xs font-black uppercase gap-1.5">
                         <StoreIcon className="h-3.5 w-3.5" /> Store Locator
@@ -299,12 +215,12 @@ export const AdminLeadManagement = () => {
                 </TabsContent>
 
                 <TabsContent value="asms" className="space-y-5 mt-0">
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-slate-500">
+                    The areas each ASM covers. To add, edit or switch off an ASM, use ASM Management.
+                </p>
                 <Button variant="outline" size="sm" onClick={() => fetchAll(true)} disabled={refreshing}>
                     <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                </Button>
-                <Button size="sm" onClick={openAdd} className="bg-orange-500 hover:bg-orange-600">
-                    <Plus className="h-4 w-4 mr-1.5" /> Add ASM
                 </Button>
             </div>
 
@@ -345,7 +261,7 @@ export const AdminLeadManagement = () => {
                     <p className="text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
                         {search
                             ? "Try a different name, number or area."
-                            : "Add an ASM and assign the areas they cover. Enquiries from those areas will then reach them on WhatsApp."}
+                            : "Add ASMs in ASM Management, then assign the areas they cover here. Enquiries from those areas will then reach them on WhatsApp."}
                     </p>
                 </div>
             ) : (
@@ -388,29 +304,6 @@ export const AdminLeadManagement = () => {
                                             >
                                                 <MapPin className="h-3.5 w-3.5 mr-1" /> Areas
                                             </Button>
-                                            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => openEdit(asm)}>
-                                                Edit
-                                            </Button>
-                                            <Button
-                                                size="sm" variant="outline"
-                                                className="h-8 w-8 p-0"
-                                                title={asm.is_active ? "Deactivate" : "Activate"}
-                                                disabled={busyId === asm.id}
-                                                onClick={() => toggleActive(asm)}
-                                            >
-                                                {busyId === asm.id
-                                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                    : <Power className={`h-3.5 w-3.5 ${asm.is_active ? "text-emerald-600" : "text-slate-400"}`} />}
-                                            </Button>
-                                            <Button
-                                                size="sm" variant="outline"
-                                                className="h-8 w-8 p-0 text-rose-600 border-rose-200 hover:bg-rose-50"
-                                                title="Remove"
-                                                disabled={busyId === asm.id}
-                                                onClick={() => removeAsm(asm)}
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5" />
-                                            </Button>
                                         </div>
                                     </div>
 
@@ -452,56 +345,6 @@ export const AdminLeadManagement = () => {
                     <AdminStoreLocator />
                 </TabsContent>
             </Tabs>
-
-            {/* Add / edit ASM */}
-            <Dialog open={asmDialogOpen} onOpenChange={setAsmDialogOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{editing ? "Edit ASM" : "Add ASM"}</DialogTitle>
-                        <DialogDescription>
-                            The WhatsApp number is where their enquiries will be sent, so it must be a number
-                            that is actually on WhatsApp.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-2">
-                        <div className="space-y-2">
-                            <Label htmlFor="asm-name">Name *</Label>
-                            <Input
-                                id="asm-name"
-                                value={form.name}
-                                onChange={e => setForm({ ...form, name: e.target.value })}
-                                placeholder="Rahul Sharma"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="asm-phone">WhatsApp number *</Label>
-                            <Input
-                                id="asm-phone"
-                                value={form.phone_number}
-                                onChange={e => setForm({ ...form, phone_number: e.target.value.replace(/\D/g, "").slice(0, 12) })}
-                                placeholder="9876543210"
-                                className="font-mono"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="asm-email">Email <span className="text-slate-400 font-normal">(optional)</span></Label>
-                            <Input
-                                id="asm-email"
-                                type="email"
-                                value={form.email}
-                                onChange={e => setForm({ ...form, email: e.target.value })}
-                            />
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setAsmDialogOpen(false)} disabled={saving}>Cancel</Button>
-                        <Button onClick={saveAsm} disabled={saving} className="bg-orange-500 hover:bg-orange-600">
-                            {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-                            {editing ? "Save changes" : "Add ASM"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
 
             {/* Assign areas */}
             <Dialog open={!!areaTarget} onOpenChange={open => { if (!open) setAreaTarget(null); }}>

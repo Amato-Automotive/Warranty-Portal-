@@ -62,6 +62,7 @@ const Login = () => {
         customer: "/dashboard/customer",
         vendor: "/dashboard/vendor",
         admin: "/dashboard/admin",
+        asm: "/asm",
       };
       const redirectPath = dashboardRoutes[user.role] || "/warranty";
       navigate(redirectPath, { replace: true });
@@ -178,6 +179,7 @@ const Login = () => {
           customer: "/dashboard/customer",
           vendor: "/dashboard/vendor",
           admin: "/dashboard/admin",
+          asm: "/asm",
         };
         navigate(dashboardRoutes[result.user.role] || "/warranty", { replace: true });
       } else {

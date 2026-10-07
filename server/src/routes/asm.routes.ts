@@ -1,6 +1,8 @@
 import { Router, type RequestHandler } from 'express';
 import { AsmController } from '../controllers/asm.controller.js';
-import { authenticateToken, requireRole, requirePermission } from '../middleware/auth.js';
+import { authenticateToken, requireRole, requirePermission, requireAnyPermission } from '../middleware/auth.js';
+import { AsmExpenseController } from '../controllers/asmExpense.controller.js';
+import { signalAdminAttentionOnSuccess } from '../services/adminAttention.service.js';
 
 const router = Router();
 const adminAuth = [authenticateToken, requireRole('admin')];
@@ -64,10 +66,17 @@ router.post('/leads/:id/send-store', ...adminAuth, requirePermission('leads', 'w
 router.post('/areas', ...adminAuth, requirePermission('leads', 'write'), AsmController.addArea);
 router.delete('/areas/:id', ...adminAuth, requirePermission('leads', 'write'), AsmController.removeArea);
 
+// ── Admin: ASM expense claims ───────────────────────────────────────────────
+router.get('/expenses', ...adminAuth, requirePermission('asms', 'read'), AsmExpenseController.adminList);
+router.put('/expenses/:id/decision', ...adminAuth, requirePermission('asms', 'write'), signalAdminAttentionOnSuccess, AsmExpenseController.decide);
+
 // ── Admin: ASMs ─────────────────────────────────────────────────────────────
-router.get('/', ...adminAuth, requirePermission('leads', 'read'), AsmController.listAsms);
-router.post('/', ...adminAuth, requirePermission('leads', 'write'), AsmController.createAsm);
-router.put('/:id', ...adminAuth, requirePermission('leads', 'write'), AsmController.updateAsm);
-router.delete('/:id', ...adminAuth, requirePermission('leads', 'write'), AsmController.deleteAsm);
+// ASMs are managed from ASM Management (`asms`). The list is also what Lead
+// Management's Areas tab draws on, so either permission can read it.
+router.get('/', ...adminAuth, requireAnyPermission(['asms', 'leads'], 'read'), AsmController.listAsms);
+router.post('/', ...adminAuth, requirePermission('asms', 'write'), AsmController.createAsm);
+router.get('/:id/leads', ...adminAuth, requirePermission('asms', 'read'), AsmController.asmLeads);
+router.put('/:id', ...adminAuth, requirePermission('asms', 'write'), AsmController.updateAsm);
+router.delete('/:id', ...adminAuth, requirePermission('asms', 'write'), AsmController.deleteAsm);
 
 export default router;

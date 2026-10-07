@@ -64,7 +64,9 @@ api.interceptors.response.use(
     // 401 = session expired / invalid token → force logout
     // 403 = insufficient permissions → let the component handle it (do NOT logout)
     if (status === 401 && !isAuthRoute) {
-      if (!window.location.pathname.startsWith('/login')) {
+      if (window.location.pathname.startsWith('/asm')) {
+        if (window.location.pathname !== '/asm/login') window.location.href = '/asm/login';
+      } else if (!window.location.pathname.startsWith('/login')) {
         const role = new URL(window.location.href).searchParams.get('role');
         window.location.href = role ? `/login?role=${role}` : '/login';
       }

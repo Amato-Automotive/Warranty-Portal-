@@ -31,6 +31,7 @@ import uidRoutes from './routes/uid.routes.js';
 import orderRoutes from './routes/order.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
 import asmRoutes from './routes/asm.routes.js';
+import asmPortalRoutes from './routes/asmPortal.routes.js';
 import { AssignmentSchedulerService } from './services/assignment-scheduler.service.js';
 import { WarrantyReminderScheduler } from './services/warrantyReminder.service.js';
 import { startAnalyticsRepairSchedule } from './services/analyticsEvents.service.js';
@@ -39,6 +40,7 @@ import { initSocket } from './socket.js';
 import { getISTTimestamp } from './utils/dateUtils.js';
 import pool, { getDbRetryStats, pingDatabase } from './config/database.js';
 import { ensureCustomerMobileLimitTable } from './utils/customerMobileLimits.js';
+import { ensureAsmExpenseTables } from './controllers/asmExpense.controller.js';
 import { backfillWarrantyStores } from './services/warrantyStore.js';
 
 // Keep the process alive on stray async errors. A single unhandled promise
@@ -211,6 +213,37 @@ async function runMigrations() {
       console.log('✅ Migration: Added internal_notes to leads.');
     }
 
+    // ASMs log in as their own user type. user_roles.role is an ENUM in
+    // production, so the value is appended to whatever the live column holds
+    // rather than restated from a list that may have drifted from it. Appending
+    // at the end is an INSTANT change in MySQL 8.
+    const [roleCol]: any = await pool.query(
+      `SELECT COLUMN_TYPE AS type, IS_NULLABLE AS nullable FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_roles' AND COLUMN_NAME = 'role'`
+    );
+    const roleType: string = roleCol[0]?.type || '';
+    if (roleType.startsWith('enum(') && !roleType.includes("'asm'")) {
+      const widened = `${roleType.slice(0, -1)},'asm')`;
+      await pool.query(
+        `ALTER TABLE user_roles MODIFY role ${widened} ${roleCol[0].nullable === 'YES' ? 'NULL' : 'NOT NULL'}`
+      );
+      console.log("✅ Migration: user_roles.role now accepts 'asm'.");
+    }
+
+    // The login account behind an ASM. NULL until the ASM has one; unique, so
+    // one account can never stand for two ASMs. Collated like profiles.id so
+    // the two join without a COLLATE (asms is on the newer default).
+    const [asmProfileCol]: any = await pool.query("SHOW COLUMNS FROM asms LIKE 'profile_id'");
+    if (asmProfileCol.length === 0) {
+      await pool.query(
+        `ALTER TABLE asms
+           ADD COLUMN profile_id VARCHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
+           ADD UNIQUE INDEX uniq_asms_profile (profile_id)`
+      );
+      console.log('✅ Migration: Added profile_id to asms.');
+    }
+
+    await ensureAsmExpenseTables();
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');
   } catch (error: any) {
@@ -406,6 +439,7 @@ app.use('/api/orders', generalApiLimiter, orderRoutes);
 // Webhook routes (no rate limiting — Interakt needs reliable delivery)
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/asm', generalApiLimiter, asmRoutes);
+app.use('/api/asm-portal', generalApiLimiter, asmPortalRoutes);
 
 // ===========================================
 // ERROR HANDLING

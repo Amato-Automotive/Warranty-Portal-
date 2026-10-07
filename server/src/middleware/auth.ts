@@ -18,7 +18,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-const SESSION_ROLES = new Set(['admin', 'vendor', 'customer']);
+const SESSION_ROLES = new Set(['admin', 'vendor', 'customer', 'asm']);
 
 /**
  * A valid signature is not enough to be a session.
@@ -109,6 +109,16 @@ async function loadSessionState(userId: string, role: string): Promise<SessionSt
     return { active: true, isSuperAdmin: isTruthyFlag(rows[0].is_super_admin), permissions };
   }
 
+  // An ASM is live while the admin's ASM list says so. The asms row is the
+  // record admins manage; the profile only exists so they can log in.
+  if (role === 'asm') {
+    const [rows]: any = await db.execute(
+      'SELECT is_active FROM asms WHERE profile_id = ?',
+      [userId]
+    );
+    return { active: rows.length > 0 && isTruthyFlag(rows[0].is_active) };
+  }
+
   return { active: true };
 }
 
@@ -122,7 +132,17 @@ export async function getSessionState(userId: string, role: string): Promise<Ses
   return state;
 }
 
-export const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction) => {
+/**
+ * ASM sessions are fenced off from the rest of the API.
+ *
+ * Most routes were written for three roles, and several gate on
+ * requirePermission alone — which waves every non-admin through — or treat
+ * "not admin, not vendor" as a customer. Rather than audit every one of them
+ * for a fourth role, authenticateToken refuses an ASM outright. The few routes
+ * an ASM needs (/auth/me, the ASM portal) use authenticateAnySession and then
+ * requireRole('asm').
+ */
+const authenticate = (allowAsm: boolean) => async (req: AuthRequest, res: Response, next: NextFunction) => {
   // SBP-006: Read token from HttpOnly cookie first, then fall back to Authorization header
   const cookieToken = req.cookies?.auth_token;
   const authHeader = req.headers['authorization'];
@@ -168,11 +188,18 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
     return res.status(401).json({ error: 'This account is no longer active.', code: 'ACCOUNT_INACTIVE' });
   }
 
+  if (decoded.role === 'asm' && !allowAsm) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+
   req.user = decoded.role === 'admin'
     ? { ...decoded, isSuperAdmin: state.isSuperAdmin, permissions: state.permissions }
     : decoded;
   next();
 };
+
+export const authenticateToken = authenticate(false);
+export const authenticateAnySession = authenticate(true);
 
 export const requireRole = (roles: string | string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {

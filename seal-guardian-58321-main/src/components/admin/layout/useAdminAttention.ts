@@ -20,6 +20,8 @@ export interface AttentionCounts {
     franchises?: number;
     /** Staff awaiting approval plus pending removal requests. */
     manpower?: number;
+    /** ASM expense claims waiting for a decision. */
+    asmExpenses?: number;
 }
 
 const POLL_MS = 60_000;

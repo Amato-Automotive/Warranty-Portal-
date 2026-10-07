@@ -302,3 +302,30 @@ export const grievanceUpload = multer({
         files: 3,
     },
 });
+
+/**
+ * ASM expense bills → uploads/asm-expenses/YYYY-MM/
+ *
+ * Photos or PDFs only. The bills are served from the API origin, so an
+ * .html or .svg must never land here.
+ */
+export const asmExpenseUpload = multer({
+    storage: multer.diskStorage({
+        destination: createDestination('asm-expenses'),
+        filename: genericFileName,
+    }),
+    limits: {
+        fileSize: 10 * 1024 * 1024, // a multi-page PDF ticket; photos are compressed in the browser
+        files: 3,                    // onward ticket, return ticket, hotel bill
+    },
+    fileFilter: (_req, file, cb) => {
+        const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+        const okExt = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'].includes(ext);
+        const okMime = /^(image\/(jpeg|jpg|png|webp|heic|heif)|application\/pdf)$/.test(file.mimetype);
+        if (okExt && (okMime || file.mimetype === 'application/octet-stream')) {
+            cb(null, true);
+        } else {
+            cb(new Error(`Only photos or PDFs can be attached (${file.originalname})`));
+        }
+    },
+});

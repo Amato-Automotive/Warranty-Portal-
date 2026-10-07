@@ -21,6 +21,8 @@ import {
 import { describeMessages } from '../services/leadMessages.js';
 import { PRODUCTS } from '../services/productMatch.js';
 import { titleCase } from '../services/asmTerritory.js';
+import { normalizeAsmMobile, normalizeAsmEmail, syncAsmAccount, AsmAccountError } from '../services/asmAccount.service.js';
+import { invalidateSessionState } from '../middleware/auth.js';
 
 /**
  * The verified franchises in a state, with the ones the customer's own words
@@ -234,69 +236,170 @@ export class AsmController {
         }
     }
 
+    /*
+     * Adding or editing an ASM also keeps their login account in step (see
+     * asmAccount.service). An email is required for that account, so a new ASM
+     * needs one; an older ASM without one keeps routing leads but cannot log in
+     * until an admin adds it.
+     */
     static async createAsm(req: Request, res: Response) {
+        const { name, phone_number, email } = req.body || {};
+        const cleanName = String(name ?? '').trim();
+        if (!cleanName || !phone_number || !email) {
+            return res.status(400).json({ error: 'Name, WhatsApp number and email are required' });
+        }
+        const phone = normalizeAsmMobile(phone_number);
+        const mail = normalizeAsmEmail(email);
+        if (!phone) return res.status(400).json({ error: 'Enter a 10-digit mobile number' });
+        if (!mail) return res.status(400).json({ error: 'Enter a valid email address' });
+
+        const conn = await db.getConnection();
         try {
-            const { name, phone_number, email } = req.body || {};
-            if (!name || !phone_number) {
-                return res.status(400).json({ error: 'Name and WhatsApp number are required' });
-            }
+            await conn.beginTransaction();
             const id = uuidv4();
-            await db.execute(
+            await conn.execute(
                 'INSERT INTO asms (id, name, phone_number, email) VALUES (?, ?, ?, ?)',
-                [id, String(name).trim(), String(phone_number).replace(/\D/g, ''), email || null]
+                [id, cleanName, phone, mail]
             );
+            await syncAsmAccount(conn, { id, name: cleanName, phone, email: mail, profileId: null });
+            await conn.commit();
             res.status(201).json({ success: true, id, message: 'ASM added' });
         } catch (error: any) {
+            await conn.rollback().catch(() => {});
+            if (error instanceof AsmAccountError) return res.status(400).json({ error: error.message });
             if (error?.code === 'ER_DUP_ENTRY') {
                 return res.status(400).json({ error: 'That WhatsApp number already belongs to another ASM' });
             }
             console.error('Create ASM error:', error);
             res.status(500).json({ error: 'Failed to add ASM' });
+        } finally {
+            conn.release();
         }
     }
 
     static async updateAsm(req: Request, res: Response) {
-        try {
-            const { id } = req.params;
-            const { name, phone_number, email, is_active } = req.body || {};
-            const [rows]: any = await db.execute('SELECT id FROM asms WHERE id = ?', [id]);
-            if (!rows.length) return res.status(404).json({ error: 'ASM not found' });
+        const { id } = req.params;
+        const { name, phone_number, email, is_active } = req.body || {};
 
-            await db.execute(
-                `UPDATE asms SET
-                    name = COALESCE(?, name),
-                    phone_number = COALESCE(?, phone_number),
-                    email = ?,
-                    is_active = COALESCE(?, is_active)
-                  WHERE id = ?`,
-                [
-                    name ? String(name).trim() : null,
-                    phone_number ? String(phone_number).replace(/\D/g, '') : null,
-                    email ?? null,
-                    is_active === undefined ? null : (is_active ? 1 : 0),
-                    id,
-                ]
+        // Only what was sent changes: the active switch sends is_active alone,
+        // and used to blank the email as a side effect.
+        const identityEdit = name !== undefined || phone_number !== undefined || email !== undefined;
+        let phone: string | null = null;
+        let mail: string | null = null;
+        if (phone_number !== undefined) {
+            phone = normalizeAsmMobile(phone_number);
+            if (!phone) return res.status(400).json({ error: 'Enter a 10-digit mobile number' });
+        }
+        if (email !== undefined && String(email ?? '').trim() !== '') {
+            mail = normalizeAsmEmail(email);
+            if (!mail) return res.status(400).json({ error: 'Enter a valid email address' });
+        }
+
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+            const [rows]: any = await conn.execute(
+                'SELECT id, name, phone_number, email, profile_id FROM asms WHERE id = ? FOR UPDATE',
+                [id]
             );
+            if (!rows.length) {
+                await conn.rollback();
+                return res.status(404).json({ error: 'ASM not found' });
+            }
+            const current = rows[0];
+
+            const next = {
+                name: name !== undefined ? (String(name).trim() || current.name) : current.name,
+                phone: phone ?? current.phone_number,
+                email: email !== undefined ? mail : current.email,
+            };
+            if (current.profile_id && !next.email) {
+                await conn.rollback();
+                return res.status(400).json({ error: 'An email is needed for the ASM login, so it cannot be removed' });
+            }
+
+            await conn.execute(
+                `UPDATE asms SET name = ?, phone_number = ?, email = ?, is_active = COALESCE(?, is_active)
+                  WHERE id = ?`,
+                [next.name, next.phone, next.email, is_active === undefined ? null : (is_active ? 1 : 0), id]
+            );
+
+            // An older ASM gets their login the first time they are saved with
+            // an email; a linked one follows every edit.
+            let profileId: string | null = current.profile_id;
+            if (identityEdit && next.email) {
+                const loginPhone = normalizeAsmMobile(next.phone);
+                if (!loginPhone) {
+                    throw new AsmAccountError('Enter a 10-digit mobile number so the ASM can log in');
+                }
+                profileId = await syncAsmAccount(conn, {
+                    id, name: next.name, phone: loginPhone, email: next.email, profileId,
+                });
+            }
+            await conn.commit();
+
+            // Deactivation logs them out on their next request, not a minute later.
+            if (profileId) invalidateSessionState(profileId);
             res.json({ success: true, message: 'ASM updated' });
         } catch (error: any) {
+            await conn.rollback().catch(() => {});
+            if (error instanceof AsmAccountError) return res.status(400).json({ error: error.message });
             if (error?.code === 'ER_DUP_ENTRY') {
                 return res.status(400).json({ error: 'That WhatsApp number already belongs to another ASM' });
             }
             console.error('Update ASM error:', error);
             res.status(500).json({ error: 'Failed to update ASM' });
+        } finally {
+            conn.release();
         }
     }
 
     static async deleteAsm(req: Request, res: Response) {
+        const { id } = req.params;
+        const conn = await db.getConnection();
         try {
-            const { id } = req.params;
+            await conn.beginTransaction();
+            const [rows]: any = await conn.execute('SELECT profile_id FROM asms WHERE id = ? FOR UPDATE', [id]);
+            if (!rows.length) {
+                await conn.rollback();
+                return res.status(404).json({ error: 'ASM not found' });
+            }
             // Areas cascade; leads keep asm_id so history survives the deletion.
-            const [r]: any = await db.execute('DELETE FROM asms WHERE id = ?', [id]);
-            if (!r.affectedRows) return res.status(404).json({ error: 'ASM not found' });
+            await conn.execute('DELETE FROM asms WHERE id = ?', [id]);
+            // The login goes with them (user_roles cascades from profiles).
+            const profileId: string | null = rows[0].profile_id;
+            if (profileId) await conn.execute('DELETE FROM profiles WHERE id = ?', [profileId]);
+            await conn.commit();
+            if (profileId) invalidateSessionState(profileId);
             res.json({ success: true, message: 'ASM removed' });
         } catch (error: any) {
+            await conn.rollback().catch(() => {});
             console.error('Delete ASM error:', error);
             res.status(500).json({ error: 'Failed to remove ASM' });
+        } finally {
+            conn.release();
+        }
+    }
+
+    /** One ASM's enquiries, newest first, for the ASM Management screen. */
+    static async asmLeads(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const [asm]: any = await db.execute('SELECT id FROM asms WHERE id = ?', [id]);
+            if (!asm.length) return res.status(404).json({ error: 'ASM not found' });
+            const [leads]: any = await db.execute(
+                `SELECT id, created_at, source, customer_name, customer_phone, product, car_model,
+                        state, raw_area, matched_area, status
+                   FROM leads
+                  WHERE asm_id = ?
+                  ORDER BY created_at DESC
+                  LIMIT 500`,
+                [id]
+            );
+            res.json({ success: true, leads });
+        } catch (error: any) {
+            console.error('ASM leads error:', error);
+            res.status(500).json({ error: 'Failed to load leads' });
         }
     }
 

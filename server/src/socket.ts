@@ -54,6 +54,12 @@ export const initSocket = (server: HttpServer) => {
                 return next(new Error('Authentication error: Invalid token'));
             }
 
+            // ASMs have no live notifications, and are kept to their own
+            // routes on the HTTP side too (see authenticateToken).
+            if (decoded.role === 'asm') {
+                return next(new Error('Authentication error: Not available'));
+            }
+
             // A deactivated store or removed admin must not keep receiving
             // live notifications on a cookie that is still in date.
             const state = await getSessionState(decoded.id, decoded.role);

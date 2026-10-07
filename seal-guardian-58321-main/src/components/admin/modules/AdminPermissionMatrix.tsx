@@ -32,7 +32,8 @@ const PERMISSION_GROUPS: { label: string; modules: PermissionModule[] }[] = [
         modules: [
             { key: "vendors", label: "Franchises", description: "Franchise profiles & verification" },
             { key: "audits", label: "Audit & Compliance", description: "Store audit rounds, responses & chase list" },
-            { key: "leads", label: "Lead Management", description: "Customer enquiries, ASM routing & coverage" },
+            { key: "leads", label: "Lead Management", description: "Customer enquiries, ASM area coverage & store locator" },
+            { key: "asms", label: "ASM Management", description: "ASM accounts & logins, their leads and expenses" },
             { key: "distributors", label: "Distributors", description: "Distributor network & franchise mapping" },
             { key: "order_management", label: "Order Management", description: "Order activity, allocation & fulfilment" },
             { key: "customers", label: "Customers", description: "Customer data & warranty history" },

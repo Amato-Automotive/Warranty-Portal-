@@ -65,7 +65,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     };
 
     const fetchNotifications = useCallback(async () => {
-        if (!user) return;
+        if (!user || user.role === 'asm') return; // ASMs have no notifications
         setLoading(true);
         try {
             const [notifRes, countRes, historyRes] = await Promise.all([
@@ -88,7 +88,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }, [user]);
 
     const fetchFullHistory = async () => {
-        if (!user) return;
+        if (!user || user.role === 'asm') return; // ASMs have no notifications
         try {
             const res = await api.get("/notifications?includeCleared=true");
             if (res.data.success) setFullHistory(parseMetadata(res.data.notifications));
@@ -98,7 +98,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     };
 
     useEffect(() => {
-        if (user) {
+        if (user && user.role !== 'asm') {
             fetchNotifications();
 
             // Initialize Socket

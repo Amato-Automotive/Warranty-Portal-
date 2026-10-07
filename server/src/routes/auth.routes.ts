@@ -1,6 +1,6 @@
 import { Router, CookieOptions } from 'express';
 import { AuthController } from '../controllers/auth.controller.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, authenticateAnySession } from '../middleware/auth.js';
 import { otpResendLimiter } from '../middleware/rateLimit.js';
 import { validate } from '../middleware/validate.js';
 import {
@@ -40,7 +40,8 @@ router.post('/register', validate(registerSchema), AuthController.register);
 router.post('/login', validate(loginSchema), AuthController.login);
 router.post('/verify-otp', validate(verifyOTPSchema), AuthController.verifyOTP);
 router.post('/resend-otp', otpResendLimiter, validate(resendOTPSchema), AuthController.resendOTP);
-router.get('/me', authenticateToken, AuthController.getCurrentUser);
+// Any session, ASMs included — the ASM pages restore their login from here.
+router.get('/me', authenticateAnySession, AuthController.getCurrentUser);
 router.put('/profile', authenticateToken, validate(updateProfileSchema), AuthController.updateProfile);
 
 // SBP-006: Server-side logout — clears HttpOnly auth cookie

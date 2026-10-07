@@ -113,6 +113,7 @@ export const SidebarContent = ({
             : id === 'posm' ? attention.posm
             : id === 'vendors' ? attention.franchises
             : id === 'manpower' ? attention.manpower
+            : id === 'asm-management' ? attention.asmExpenses
             : 0) || 0;
 
     const badgeText = (n: number): string | undefined =>

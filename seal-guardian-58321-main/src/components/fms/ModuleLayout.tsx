@@ -14,9 +14,11 @@ interface ModuleLayoutProps {
     onNavigate?: (module: any) => void;
     onLinkClick?: (link: string) => boolean;
     onMenuToggle?: () => void;
+    /** Overrides the Franchise/Distributor label, e.g. "ASM" on the ASM portal. */
+    roleLabel?: string;
 }
 
-export const ModuleLayout = ({ title, description, children, actions, onNavigate, onMenuToggle }: ModuleLayoutProps) => {
+export const ModuleLayout = ({ title, description, children, actions, onNavigate, onMenuToggle, roleLabel }: ModuleLayoutProps) => {
     const { isDistributor, isFranchise } = useB2BCart();
 
     // Determine the role title dynamically
@@ -26,6 +28,7 @@ export const ModuleLayout = ({ title, description, children, actions, onNavigate
     } else if (isDistributor) {
         roleText = "Distributor";
     }
+    if (roleLabel) roleText = roleLabel;
 
     return (
         <div className="flex-1 min-h-0 flex flex-col min-w-0 relative bg-[#fffaf5]">

@@ -73,7 +73,8 @@ export const loginSchema = z.object({
     // We accept 'email' as an alias for backward compatibility
     identifier: z.string().min(1, 'Email or Mobile Number is required').optional(),
     email: z.string().min(1).optional(),
-    role: z.enum(['customer', 'vendor', 'admin']),
+    // 'asm' is used only by the ASM login page, which the main login never links to.
+    role: z.enum(['customer', 'vendor', 'admin', 'asm']),
 }).refine(data => data.identifier || data.email, {
     message: 'Email or Mobile Number is required',
     path: ['identifier'],

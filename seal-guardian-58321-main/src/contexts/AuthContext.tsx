@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import api from "@/lib/api";
 
-export type UserRole = "customer" | "vendor" | "admin";
+// "asm" signs in only through /asm/login, which the main login never links to.
+export type UserRole = "customer" | "vendor" | "admin" | "asm";
 
 export type ModulePermissions = Record<string, { read: boolean; write: boolean }>;
 
