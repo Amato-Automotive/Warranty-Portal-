@@ -7,14 +7,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-    Loader2, Gift, ArrowLeft, Trophy, Plus, Paperclip, CalendarDays, Upload, RefreshCw, Phone, Mail, Maximize2, Download, Trash2,
-    ScanText, AlertTriangle, CheckCircle2, Clock, ChevronRight, Star, FileText, Medal, X,
+    Loader2, Gift, ArrowLeft, Trophy, Plus, Paperclip, CalendarDays, Upload, RefreshCw, Phone, Mail, Maximize2, Download,
+    CheckCircle2, Clock, ChevronRight, FileText, Medal, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { ClubBadge, ClubIcon, CLUB_COLORS } from "@/components/schemes/ClubBadge";
-import { matchInvoice } from "@/lib/invoiceReader";
-import { readInvoiceFiles } from "@/lib/invoiceOcr";
 import {
     CATEGORY_LABEL, STATE_META, ENTRY_META, FORMAT_LABEL, FORMAT_ACCEPT, formatDay, rewardSummary, formatWindow, formatStamp, formatMonth,
     type Scheme, type SchemeCategory, type SchemeState, type EntryFile, type EntryLine, type SchemeWindow, type Club,
@@ -37,6 +35,8 @@ interface Listed {
 interface MyEntry {
     id: string; answers: Record<string, string>; files: Record<string, EntryFile[]>;
     score: number; lines: EntryLine[] | null; claimed_lines: EntryLine[] | null; status: "pending" | "approved" | "rejected"; review_note: string | null; created_at: string;
+    /** Once approved: what each invoice gave. */
+    invoices?: { invoice_no: string; points: number; lines: EntryLine[] }[] | null;
 }
 interface Detail {
     scheme: Omit<Scheme, "eligibility">; joined: boolean; can_submit: boolean; achieved: Achieved | null;
@@ -96,9 +96,9 @@ function Poster({ url, className }: { url: string | null; className?: string }) 
 function Stat({ label, children, hint, className }: { label: string; children: ReactNode; hint?: ReactNode; className?: string }) {
     const { t } = useLanguage();
     return (
-        <div className={cn("rounded-xl border border-slate-200 bg-white px-4 py-3 min-w-0", className)}>
+        <div className={cn("rounded-xl border border-slate-200 bg-white px-3 py-2.5 sm:px-4 sm:py-3 min-w-0", className)}>
             <p className="text-xs font-medium text-slate-500">{t(label)}</p>
-            <div className="mt-1 text-2xl font-bold text-slate-900 tabular-nums leading-tight">{children}</div>
+            <div className="mt-1 text-xl sm:text-2xl font-bold text-slate-900 tabular-nums leading-tight">{children}</div>
             {hint && <p className="mt-0.5 text-xs text-slate-500 truncate">{hint}</p>}
         </div>
     );
@@ -137,16 +137,16 @@ export const FranchiseSchemes = () => {
     const open = (id: string, submit = false) => { setStartSubmit(submit); setOpenId(id); };
     return (
         <div className="space-y-6">
-            <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="flex flex-wrap items-end justify-between gap-3 sm:gap-4">
                 <div>
-                    <h2 className="text-2xl font-bold tracking-tight text-slate-900">{t("Offers & Schemes")}</h2>
+                    <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">{t("Offers & Schemes")}</h2>
                     <p className="text-sm text-slate-500 mt-1">{t("Join a scheme, submit your invoices and see what you've earned.")}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-sm font-medium">
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <div className="flex flex-1 sm:flex-none rounded-lg border border-slate-200 bg-slate-50 p-1 text-sm font-medium">
                         {([["now", "Running"], ["upcoming", "Coming up"], ["past", "Past"]] as const).map(([k, l]) => (
                             <button key={k} type="button" onClick={() => setTab(k)}
-                                className={cn("px-3 py-1.5 rounded-md transition-colors", tab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}>
+                                className={cn("flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded-md transition-colors whitespace-nowrap", tab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}>
                                 {t(l)} <span className="tabular-nums text-slate-400">{groups[k].length}</span>
                             </button>
                         ))}
@@ -174,10 +174,10 @@ export const FranchiseSchemes = () => {
                         const a = s.achieved;
                         return (
                             <div key={s.id} className="group rounded-xl border border-slate-200 bg-white overflow-hidden hover:border-orange-300 hover:shadow-md transition-all flex flex-col sm:flex-row">
-                                <button type="button" onClick={() => open(s.id)} className="sm:w-48 h-40 sm:h-auto shrink-0 bg-slate-100 overflow-hidden" aria-label={s.title}>
+                                <button type="button" onClick={() => open(s.id)} className="sm:w-48 h-32 sm:h-auto shrink-0 bg-slate-100 overflow-hidden" aria-label={s.title}>
                                     <Poster url={s.banner_url} className="group-hover:scale-[1.02] transition-transform duration-500" />
                                 </button>
-                                <div className="flex-1 min-w-0 p-5 flex flex-col gap-3">
+                                <div className="flex-1 min-w-0 p-4 sm:p-5 flex flex-col gap-3">
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
                                             <p className="text-xs font-semibold uppercase tracking-wide text-orange-600">{t(CATEGORY_LABEL[s.category])}</p>
@@ -193,7 +193,7 @@ export const FranchiseSchemes = () => {
                                     </p>
 
                                     {s.joined && a && (
-                                        <div className="grid grid-cols-2 sm:grid-cols-4 rounded-lg border border-slate-100 bg-slate-50 divide-x divide-slate-200 text-sm">
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-px rounded-lg border border-slate-100 bg-slate-200 overflow-hidden text-sm [&>div]:bg-slate-50">
                                             {s.has_score && <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Points")}</p><p className="font-bold text-slate-900 tabular-nums">{a.score}</p></div>}
                                             {a.club !== undefined && <div className="px-3 py-2 min-w-0"><p className="text-xs text-slate-500">{t("Club")}</p>{a.club ? <ClubBadge club={a.club} className="mt-0.5" /> : <p className="text-slate-400">—</p>}</div>}
                                             {s.has_score && <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Rank")}</p><p className="font-bold text-slate-900 tabular-nums">#{a.rank} <span className="font-normal text-slate-400">{tr(`of ${a.of}`, `/ ${a.of}`)}</span></p></div>}
@@ -202,18 +202,18 @@ export const FranchiseSchemes = () => {
                                     )}
                                     {s.joined && !a && <p className="text-sm text-slate-500">{t("You've joined. Your points show here once an entry is approved.")}</p>}
 
-                                    <div className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-1">
+                                    <div className="mt-auto flex flex-col-reverse sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 pt-1 [&>button]:w-full sm:[&>button]:w-auto">
                                         <Button variant="ghost" size="sm" className="text-slate-600" onClick={() => open(s.id)}>
                                             {t("View details")} <ChevronRight className="h-4 w-4 ml-0.5" />
                                         </Button>
                                         {s.joined ? (
                                             s.open_window && (
-                                                <Button size="sm" className="bg-orange-500 hover:bg-orange-600" onClick={() => open(s.id, true)}>
+                                                <Button size="sm" className="h-10 sm:h-9 bg-orange-500 hover:bg-orange-600" onClick={() => open(s.id, true)}>
                                                     <Plus className="h-4 w-4 mr-1" /> {t("Submit invoice")}
                                                 </Button>
                                             )
                                         ) : s.state !== "closed" && (
-                                            <Button size="sm" className="bg-orange-500 hover:bg-orange-600" onClick={() => open(s.id)}>{t("Join scheme")}</Button>
+                                            <Button size="sm" className="h-10 sm:h-9 bg-orange-500 hover:bg-orange-600" onClick={() => open(s.id)}>{t("Join scheme")}</Button>
                                         )}
                                     </div>
                                 </div>
@@ -296,7 +296,7 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
             {/* The scheme: poster, dates, and what to do next. */}
             <div className="rounded-xl border border-slate-200 bg-white overflow-hidden flex flex-col md:flex-row">
                 <button type="button" onClick={() => s.banner_url && setPosterOpen(true)} disabled={!s.banner_url}
-                    className="relative md:w-64 h-56 md:h-auto shrink-0 bg-slate-100 group overflow-hidden" aria-label={t("See full poster")}>
+                    className="relative md:w-64 h-40 sm:h-56 md:h-auto shrink-0 bg-slate-100 group overflow-hidden" aria-label={t("See full poster")}>
                     <Poster url={s.banner_url} />
                     {s.banner_url && (
                         <span className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-black/65 px-3 py-1 text-xs font-medium text-white whitespace-nowrap group-hover:bg-black/80">
@@ -304,11 +304,11 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
                         </span>
                     )}
                 </button>
-                <div className="flex-1 min-w-0 p-5 md:p-6 flex flex-col gap-4">
+                <div className="flex-1 min-w-0 p-4 sm:p-5 md:p-6 flex flex-col gap-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
                             <p className="text-xs font-semibold uppercase tracking-wide text-orange-600">{t(CATEGORY_LABEL[s.category])}</p>
-                            <h2 className="text-2xl font-bold text-slate-900 leading-tight mt-0.5">{s.title}</h2>
+                            <h2 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight mt-0.5">{s.title}</h2>
                             {s.summary && <p className="text-sm text-slate-600 mt-1.5 max-w-2xl">{s.summary}</p>}
                         </div>
                         <StatePill state={s.state} end={s.open_window?.end ?? s.ends_on} />
@@ -417,7 +417,7 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
                     ))}
                 </div>
 
-                <div className="p-5 text-sm text-slate-700">
+                <div className="p-4 sm:p-5 text-sm text-slate-700">
                     {current === "how" && (s.instructions ? <p className="whitespace-pre-wrap leading-relaxed max-w-3xl">{s.instructions}</p> : <p className="text-slate-400">{t("No instructions.")}</p>)}
                     {current === "terms" && (s.terms ? <p className="whitespace-pre-wrap leading-relaxed max-w-3xl">{s.terms}</p> : <p className="text-slate-400">{t("No terms for this scheme.")}</p>)}
 
@@ -487,9 +487,9 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <p className="text-slate-500">{d.entries.length ? tr(`${d.entries.length} entr${d.entries.length === 1 ? "y" : "ies"} sent`, `${d.entries.length} एंट्री भेजी गईं`) : ""}</p>
                                 {d.entries.length > 0 && (
-                                    <div className="flex flex-wrap items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                                         <Select value={dayPick} onValueChange={setDayPick}>
-                                            <SelectTrigger className="h-9 w-[220px]" aria-label={t("Show entries from")}><SelectValue /></SelectTrigger>
+                                            <SelectTrigger className="h-9 w-full sm:w-[220px]" aria-label={t("Show entries from")}><SelectValue /></SelectTrigger>
                                             <SelectContent>
                                                 <SelectItem value="all">{t("All dates")} ({d.entries.length})</SelectItem>
                                                 {days.map(g => (
@@ -499,12 +499,12 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
                                             </SelectContent>
                                         </Select>
                                         {dayPick === "range" && (
-                                            <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                                            <span className="flex w-full sm:w-auto items-center gap-1.5 text-xs text-slate-500">
                                                 <Input type="date" value={range.from} max={range.to || undefined} aria-label={t("From")}
-                                                    onChange={e => setRange(r => ({ ...r, from: e.target.value }))} className="h-9 w-[150px]" />
+                                                    onChange={e => setRange(r => ({ ...r, from: e.target.value }))} className="h-9 flex-1 min-w-0 sm:w-[150px] sm:flex-none" />
                                                 {t("to")}
                                                 <Input type="date" value={range.to} min={range.from || undefined} aria-label={t("To")}
-                                                    onChange={e => setRange(r => ({ ...r, to: e.target.value }))} className="h-9 w-[150px]" />
+                                                    onChange={e => setRange(r => ({ ...r, to: e.target.value }))} className="h-9 flex-1 min-w-0 sm:w-[150px] sm:flex-none" />
                                             </span>
                                         )}
                                     </div>
@@ -543,6 +543,16 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
                 </div>
             </div>
 
+            {canSubmit && !submitOpen && (
+                <>
+                    <div className="h-16 sm:hidden" aria-hidden />
+                    <div className="sm:hidden fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                        <Button className="w-full h-11 text-base bg-orange-500 hover:bg-orange-600" onClick={() => setSubmitOpen(true)}>
+                            <Plus className="h-5 w-5 mr-1.5" /> {t("Submit invoice")}
+                        </Button>
+                    </div>
+                </>
+            )}
             <EntryForm open={submitOpen} scheme={s} distributors={d.distributors} onClose={() => setSubmitOpen(false)} onDone={() => { setSubmitOpen(false); setTab("entries"); load(); }} />
             {s.banner_url && (
                 <Dialog open={posterOpen} onOpenChange={setPosterOpen}>
@@ -572,30 +582,42 @@ function EntryRow({ e, scheme, hasScore }: { e: MyEntry; scheme: Omit<Scheme, "e
     const answers = scheme.fields.filter(f => f.type !== "file" && e.answers[f.id]);
     const files = Object.values(e.files).flat();
     return (
-        <div className="px-4 py-3">
-            <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-                <div className="flex-1 min-w-[200px] space-y-1">
+        <div className="px-3 sm:px-4 py-3">
+            <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                <div className="flex-1 min-w-0 space-y-1">
                     {lines.length > 0 ? (
                         <p className="font-medium text-slate-900">{lines.map(l => `${l.name} × ${l.qty}`).join(", ")}</p>
-                    ) : !answers.length && <p className="text-slate-500">{t("Entry")}</p>}
+                    ) : !answers.length && <p className="text-slate-500">{files.length ? t("Invoice") : t("Entry")}</p>}
+                    {(e.invoices ?? []).length > 1 && (
+                        <ul className="text-xs text-slate-500 space-y-0.5">
+                            {(e.invoices ?? []).map((inv, i) => (
+                                <li key={i}><span className="text-slate-400">{t("Invoice")} {inv.invoice_no}:</span> {inv.lines.length ? inv.lines.map(l => `${l.name} × ${l.qty}`).join(", ") : t("nothing that counts")} · <b className="tabular-nums text-slate-700">{inv.points} {t("pts")}</b></li>
+                            ))}
+                        </ul>
+                    )}
                     {answers.length > 0 && (
                         <p className="text-xs text-slate-500">{answers.map(f => <span key={f.id} className="mr-3"><span className="text-slate-400">{f.label}:</span> {e.answers[f.id]}</span>)}</p>
                     )}
                     {files.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
-                            {files.map(f => <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs rounded-md border border-slate-200 px-1.5 py-0.5 text-sky-700 hover:border-sky-300 max-w-[220px]"><Paperclip className="h-3 w-3 shrink-0" /><span className="truncate">{f.name}</span></a>)}
+                            {files.map(f => <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs rounded-md border border-slate-200 px-2 py-1 sm:px-1.5 sm:py-0.5 text-sky-700 hover:border-sky-300 max-w-full sm:max-w-[220px]"><Paperclip className="h-3 w-3 shrink-0" /><span className="truncate">{f.name}</span></a>)}
                         </div>
                     )}
                 </div>
-                {hasScore && (
-                    <div className="text-right w-24 shrink-0">
+                <div className="flex items-center justify-between gap-3 sm:contents">
+                {hasScore && (e.status === "pending" && !lines.length ? (
+                    <p className="sm:text-right sm:w-24 shrink-0 text-xs text-slate-400">{t("Points after review")}</p>
+                ) : (
+                    <div className="sm:text-right sm:w-24 shrink-0 flex items-baseline gap-1.5 sm:block">
                         <p className={cn("font-bold tabular-nums", e.status === "approved" ? "text-slate-900" : e.status === "rejected" ? "text-slate-300 line-through" : "text-slate-500")}>{points} {t("pts")}</p>
                         {e.status === "pending" && points > 0 && <p className="text-[11px] text-slate-400">{t("if approved")}</p>}
                     </div>
-                )}
-                <div className="w-28 shrink-0 text-right">
+                ))}
+                <div className="sm:w-28 shrink-0 text-right flex items-center gap-2 sm:block">
+                    <p className="text-[11px] text-slate-400 sm:hidden">{when(e.created_at)}</p>
                     <span className={cn("inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium", ENTRY_META[e.status].tone)}>{t(ENTRY_META[e.status].label)}</span>
-                    <p className="text-[11px] text-slate-400 mt-1">{when(e.created_at)}</p>
+                    <p className="text-[11px] text-slate-400 mt-1 hidden sm:block">{when(e.created_at)}</p>
+                </div>
                 </div>
             </div>
             {e.status === "rejected" && e.review_note && <p className="mt-2 text-xs text-rose-700 bg-rose-50 rounded-md px-3 py-2">{t("Reason")}: {e.review_note}</p>}
@@ -647,16 +669,16 @@ function Leaderboard({ rows }: { rows: NonNullable<Detail["leaderboard"]> }) {
     );
 }
 
-/** The form the admin built, filled in by the store; files are picked per field. */
+/**
+ * The form the admin built, filled in by the store; files are picked per
+ * field. On a scheme scored by products the store only sends its invoice:
+ * our team reads it and adds the products and points when approving.
+ */
 function EntryForm({ open, scheme, distributors, onClose, onDone }: {
     open: boolean; scheme: Omit<Scheme, "eligibility">; distributors: { id: string; name: string; city: string | null }[];
     onClose: () => void; onDone: () => void;
 }) {
-    const products = scheme.score_rule.mode === "products" ? scheme.score_rule.products : [];
-    const [lines, setLines] = useState<{ product_id: string; qty: string; check?: boolean; from?: string }[]>([]);
-    /* Reading the invoice: progress while it runs, then what it found. */
-    const [reading, setReading] = useState<{ stage: string; pct: number } | null>(null);
-    const [readNote, setReadNote] = useState<{ found: number; check: number } | "none" | "error" | null>(null);
+    const byProducts = scheme.score_rule.mode === "products";
     const [confirming, setConfirming] = useState(false);
     const invoiceField = scheme.fields.find(f => f.type === "file");
     const [other, setOther] = useState<Record<string, string>>({});
@@ -669,36 +691,13 @@ function EntryForm({ open, scheme, distributors, onClose, onDone }: {
     const [dragOver, setDragOver] = useState<string | null>(null);
 
     useEffect(() => {
-        if (open) {
-            setAnswers({}); setFiles({}); setProblems([]); setOther({}); setReadNote(null); setReading(null); setConfirming(false);
-            setLines(products.length ? [{ product_id: products[0].id, qty: "" }] : []);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        if (open) { setAnswers({}); setFiles({}); setProblems([]); setOther({}); setConfirming(false); }
     }, [open]);
-    /** Read the invoice files and fill the series and quantities from them. */
-    const readInvoice = async (list: File[]) => {
-        if (!products.length || !list.length) return;
-        setReading({ stage: t("Opening the invoice"), pct: 0 }); setReadNote(null);
-        try {
-            const text = await readInvoiceFiles(list, (stage, pct) => setReading({ stage: t(stage), pct }));
-            const found = matchInvoice(text, products);
-            if (!found.length) { setReadNote("none"); return; }
-            setLines(found.map(l => ({ product_id: l.product_id, qty: String(l.qty), check: l.confidence === "check", from: l.from })));
-            setReadNote({ found: found.length, check: found.filter(l => l.confidence === "check").length });
-        } catch (e) {
-            console.error("[Schemes] invoice reading failed:", e);
-            setReadNote("error");
-        } finally { setReading(null); }
-    };
-    /** Files picked or dropped on a file field; the invoice field is read straight away. */
+    /** Files picked or dropped on a file field, up to the field's limit. */
     const addFiles = (f: Scheme["fields"][number], picked: File[]) => {
         if (!picked.length) return;
-        const next = [...(files[f.id] ?? []), ...picked].slice(0, f.max_files ?? 1);
-        setFiles(m => ({ ...m, [f.id]: next }));
-        if (f.id === invoiceField?.id) readInvoice(next);
+        setFiles(m => ({ ...m, [f.id]: [...(m[f.id] ?? []), ...picked].slice(0, f.max_files ?? 1) }));
     };
-
-    const claimed = lines.reduce((n, l) => n + (Number(l.qty) || 0) * (products.find(p => p.id === l.product_id)?.points ?? 0), 0);
 
     const send = async () => {
         setSending(true); setProblems([]);
@@ -708,10 +707,9 @@ function EntryForm({ open, scheme, distributors, onClose, onDone }: {
             const sent = { ...answers };
             for (const [k, v] of Object.entries(other)) if (sent[k] === "__other") sent[k] = v.trim();
             form.append("answers", JSON.stringify(sent));
-            if (products.length) form.append("lines", JSON.stringify(lines.filter(l => Number(l.qty) > 0).map(l => ({ product_id: l.product_id, qty: Number(l.qty) }))));
             for (const [fid, list] of Object.entries(files)) for (const f of list) form.append(fid, f);
             await api.post(`/schemes/${scheme.id}/entries`, form, { headers: { "Content-Type": "multipart/form-data" } });
-            toast({ title: t("Entry submitted"), description: t("It counts once it's approved.") });
+            toast({ title: t("Invoice sent"), description: t("Our team will check it and add your points.") });
             onDone();
         } catch (e: any) {
             const list = e?.response?.data?.problems;
@@ -719,7 +717,21 @@ function EntryForm({ open, scheme, distributors, onClose, onDone }: {
         } finally { setSending(false); }
     };
 
-    /* File fields first (the invoice is what everything else is read from), then the rest. */
+    /* What is missing, said before the "are you sure" step rather than after sending. */
+    const review = () => {
+        const missing: string[] = [];
+        for (const fl of scheme.fields) {
+            if (!fl.required) continue;
+            const empty = fl.type === "file" ? !(files[fl.id] ?? []).length
+                : !String(answers[fl.id] === "__other" ? other[fl.id] ?? "" : answers[fl.id] ?? "").trim();
+            if (empty) missing.push(fl.type === "file" ? tr(`Add the ${fl.label}`, `${fl.label} जोड़ें`) : tr(`Fill in ${fl.label}`, `${fl.label} भरें`));
+        }
+        if (byProducts && !Object.values(files).some(l => l.length) && !missing.length) missing.push(t("Add your invoice"));
+        setProblems(missing);
+        if (!missing.length) setConfirming(true);
+    };
+
+    /* File fields first (the invoice is what the entry is about), then the rest. */
     const fileFields = scheme.fields.filter(f => f.type === "file");
     const otherFields = scheme.fields.filter(f => f.type !== "file");
     const label = (f: Scheme["fields"][number]) => (
@@ -730,18 +742,25 @@ function EntryForm({ open, scheme, distributors, onClose, onDone }: {
 
     return (
         <Dialog open={open} onOpenChange={o => { if (!o && !sending) onClose(); }}>
-            <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto">
-                <DialogHeader>
+            <DialogContent className="flex flex-col gap-0 p-0 max-w-none h-[100dvh] max-h-[100dvh] rounded-none sm:max-w-xl sm:h-auto sm:max-h-[92vh] sm:rounded-xl overflow-hidden">
+                <DialogHeader className="px-4 pt-4 pb-3 pr-12 border-b border-slate-100 text-left">
                     <DialogTitle>{t("Submit invoice")}</DialogTitle>
                     <DialogDescription>{scheme.title}</DialogDescription>
                 </DialogHeader>
-                <div className="space-y-5">
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-5">
                     {fileFields.map(f => {
                         const picked = files[f.id] ?? [];
                         const full = picked.length >= (f.max_files ?? 1);
                         return (
                             <div key={f.id} className="space-y-2">
                                 {label(f)}
+                                {!full && (f.formats ?? []).includes("image") && (
+                                    <label className="sm:hidden flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-3.5 text-base font-semibold text-white active:bg-orange-600">
+                                        <Upload className="h-5 w-5" /> {t("Take a photo of the invoice")}
+                                        <input type="file" accept="image/*" capture="environment" className="hidden"
+                                            onChange={e => { addFiles(f, Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+                                    </label>
+                                )}
                                 {!full && (
                                     <label
                                         onDragOver={e => { e.preventDefault(); setDragOver(f.id); }}
@@ -759,9 +778,10 @@ function EntryForm({ open, scheme, distributors, onClose, onDone }: {
                                             onChange={e => { addFiles(f, Array.from(e.target.files ?? [])); e.target.value = ""; }} />
                                     </label>
                                 )}
+                                {picked.length > 0 && <p className="text-xs text-slate-500">{tr(`${picked.length} of ${f.max_files ?? 1} added`, `${picked.length} / ${f.max_files ?? 1} जोड़ी गईं`)}</p>}
                                 {picked.map((file, i) => (
-                                    <div key={i} className="flex items-center justify-between gap-2 text-sm text-slate-700 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                                        <span className="truncate flex items-center gap-2"><FileText className="h-4 w-4 text-slate-400 shrink-0" />{file.name}</span>
+                                    <div key={i} className="flex items-center justify-between gap-2 text-sm text-slate-700 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                                        <span className="truncate flex items-center gap-2"><span className="shrink-0 h-6 w-6 rounded bg-slate-100 text-xs font-bold text-slate-500 flex items-center justify-center tabular-nums">{i + 1}</span><span className="truncate">{file.name}</span><span className="shrink-0 text-xs text-slate-400">{(file.size / 1048576).toFixed(1)} MB</span></span>
                                         <button type="button" className="text-slate-400 hover:text-rose-600" aria-label={t("Remove file")}
                                             onClick={() => setFiles(m => ({ ...m, [f.id]: m[f.id].filter((_, j) => j !== i) }))}><X className="h-4 w-4" /></button>
                                     </div>
@@ -770,66 +790,11 @@ function EntryForm({ open, scheme, distributors, onClose, onDone }: {
                         );
                     })}
 
-                    {products.length > 0 && (
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                                <p className="text-sm font-medium text-slate-800">{t("What's on the invoice")}<span className="text-rose-500"> *</span></p>
-                                {invoiceField && (files[invoiceField.id] ?? []).length > 0 && !reading && (
-                                    <button type="button" className="text-xs font-medium text-sky-700 flex items-center gap-1 hover:underline"
-                                        onClick={() => readInvoice(files[invoiceField.id] ?? [])}><ScanText className="h-3.5 w-3.5" /> {t("Read again")}</button>
-                                )}
-                            </div>
-                            {reading && (
-                                <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-2.5 text-sm text-sky-800">
-                                    <p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> {reading.stage}… {reading.pct > 0 && `${reading.pct}%`}</p>
-                                    <div className="h-1.5 mt-2 rounded-full bg-sky-100 overflow-hidden"><div className="h-full bg-sky-500 transition-all" style={{ width: `${reading.pct}%` }} /></div>
-                                </div>
-                            )}
-                            {!reading && readNote && (
-                                readNote === "none" ? (
-                                    <p className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-sm text-amber-800">{t("Couldn't find this scheme's series on the invoice — add them below.")}</p>
-                                ) : readNote === "error" ? (
-                                    <p className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-sm text-amber-800">{t("Couldn't read this file — add the series below.")}</p>
-                                ) : (
-                                    <p className={cn("rounded-lg border px-3 py-2 text-sm flex items-start gap-2", readNote.check ? "bg-amber-50 border-amber-100 text-amber-800" : "bg-emerald-50 border-emerald-100 text-emerald-800")}>
-                                        {readNote.check ? <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" /> : <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />}
-                                        <span>{tr(`Read ${readNote.found} series from your invoice${readNote.check ? ` — check the ${readNote.check} marked below` : ""}. Correct anything that's wrong before you submit.`, `आपके इनवॉइस से ${readNote.found} सीरीज़ पढ़ी गईं${readNote.check ? ` — नीचे निशान लगी ${readNote.check} जाँच लें` : ""}। भेजने से पहले जो गलत हो उसे ठीक करें।`)}</span>
-                                    </p>
-                                )
-                            )}
-                            <div className="rounded-lg border border-slate-200 overflow-hidden">
-                                <div className="grid grid-cols-[1fr_80px_64px_36px] gap-2 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
-                                    <span>{t("Series")}</span><span>{t("Qty")}</span><span className="text-right">{t("Points")}</span><span />
-                                </div>
-                                <div className="divide-y divide-slate-100">
-                                    {lines.map((l, i) => {
-                                        const p = products.find(x => x.id === l.product_id);
-                                        return (
-                                            <div key={i} className={cn("grid grid-cols-[1fr_80px_64px_36px] gap-2 items-center px-3 py-2", l.check && "bg-amber-50")} title={l.from ? `${t("Read from")}: ${l.from}` : undefined}>
-                                                <div className="min-w-0">
-                                                    <Select value={l.product_id} onValueChange={v => setLines(ls => ls.map((x, j) => j === i ? { ...x, product_id: v, check: false } : x))}>
-                                                        <SelectTrigger className="h-9" aria-label={t("Series")}><SelectValue /></SelectTrigger>
-                                                        <SelectContent>{products.map(pp => <SelectItem key={pp.id} value={pp.id}>{pp.name} · {pp.points} {t("pts")}</SelectItem>)}</SelectContent>
-                                                    </Select>
-                                                    {l.check && <p className="mt-1 text-[11px] font-semibold text-amber-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {t("Please check")}</p>}
-                                                </div>
-                                                <Input type="number" min={1} value={l.qty} placeholder={t("Qty")} aria-label={t("Quantity")} className="h-9"
-                                                    onChange={e => setLines(ls => ls.map((x, j) => j === i ? { ...x, qty: e.target.value, check: false } : x))} />
-                                                <span className="text-right tabular-nums text-sm font-semibold text-slate-700">{(Number(l.qty) || 0) * (p?.points ?? 0)}</span>
-                                                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-slate-400 hover:text-rose-600" disabled={lines.length === 1}
-                                                    onClick={() => setLines(ls => ls.filter((_, j) => j !== i))} aria-label={t("Remove")}><Trash2 className="h-4 w-4" /></Button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                                <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2">
-                                    <button type="button" className="text-sm font-medium text-sky-700 flex items-center gap-1 hover:underline"
-                                        onClick={() => setLines(ls => [...ls, { product_id: products[0].id, qty: "" }])}><Plus className="h-4 w-4" /> {t("Add series")}</button>
-                                    <span className="text-sm text-slate-600">{t("Total")} <b className="tabular-nums text-slate-900">{claimed} {t("pts")}</b></span>
-                                </div>
-                            </div>
-                            <p className="text-xs text-slate-500">{t("Our team checks these against your invoice before the points count.")}</p>
-                        </div>
+                    {byProducts && (
+                        <p className="rounded-lg bg-sky-50 border border-sky-100 px-3 py-2.5 text-sm text-sky-900 flex items-start gap-2">
+                            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-sky-600" />
+                            <span>{t("Just send the invoice — our team reads it and adds the series and your points. You'll see them here once it's approved.")}</span>
+                        </p>
                     )}
 
                     {otherFields.map(f => (
@@ -866,49 +831,36 @@ function EntryForm({ open, scheme, distributors, onClose, onDone }: {
                         </div>
                     )}
                 </div>
-                <DialogFooter className="gap-2">
-                    <Button variant="outline" onClick={onClose} disabled={sending}>{t("Cancel")}</Button>
-                    <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => { setProblems([]); setConfirming(true); }} disabled={sending || Boolean(reading)}>
+                <DialogFooter className="flex-row gap-2 border-t border-slate-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                    <Button variant="outline" className="flex-1 sm:flex-none" onClick={onClose} disabled={sending}>{t("Cancel")}</Button>
+                    <Button className="flex-1 sm:flex-none bg-orange-500 hover:bg-orange-600" onClick={review} disabled={sending}>
                         {t("Review & submit")} <ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
                 </DialogFooter>
             </DialogContent>
 
-            {/* Are you sure: what is about to be sent, with the points it would earn. */}
+            {/* Are you sure: what is about to be sent. */}
             <Dialog open={confirming} onOpenChange={o => { if (!o && !sending) setConfirming(false); }}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
+                <DialogContent className="w-[calc(100%-1.5rem)] max-w-md rounded-xl max-h-[85dvh] overflow-y-auto">
+                    <DialogHeader className="text-left">
                         <DialogTitle>{t("Submit this entry?")}</DialogTitle>
                         <DialogDescription>{t("Check it once more — you can't change an entry after sending it.")}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3 text-sm">
-                        {products.length > 0 && (
-                            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
-                                {lines.filter(l => Number(l.qty) > 0).map((l, i) => {
-                                    const p = products.find(x => x.id === l.product_id);
-                                    return (
-                                        <div key={i} className="flex items-center justify-between px-3 py-2">
-                                            <span className="text-slate-800">{p?.name ?? "—"} × <b className="tabular-nums">{l.qty}</b></span>
-                                            <span className="tabular-nums text-slate-500">{(Number(l.qty) || 0) * (p?.points ?? 0)} {t("pts")}</span>
-                                        </div>
-                                    );
-                                })}
-                                <div className="flex items-center justify-between px-3 py-2 bg-slate-50 font-bold">
-                                    <span className="flex items-center gap-1.5"><Star className="h-4 w-4 text-orange-500" /> {t("Points if approved")}</span><span className="tabular-nums">{claimed}</span>
-                                </div>
+                        {scheme.fields.filter(f => f.type === "file" && (files[f.id] ?? []).length).map(f => (
+                            <div key={f.id}>
+                                <p className="text-slate-400 mb-1">{f.label}</p>
+                                <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                                    {(files[f.id] ?? []).map((file, i) => (
+                                        <li key={i} className="flex items-center gap-2 px-3 py-2 text-slate-800"><FileText className="h-4 w-4 text-slate-400 shrink-0" /><span className="truncate">{file.name}</span></li>
+                                    ))}
+                                </ul>
                             </div>
-                        )}
+                        ))}
                         {scheme.fields.filter(f => f.type !== "file" && answers[f.id]).map(f => (
                             <p key={f.id} className="text-slate-600"><span className="text-slate-400">{f.label}:</span> {answers[f.id] === "__other" ? (other[f.id] || "—") : answers[f.id]}</p>
                         ))}
-                        {scheme.fields.filter(f => f.type === "file").map(f => (
-                            <p key={f.id} className="text-slate-600"><span className="text-slate-400">{f.label}:</span> {tr(`${(files[f.id] ?? []).length} file${(files[f.id] ?? []).length === 1 ? "" : "s"}`, `${(files[f.id] ?? []).length} फ़ाइल`)}</p>
-                        ))}
-                        {lines.some(l => l.check) && (
-                            <p className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800 flex items-start gap-1.5">
-                                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {t("Some lines were marked to check and haven't been changed. Make sure they match your invoice.")}
-                            </p>
-                        )}
+                        {byProducts && <p className="text-xs text-slate-500">{t("Points are added after our team checks the invoice.")}</p>}
                     </div>
                     <DialogFooter className="gap-2">
                         <Button variant="outline" onClick={() => setConfirming(false)} disabled={sending}>{t("Go back and edit")}</Button>

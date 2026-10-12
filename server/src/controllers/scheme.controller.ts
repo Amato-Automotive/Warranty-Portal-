@@ -5,9 +5,9 @@ import { NotificationService } from '../services/notification.service.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import {
     schemeProblems, schemeState, canSubmit, isEligible, entryProblems, entryScore, standings,
-    windowSpan, openWindow, nextWindow, istNow, linesScore, monthlyPoints, istMonth, planImport, sellThrough, productForWarranty,
+    windowSpan, openWindow, nextWindow, istNow, linesScore, monthlyPoints, istMonth, planImport, sellThrough, productForWarranty, invoiceKey, invoicesScore,
     type SchemeField, type ScoreRule, type RewardRule, type Eligibility, type SchemeStatus, type EntryFile,
-    type SchemeWindow, type EntryLine, type Club, type ImportRow,
+    type SchemeWindow, type EntryLine, type Club, type ImportRow, type InvoiceIn,
 } from '../services/schemeRules.js';
 
 /**
@@ -232,6 +232,58 @@ async function loadScheme(id: string): Promise<Scheme | null> {
     return r ? readScheme(r) : null;
 }
 
+const dayOf = (d: unknown) => new Date(new Date(d as any).getTime() + 5.5 * 3600_000).toISOString().slice(0, 10);
+
+/**
+ * The files of an upload, by field, each with its fingerprint. A file sent
+ * twice in the same upload is kept once.
+ */
+function uploadedFiles(req: Request) {
+    const files: Record<string, EntryFile[]> = {};
+    const seen = new Set<string>();
+    for (const f of ((req as any).files ?? []) as any[]) {
+        if (f.sha256 && seen.has(f.sha256)) continue;
+        if (f.sha256) seen.add(f.sha256);
+        (files[f.fieldname] ??= []).push({
+            name: String(f.originalname).slice(0, 120),
+            url: f.path,
+            size: Number(f.size) || 0,
+            ext: String(f.originalname).split('.').pop()?.toLowerCase() ?? '',
+            ...(f.sha256 ? { sha256: f.sha256 } : {}),
+        });
+    }
+    return files;
+}
+
+/**
+ * Whether a store already sent one of these files, or already has this
+ * invoice number approved, on the scheme — so one invoice counts once, however
+ * many entries a store sends in a day. Rejected entries do not count: a store
+ * may send a rejected invoice again. Returns what to tell the sender, or null.
+ */
+async function alreadyCounted(schemeId: string, storeId: string, opts: { files?: Record<string, EntryFile[]>; invoiceNos?: string[]; except?: string }) {
+    const hashes = new Set(Object.values(opts.files ?? {}).flat().map(f => f.sha256).filter(Boolean) as string[]);
+    const wanted = new Map((opts.invoiceNos ?? []).map(n => [invoiceKey(n), String(n).trim()] as const).filter(([k]) => k));
+    if (!hashes.size && !wanted.size) return null;
+    const [rows]: any = await db.execute(
+        "SELECT id, files, invoice_no, invoices, status, created_at FROM scheme_entries WHERE scheme_id = ? AND store_id = ? AND status <> 'rejected'",
+        [schemeId, storeId]
+    );
+    for (const r of rows) {
+        if (r.id === opts.except) continue;
+        const same = Object.values(json<Record<string, EntryFile[]>>(r.files, {})).flat().find(f => f.sha256 && hashes.has(f.sha256));
+        if (same) return `"${same.name}" was already sent on ${dayOf(r.created_at)} — the same invoice counts once`;
+        if (r.status !== 'approved' || !wanted.size) continue;
+        /* An entry read invoice by invoice has every number; an older one has one in invoice_no. */
+        const theirs = json<{ invoice_no: string }[]>(r.invoices, []).map(i => i.invoice_no);
+        for (const no of theirs.length ? theirs : [r.invoice_no]) {
+            const hit = wanted.get(invoiceKey(no));
+            if (hit) return `Invoice ${hit} is already approved for this store (entry of ${dayOf(r.created_at)})`;
+        }
+    }
+    return null;
+}
+
 const log = (req: Request, actionType: string, scheme: { id: string; title: string }, details: Record<string, unknown> = {}) => {
     const admin = (req as any).user;
     ActivityLogService.log({
@@ -346,7 +398,7 @@ export class SchemeController {
                     city: stores.get(String(e.store_id))?.city ?? null, state: stores.get(String(e.store_id))?.state ?? null,
                     answers: json(e.answers, {}), files: json(e.files, {}),
                     score: Number(e.score), lines: json(e.lines, null), claimed_lines: json(e.claimed_lines, null),
-                    source: e.source || 'store', invoice_no: e.invoice_no ?? null,
+                    source: e.source || 'store', invoice_no: e.invoice_no ?? null, invoices: json(e.invoices, null),
                     status: e.status, review_note: e.review_note,
                     reviewed_at: e.reviewed_at, created_at: e.created_at,
                 })),
@@ -510,10 +562,29 @@ export class SchemeController {
             const scheme = await loadScheme(entry.scheme_id);
             if (!scheme) return res.status(404).json({ error: 'Scheme not found' });
             if (status === 'rejected' && !String(note ?? '').trim()) return res.status(400).json({ error: 'Say why it was rejected — the store sees this' });
+            /* The invoice numbers read off the invoices: one invoice is approved once per store. */
+            let invoiceNo: string | null = req.body?.invoice_no === undefined ? entry.invoice_no : String(req.body.invoice_no ?? '').trim().slice(0, 80) || null;
+            let invoices: ReturnType<typeof invoicesScore>['invoices'] | null = json(entry.invoices, null);
+            let byInvoice: ReturnType<typeof invoicesScore> | null = null;
+            if (status === 'approved' && scheme.score_rule.mode === 'products' && Array.isArray(req.body?.invoices)) {
+                byInvoice = invoicesScore(scheme.score_rule.products, req.body.invoices as InvoiceIn[]);
+                if (byInvoice.problems.length) return res.status(400).json({ error: byInvoice.problems[0], problems: byInvoice.problems });
+                invoices = byInvoice.invoices;
+                invoiceNo = byInvoice.invoices.map(i => i.invoice_no).join(', ').slice(0, 80);
+            }
+            if (status === 'approved') {
+                const nos = invoices?.length ? invoices.map(i => i.invoice_no) : invoiceNo ? [invoiceNo] : [];
+                const dup = await alreadyCounted(scheme.id, String(entry.store_id), { invoiceNos: nos, except: entry.id });
+                if (dup) return res.status(409).json({ error: dup, problems: [dup] });
+            }
 
             let newScore = score === undefined || score === null || score === '' ? Number(entry.score) : Number(score);
             let lines: ReturnType<typeof linesScore>['lines'] | null = json(entry.lines, null);
-            if (status === 'approved' && scheme.score_rule.mode === 'products') {
+            if (byInvoice) {
+                newScore = byInvoice.score;
+                lines = byInvoice.lines;
+            } else if (status === 'approved' && scheme.score_rule.mode === 'products') {
+                invoices = null;                        // approved as one total: no per-invoice breakdown
                 const given: EntryLine[] = Array.isArray(req.body?.lines) ? req.body.lines : [];
                 const r = linesScore(scheme.score_rule.products, given);
                 if (r.problems.length) return res.status(400).json({ error: r.problems[0], problems: r.problems });
@@ -523,8 +594,8 @@ export class SchemeController {
             if (!Number.isFinite(newScore) || newScore < 0) return res.status(400).json({ error: 'The score must be a number' });
 
             await db.execute(
-                `UPDATE scheme_entries SET status = ?, score = ?, \`lines\` = ?, review_note = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
-                [status, newScore, lines ? JSON.stringify(lines) : null, String(note ?? '').trim().slice(0, 500) || null, (req as any).user?.id ?? null, entry.id]
+                `UPDATE scheme_entries SET status = ?, score = ?, \`lines\` = ?, invoice_no = ?, invoices = ?, review_note = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
+                [status, newScore, lines ? JSON.stringify(lines) : null, invoiceNo, invoices ? JSON.stringify(invoices) : null, String(note ?? '').trim().slice(0, 500) || null, (req as any).user?.id ?? null, entry.id]
             );
             log(req, 'SCHEME_ENTRY_REVIEWED', scheme, { entry: entry.id, status, score: newScore });
 
@@ -656,10 +727,9 @@ export class SchemeController {
             if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'The date is not valid' });
 
             const answers = json<Record<string, unknown>>(req.body?.answers, {});
-            const files: Record<string, EntryFile[]> = {};
-            for (const f of ((req as any).files ?? []) as any[]) {
-                (files[f.fieldname] ??= []).push({ name: String(f.originalname).slice(0, 120), url: f.path, size: Number(f.size) || 0, ext: String(f.originalname).split('.').pop()?.toLowerCase() ?? '' });
-            }
+            const files = uploadedFiles(req);
+            const dup = await alreadyCounted(scheme.id, storeId, { files, invoiceNos: [String(req.body?.invoice_no ?? '')] });
+            if (dup) return res.status(409).json({ error: dup, problems: [dup] });
             const clean: Record<string, string> = {};
             for (const f of scheme.fields) if (f.type !== 'file' && answers[f.id] !== undefined) clean[f.id] = String(answers[f.id]).trim();
 
@@ -839,7 +909,7 @@ export class SchemeController {
                 'SELECT joined_at FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, store.id]
             );
             const [entries]: any = await db.execute(
-                'SELECT id, answers, files, score, `lines`, claimed_lines, status, review_note, created_at, reviewed_at FROM scheme_entries WHERE scheme_id = ? AND store_id = ? ORDER BY created_at DESC',
+                'SELECT id, answers, files, score, `lines`, claimed_lines, invoices, status, review_note, created_at, reviewed_at FROM scheme_entries WHERE scheme_id = ? AND store_id = ? ORDER BY created_at DESC',
                 [scheme.id, store.id]
             );
             const board = await schemeStandings(scheme);
@@ -873,6 +943,7 @@ export class SchemeController {
                 entries: entries.map((e: any) => ({
                     id: e.id, answers: json(e.answers, {}), files: json(e.files, {}),
                     score: Number(e.score), lines: json(e.lines, null), claimed_lines: json(e.claimed_lines, null),
+                    invoices: e.status === 'approved' ? json(e.invoices, null) : null,
                     status: e.status, review_note: e.review_note,
                     created_at: e.created_at, reviewed_at: e.reviewed_at,
                 })),
@@ -927,30 +998,28 @@ export class SchemeController {
             }
 
             const answers = json<Record<string, unknown>>(req.body?.answers, {});
-            const files: Record<string, EntryFile[]> = {};
-            for (const f of ((req as any).files ?? []) as any[]) {
-                (files[f.fieldname] ??= []).push({
-                    name: String(f.originalname).slice(0, 120),
-                    url: f.path,
-                    size: Number(f.size) || 0,
-                    ext: String(f.originalname).split('.').pop()?.toLowerCase() ?? '',
-                });
-            }
+            const files = uploadedFiles(req);
             /* Only the scheme's own fields are kept; a file sent under any other
                name is refused rather than stored. */
             const known = new Set(scheme.fields.map(f => f.id));
             if (Object.keys(files).some(k => !known.has(k))) return res.status(400).json({ error: 'A file was sent for a field this scheme does not have' });
+            const dup = await alreadyCounted(scheme.id, store.id, { files });
+            if (dup) return res.status(409).json({ error: dup, problems: [dup] });
             const clean: Record<string, string> = {};
             for (const f of scheme.fields) if (f.type !== 'file' && answers[f.id] !== undefined) clean[f.id] = String(answers[f.id]).trim();
 
             const problems = entryProblems(scheme.fields, clean, files);
-            /* A products scheme: the store says what is on its invoice; the
-               admin checks it against the invoice when approving. */
+            /* A products scheme: the store sends its invoice, and the admin
+               reads it and adds the products when approving. Lines the store
+               lists itself are kept as what it claimed, but are not needed. */
             let claimed: ReturnType<typeof linesScore> | null = null;
             if (scheme.score_rule.mode === 'products') {
+                if (!Object.values(files).some(list => list.length)) problems.push('Add your invoice');
                 const given = json<EntryLine[]>(req.body?.lines, []);
-                claimed = linesScore(scheme.score_rule.products, given);
-                problems.push(...claimed.problems);
+                if (given.length) {
+                    claimed = linesScore(scheme.score_rule.products, given);
+                    problems.push(...claimed.problems);
+                }
             }
             if (problems.length) return res.status(400).json({ error: problems[0], problems });
 
@@ -958,7 +1027,8 @@ export class SchemeController {
             await db.execute(
                 'INSERT INTO scheme_entries (id, scheme_id, store_id, answers, files, score, claimed_lines) VALUES (?, ?, ?, ?, ?, ?, ?)',
                 [id, scheme.id, store.id, JSON.stringify(clean), JSON.stringify(files),
-                 claimed ? claimed.score : entryScore(scheme.score_rule, clean), claimed ? JSON.stringify(claimed.lines) : null]
+                 claimed ? claimed.score : scheme.score_rule.mode === 'products' ? 0 : entryScore(scheme.score_rule, clean),
+                 claimed ? JSON.stringify(claimed.lines) : null]
             );
             res.json({ success: true, id });
         } catch (error: any) {

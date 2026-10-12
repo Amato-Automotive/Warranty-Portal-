@@ -11,10 +11,10 @@ import { AddEntryDialog } from "./AddEntryDialog";
 import { ImportDialog } from "./ImportDialog";
 import { SellThroughTab } from "./SellThroughTab";
 import { SchemeOverview } from "./SchemeOverview";
-import { ReviewQueue } from "./ReviewQueue";
+import { ReviewQueue, type InvoiceOut } from "./ReviewQueue";
 import { type AdminEntry as Entry, type AdminDetail as Detail, stateKey, stateLabel, istDay } from "./adminTypes";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Check, X, Download, Loader2, Paperclip, Pencil, Send, Ban, Copy as CopyIcon, Plus, Trash2, Search, RefreshCw, FileSpreadsheet, FilePlus2, CalendarDays, Gift } from "lucide-react";
+import { ArrowLeft, Check, X, Download, Loader2, Paperclip, Pencil, Send, Ban, Copy as CopyIcon, Plus, Trash2, Search, RefreshCw, FileSpreadsheet, FilePlus2, CalendarDays, Gift, ChevronRight } from "lucide-react";
 import {
     CATEGORY_LABEL, STATE_META, ENTRY_META, rewardSummary, formatWindow, formatDay, formatMonth,
     type Scheme,
@@ -65,7 +65,6 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
     const [scoreEdit, setScoreEdit] = useState<Record<string, string>>({});
     const [rejecting, setRejecting] = useState<{ id: string; note: string } | null>(null);
     /* Approving a products scheme: the lines read off the invoice. */
-    const [picking, setPicking] = useState<{ id: string; lines: { product_id: string; qty: string }[] } | null>(null);
     const [adjust, setAdjust] = useState({ store_id: "", points: "", note: "" });
     const [confirmEnd, setConfirmEnd] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
@@ -73,6 +72,11 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
     const [importOpen, setImportOpen] = useState(false);
     const [reloadKey, setReloadKey] = useState(0);
     const [ef, setEf] = useState({ q: "", store: "all", state: "all", from: "", to: "", minPts: "", maxPts: "", product: "all" });
+    /* The entries list by day (all stores together) or by store, each store's days inside it. */
+    const [groupBy, setGroupBy] = useState<"day" | "store">("day");
+    const [openStores, setOpenStores] = useState<Set<string>>(new Set());
+    /* An entry sent to the review queue from the table opens there first. */
+    const [queueStart, setQueueStart] = useState<string | null>(null);
     const [lf, setLf] = useState({ q: "", store: "all", state: "all", club: "all", reward: "all", paid: "all", minScore: "", sort: "rank" });
     const [pf, setPf] = useState({ q: "", store: "all", state: "all", entries: "all" });
 
@@ -171,6 +175,23 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
             stores: new Set(items.map(e => e.store_id)).size,
         }));
     }, [entries]);
+    /* Entries by store (most to review first, then by name), and each store's by day, newest first. */
+    const byStore = useMemo(() => {
+        const stores = new Map<string, Entry[]>();
+        for (const e of entries) stores.set(e.store_id, [...(stores.get(e.store_id) ?? []), e]);
+        return [...stores].map(([store_id, items]) => {
+            const days = new Map<string, Entry[]>();
+            for (const e of items) days.set(istDay(e.created_at), [...(days.get(istDay(e.created_at)) ?? []), e]);
+            return {
+                store_id, store_name: items[0].store_name, place: [items[0].city, items[0].state].filter(Boolean).join(", "),
+                count: items.length,
+                pending: items.filter(e => e.status === "pending").length,
+                points: items.filter(e => e.status === "approved").reduce((n, e) => n + e.score, 0),
+                days: [...days].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => ({ day, items: list })),
+            };
+        }).sort((a, b) => b.pending - a.pending || a.store_name.localeCompare(b.store_name));
+    }, [entries]);
+    const toggleStore = (id: string) => setOpenStores(m => { const n = new Set(m); if (n.has(id)) n.delete(id); else n.add(id); return n; });
     if (!data) {
         return <div className="flex items-center justify-center min-h-[300px] gap-2 text-slate-400"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /> Loading…</div>;
     }
@@ -186,12 +207,12 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
             ...(lines ? { lines } : {}),
             ...(status === "approved" && !lines && scoreEdit[e.id] !== undefined ? { score: scoreEdit[e.id] } : {}),
         }), status === "approved" ? "Entry approved" : "Entry rejected");
-    const reviewFromQueue = (e: Entry, status: "approved" | "rejected", o: { note?: string; lines?: { product_id: string; qty: number }[]; score?: string }) =>
+    const reviewFromQueue = (e: Entry, status: "approved" | "rejected", o: { note?: string; lines?: { product_id: string; qty: number }[]; score?: string; invoice_no?: string; invoices?: InvoiceOut[] }) =>
         act(e.id, () => api.put(`/schemes/admin/entries/${e.id}`, {
             status, note: o.note, ...(o.lines ? { lines: o.lines } : {}), ...(status === "approved" && o.score !== undefined ? { score: o.score } : {}),
+            ...(o.invoice_no !== undefined ? { invoice_no: o.invoice_no } : {}),
+            ...(o.invoices ? { invoices: o.invoices } : {}),
         }), status === "approved" ? "Entry approved" : "Entry rejected");
-    const pickTotal = (p: NonNullable<typeof picking>) =>
-        p.lines.reduce((n, l) => n + (Number(l.qty) || 0) * (products.find(x => x.id === l.product_id)?.points ?? 0), 0);
 
     const exportBoard = () => downloadCSV(board.map(r => ({
         Rank: r.rank, Store: r.store_name, City: r.city ?? "", State: r.state ?? "",
@@ -210,6 +231,101 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
         Products: (e.lines ?? []).map(l => `${l.name} x ${l.qty}`).join("; "),
         Note: e.review_note ?? "",
     })), `${s.title.replace(/[^a-z0-9]+/gi, "-")}-entries.csv`);
+
+    /** One entry as a table row; used by both groupings. */
+    const entryRow = (e: Entry) => (
+                                            <tr key={e.id} className="align-top">
+                                                <td className="px-3 py-3 text-xs text-slate-500 whitespace-nowrap">{when(e.created_at)}</td>
+                                                <td className="px-3 py-3">
+                                                    <div className="font-semibold text-slate-800">{e.store_name}</div>
+                                                    <div className="text-xs text-slate-400">{[e.city, e.state].filter(Boolean).join(", ")}</div>
+                                                </td>
+                                                <td className="px-3 py-3 text-xs text-slate-700 space-y-1">
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        {e.source !== "store" && <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-500">{e.source === "import" ? "Imported" : "Added by admin"}</span>}
+                                                        {e.invoice_no && <span className="text-slate-500">Invoice {e.invoice_no}</span>}
+                                                    </div>
+                                                    {e.status === "pending" && (e.claimed_lines ?? []).length > 0 && (
+                                                        <div className="rounded-md bg-sky-50 border border-sky-100 px-2 py-1">
+                                                            <span className="text-sky-700 font-semibold">Store says: </span>
+                                                            {(e.claimed_lines ?? []).map(l => `${l.name} × ${l.qty}`).join(", ")}
+                                                            <span className="text-sky-700"> = {e.score} pts</span>
+                                                        </div>
+                                                    )}
+                                                    {s.fields.filter(f => f.type !== "file" && e.answers[f.id]).map(f => (
+                                                        <div key={f.id}><span className="text-slate-400">{f.label}:</span> {e.answers[f.id]}</div>
+                                                    ))}
+                                                    {Object.entries(e.files).map(([fid, list]) => (
+                                                        <div key={fid} className="flex flex-wrap items-center gap-1.5">
+                                                            <span className="text-slate-400">{fieldLabel(fid)}:</span>
+                                                            {list.map(f => (
+                                                                <a key={f.url} href={f.url} target="_blank" rel="noreferrer"
+                                                                    className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-sky-700 hover:bg-sky-50">
+                                                                    <Paperclip className="h-3 w-3" />{f.name}
+                                                                </a>
+                                                            ))}
+                                                        </div>
+                                                    ))}
+                                                </td>
+                                                {hasScore && (
+                                                    <td className="px-3 py-3">
+                                                        {products.length ? (
+                                                            e.status === "approved" ? (
+                                                                <div className="text-xs space-y-0.5">
+                                                                    {(e.invoices ?? []).length > 1
+                                                                        ? (e.invoices ?? []).map((inv, k) => <div key={k} className="whitespace-nowrap"><span className="text-slate-400">#{inv.invoice_no}</span> = <b>{inv.points}</b></div>)
+                                                                        : (e.lines ?? []).map(l => <div key={l.product_id} className="whitespace-nowrap">{l.name} × {l.qty} = <b>{l.subtotal}</b></div>)}
+                                                                    <div className="font-bold text-slate-800">Total {e.score}</div>
+                                                                </div>
+                                                            ) : <span className="text-slate-300">—</span>
+                                                        ) : e.status === "pending" ? (
+                                                            <Input type="number" min={0} className="h-8 w-20 text-sm" aria-label="Score"
+                                                                value={scoreEdit[e.id] ?? String(e.score)}
+                                                                onChange={ev => setScoreEdit(m => ({ ...m, [e.id]: ev.target.value }))} />
+                                                        ) : <span className="font-semibold tabular-nums">{e.score}</span>}
+                                                    </td>
+                                                )}
+                                                <td className="px-3 py-3">
+                                                    {e.status === "pending" ? (
+                                                        rejecting?.id === e.id ? (
+                                                            <div className="space-y-1.5">
+                                                                <Input autoFocus className="h-8 text-xs" placeholder="Why? The store sees this" value={rejecting.note}
+                                                                    onChange={ev => setRejecting({ id: e.id, note: ev.target.value })} />
+                                                                <div className="flex gap-1.5">
+                                                                    <Button size="sm" variant="destructive" disabled={!rejecting.note.trim() || busy === e.id}
+                                                                        onClick={() => { const note = rejecting.note; setRejecting(null); review(e, "rejected", note); }}>Reject</Button>
+                                                                    <Button size="sm" variant="ghost" onClick={() => setRejecting(null)}>Cancel</Button>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex gap-1.5">
+                                                                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={busy === e.id}
+                                                                    title={products.length ? "Opens it in the review queue, to read it invoice by invoice" : undefined}
+                                                                    onClick={() => {
+                                                                        /* A products entry is read invoice by invoice: that is the review queue. */
+                                                                        if (products.length) { setQueueStart(e.id); setEntryFilter("pending"); }
+                                                                        else review(e, "approved");
+                                                                    }}>
+                                                                    <Check className="h-4 w-4 mr-1" /> {products.length ? "Review" : "Approve"}
+                                                                </Button>
+                                                                <Button size="sm" variant="outline" onClick={() => setRejecting({ id: e.id, note: "" })}>
+                                                                    <X className="h-4 w-4 mr-1" /> Reject
+                                                                </Button>
+                                                            </div>
+                                                        )
+                                                    ) : (
+                                                        <div className="space-y-1">
+                                                            <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${ENTRY_META[e.status].tone}`}>{ENTRY_META[e.status].label}</span>
+                                                            {e.review_note && <p className="text-xs text-slate-500">{e.review_note}</p>}
+                                                            <button type="button" className="block text-[11px] text-slate-400 hover:text-orange-600"
+                                                                onClick={() => act(e.id, () => api.put(`/schemes/admin/entries/${e.id}`, { status: "pending" }), "Moved back to review")}>
+                                                                Undo
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            </tr>
+    );
 
     return (
         <div className="space-y-5">
@@ -299,7 +415,18 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                 );
                             })}
                         </div>
-                        <Button variant="outline" size="sm" onClick={exportEntries} disabled={!entries.length}><Download className="h-4 w-4 mr-1" /> Export shown</Button>
+                        <div className="flex items-center gap-2">
+                            {entryFilter !== "pending" && (
+                                <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-medium" role="group" aria-label="Group entries by">
+                                    <span className="px-2 text-slate-400">Group by</span>
+                                    {([["day", "Date"], ["store", "Store"]] as const).map(([k, l]) => (
+                                        <button key={k} type="button" onClick={() => setGroupBy(k)} aria-pressed={groupBy === k}
+                                            className={cn("px-2.5 py-1 rounded-md", groupBy === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}>{l}</button>
+                                    ))}
+                                </div>
+                            )}
+                            <Button variant="outline" size="sm" onClick={exportEntries} disabled={!entries.length}><Download className="h-4 w-4 mr-1" /> Export shown</Button>
+                        </div>
                     </div>
                     <FilterBar q={ef.q} onQ={q => setEf(f => ({ ...f, q }))} placeholder="Search city, invoice number, anything typed…"
                         shown={entries.length} total={data.entries.filter(e => entryFilter === "all" || e.status === entryFilter).length}
@@ -338,7 +465,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                         )}
                     </FilterBar>
                     {entryFilter === "pending" ? (
-                        <ReviewQueue scheme={s} entries={entries} busy={busy} onReview={reviewFromQueue} />
+                        <ReviewQueue key={queueStart ?? "queue"} scheme={s} entries={entries} busy={busy} onReview={reviewFromQueue} startId={queueStart} />
                     ) : !entries.length ? (
                         <p className="text-sm text-slate-400 py-10 text-center">No entries match.</p>
                     ) : (
@@ -355,7 +482,40 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {byDay.map(group => (
+                                        {groupBy === "store" && byStore.map(st => {
+                                            const open = openStores.has(st.store_id) || ef.store !== "all" || byStore.length === 1;
+                                            return (
+                                                <Fragment key={st.store_id}>
+                                                    <tr className="bg-slate-50 hover:bg-slate-100 cursor-pointer" onClick={() => toggleStore(st.store_id)}>
+                                                        <td colSpan={hasScore ? 5 : 4} className="px-3 py-2.5">
+                                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                                <span className="flex items-center gap-2 min-w-0">
+                                                                    <ChevronRight className={cn("h-4 w-4 text-slate-400 transition-transform", open && "rotate-90")} />
+                                                                    <span className="font-bold text-slate-800 truncate">{st.store_name}</span>
+                                                                    {st.place && <span className="text-xs text-slate-400 truncate">{st.place}</span>}
+                                                                </span>
+                                                                <span className="text-xs text-slate-500">
+                                                                    {st.count} entr{st.count === 1 ? "y" : "ies"} · {st.days.length} day{st.days.length === 1 ? "" : "s"}
+                                                                    {st.pending ? <span className="text-amber-700 font-semibold"> · {st.pending} to review</span> : ""}
+                                                                    {hasScore && <> · <b className="tabular-nums text-slate-800">{st.points} pts</b> approved</>}
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                    {open && st.days.map(d => (
+                                                        <Fragment key={d.day}>
+                                                            <tr>
+                                                                <td colSpan={hasScore ? 5 : 4} className="pl-9 pr-3 py-1.5 text-xs font-semibold text-slate-600 bg-white">
+                                                                    {formatDay(d.day)} <span className="font-normal text-slate-400">· {d.items.length} entr{d.items.length === 1 ? "y" : "ies"}</span>
+                                                                </td>
+                                                            </tr>
+                                                            {d.items.map(entryRow)}
+                                                        </Fragment>
+                                                    ))}
+                                                </Fragment>
+                                            );
+                                        })}
+                                        {groupBy === "day" && byDay.map(group => (
                                             <Fragment key={group.day}>
                                                 <tr className="bg-slate-50">
                                                     <td colSpan={hasScore ? 5 : 4} className="px-3 py-2 text-xs font-bold text-slate-700">
@@ -363,127 +523,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                                         <span className="ml-2 font-normal text-slate-500">{group.items.length} entr{group.items.length === 1 ? "y" : "ies"}{group.pending ? ` · ${group.pending} to review` : ""} · {group.stores} store{group.stores === 1 ? "" : "s"}</span>
                                                     </td>
                                                 </tr>
-                                                {group.items.map(e => (
-                                            <tr key={e.id} className="align-top">
-                                                <td className="px-3 py-3 text-xs text-slate-500 whitespace-nowrap">{when(e.created_at)}</td>
-                                                <td className="px-3 py-3">
-                                                    <div className="font-semibold text-slate-800">{e.store_name}</div>
-                                                    <div className="text-xs text-slate-400">{[e.city, e.state].filter(Boolean).join(", ")}</div>
-                                                </td>
-                                                <td className="px-3 py-3 text-xs text-slate-700 space-y-1">
-                                                    <div className="flex flex-wrap items-center gap-1.5">
-                                                        {e.source !== "store" && <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-500">{e.source === "import" ? "Imported" : "Added by admin"}</span>}
-                                                        {e.invoice_no && <span className="text-slate-500">Invoice {e.invoice_no}</span>}
-                                                    </div>
-                                                    {e.status === "pending" && (e.claimed_lines ?? []).length > 0 && (
-                                                        <div className="rounded-md bg-sky-50 border border-sky-100 px-2 py-1">
-                                                            <span className="text-sky-700 font-semibold">Store says: </span>
-                                                            {(e.claimed_lines ?? []).map(l => `${l.name} × ${l.qty}`).join(", ")}
-                                                            <span className="text-sky-700"> = {e.score} pts</span>
-                                                        </div>
-                                                    )}
-                                                    {s.fields.filter(f => f.type !== "file" && e.answers[f.id]).map(f => (
-                                                        <div key={f.id}><span className="text-slate-400">{f.label}:</span> {e.answers[f.id]}</div>
-                                                    ))}
-                                                    {Object.entries(e.files).map(([fid, list]) => (
-                                                        <div key={fid} className="flex flex-wrap items-center gap-1.5">
-                                                            <span className="text-slate-400">{fieldLabel(fid)}:</span>
-                                                            {list.map(f => (
-                                                                <a key={f.url} href={f.url} target="_blank" rel="noreferrer"
-                                                                    className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 text-sky-700 hover:bg-sky-50">
-                                                                    <Paperclip className="h-3 w-3" />{f.name}
-                                                                </a>
-                                                            ))}
-                                                        </div>
-                                                    ))}
-                                                </td>
-                                                {hasScore && (
-                                                    <td className="px-3 py-3">
-                                                        {products.length ? (
-                                                            e.status === "approved" ? (
-                                                                <div className="text-xs space-y-0.5">
-                                                                    {(e.lines ?? []).map(l => <div key={l.product_id} className="whitespace-nowrap">{l.name} × {l.qty} = <b>{l.subtotal}</b></div>)}
-                                                                    <div className="font-bold text-slate-800">Total {e.score}</div>
-                                                                </div>
-                                                            ) : <span className="text-slate-300">—</span>
-                                                        ) : e.status === "pending" ? (
-                                                            <Input type="number" min={0} className="h-8 w-20 text-sm" aria-label="Score"
-                                                                value={scoreEdit[e.id] ?? String(e.score)}
-                                                                onChange={ev => setScoreEdit(m => ({ ...m, [e.id]: ev.target.value }))} />
-                                                        ) : <span className="font-semibold tabular-nums">{e.score}</span>}
-                                                    </td>
-                                                )}
-                                                <td className="px-3 py-3">
-                                                    {e.status === "pending" ? (
-                                                        picking?.id === e.id ? (
-                                                            <div className="space-y-1.5 min-w-[260px]">
-                                                                <p className="text-[11px] font-semibold text-slate-600">Products on this invoice</p>
-                                                                {picking.lines.map((l, i) => (
-                                                                    <div key={i} className="flex items-center gap-1">
-                                                                        <Select value={l.product_id} onValueChange={v => setPicking({ ...picking, lines: picking.lines.map((x, j) => j === i ? { ...x, product_id: v } : x) })}>
-                                                                            <SelectTrigger className="h-8 text-xs w-[150px]" aria-label="Product"><SelectValue /></SelectTrigger>
-                                                                            <SelectContent>{products.map(p => <SelectItem key={p.id} value={p.id}>{p.name} ({p.points} pts)</SelectItem>)}</SelectContent>
-                                                                        </Select>
-                                                                        <Input type="number" min={1} className="h-8 w-16 text-xs" placeholder="Qty" aria-label="Quantity" value={l.qty}
-                                                                            onChange={ev => setPicking({ ...picking, lines: picking.lines.map((x, j) => j === i ? { ...x, qty: ev.target.value } : x) })} />
-                                                                        <Button type="button" size="icon" variant="ghost" className="h-7 w-7 text-rose-500" disabled={picking.lines.length === 1}
-                                                                            onClick={() => setPicking({ ...picking, lines: picking.lines.filter((_, j) => j !== i) })} aria-label="Remove line"><Trash2 className="h-3.5 w-3.5" /></Button>
-                                                                    </div>
-                                                                ))}
-                                                                <button type="button" className="text-[11px] text-sky-700 flex items-center gap-1"
-                                                                    onClick={() => setPicking({ ...picking, lines: [...picking.lines, { product_id: products[0].id, qty: "" }] })}>
-                                                                    <Plus className="h-3 w-3" /> Another product
-                                                                </button>
-                                                                <p className="text-xs text-slate-700">Points: <b className="tabular-nums">{pickTotal(picking)}</b></p>
-                                                                <div className="flex gap-1.5">
-                                                                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700"
-                                                                        disabled={busy === e.id || !picking.lines.some(l => Number(l.qty) > 0)}
-                                                                        onClick={() => {
-                                                                            const lines = picking.lines.filter(l => Number(l.qty) > 0).map(l => ({ product_id: l.product_id, qty: Number(l.qty) }));
-                                                                            setPicking(null);
-                                                                            review(e, "approved", undefined, lines);
-                                                                        }}>Approve</Button>
-                                                                    <Button size="sm" variant="ghost" onClick={() => setPicking(null)}>Cancel</Button>
-                                                                </div>
-                                                            </div>
-                                                        ) : rejecting?.id === e.id ? (
-                                                            <div className="space-y-1.5">
-                                                                <Input autoFocus className="h-8 text-xs" placeholder="Why? The store sees this" value={rejecting.note}
-                                                                    onChange={ev => setRejecting({ id: e.id, note: ev.target.value })} />
-                                                                <div className="flex gap-1.5">
-                                                                    <Button size="sm" variant="destructive" disabled={!rejecting.note.trim() || busy === e.id}
-                                                                        onClick={() => { const note = rejecting.note; setRejecting(null); review(e, "rejected", note); }}>Reject</Button>
-                                                                    <Button size="sm" variant="ghost" onClick={() => setRejecting(null)}>Cancel</Button>
-                                                                </div>
-                                                            </div>
-                                                        ) : (
-                                                            <div className="flex gap-1.5">
-                                                                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={busy === e.id}
-                                                                    onClick={() => products.length
-                                                                        ? setPicking({ id: e.id, lines: (e.claimed_lines ?? []).length
-                                                                            ? e.claimed_lines!.map(l => ({ product_id: l.product_id, qty: String(l.qty) }))
-                                                                            : [{ product_id: products[0].id, qty: "" }] })
-                                                                        : review(e, "approved")}>
-                                                                    <Check className="h-4 w-4 mr-1" /> Approve
-                                                                </Button>
-                                                                <Button size="sm" variant="outline" onClick={() => setRejecting({ id: e.id, note: "" })}>
-                                                                    <X className="h-4 w-4 mr-1" /> Reject
-                                                                </Button>
-                                                            </div>
-                                                        )
-                                                    ) : (
-                                                        <div className="space-y-1">
-                                                            <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${ENTRY_META[e.status].tone}`}>{ENTRY_META[e.status].label}</span>
-                                                            {e.review_note && <p className="text-xs text-slate-500">{e.review_note}</p>}
-                                                            <button type="button" className="block text-[11px] text-slate-400 hover:text-orange-600"
-                                                                onClick={() => act(e.id, () => api.put(`/schemes/admin/entries/${e.id}`, { status: "pending" }), "Moved back to review")}>
-                                                                Undo
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                                ))}
+                                                {group.items.map(entryRow)}
                                             </Fragment>
                                         ))}
                                     </tbody>

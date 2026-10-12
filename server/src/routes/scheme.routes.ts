@@ -1,4 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { createHash } from 'crypto';
+import fs from 'fs';
 import { SchemeController } from '../controllers/scheme.controller.js';
 import { authenticateToken, requirePermission, requireRole } from '../middleware/auth.js';
 import { schemeUpload, attachPublicUrls } from '../config/localUpload.js';
@@ -6,10 +8,16 @@ import { schemeUpload, attachPublicUrls } from '../config/localUpload.js';
 const router = Router();
 
 /* Files arrive under their field's id; which ones a scheme accepts, and in
-   what formats, is checked by the controller against the scheme itself. */
+   what formats, is checked by the controller against the scheme itself.
+   Each file's SHA-256 is taken as it arrived, so the same invoice sent again
+   can be recognised whatever it is named. */
 const entryFiles = (req: Request, res: Response, next: NextFunction) => {
-    schemeUpload.any()(req, res, (err: any) => {
+    schemeUpload.any()(req, res, async (err: any) => {
         if (err) return res.status(400).json({ success: false, error: err.message || 'File upload failed' });
+        for (const f of ((req as any).files ?? []) as any[]) {
+            try { f.sha256 = createHash('sha256').update(await fs.promises.readFile(f.path)).digest('hex'); }
+            catch { /* unreadable: no fingerprint, the file is still kept */ }
+        }
         attachPublicUrls(req, res, next);
     });
 };

@@ -5,7 +5,10 @@ import type { Scheme, EntryFile, EntryLine, Club } from "@/lib/schemes";
 export interface AdminEntry {
     id: string; store_id: string; store_name: string; city: string | null; state: string | null; answers: Record<string, string>;
     files: Record<string, EntryFile[]>; score: number; lines: EntryLine[] | null; claimed_lines: EntryLine[] | null;
-    source: "store" | "admin" | "import"; invoice_no: string | null; status: "pending" | "approved" | "rejected";
+    source: "store" | "admin" | "import"; invoice_no: string | null;
+    /** Approved invoice by invoice: each invoice's number, its files (pages) and what was on it. */
+    invoices: { invoice_no: string; files: string[]; lines: EntryLine[]; points: number }[] | null;
+    status: "pending" | "approved" | "rejected";
     review_note: string | null; reviewed_at: string | null; created_at: string;
 }
 export interface BoardRow {

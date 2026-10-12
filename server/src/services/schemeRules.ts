@@ -175,6 +175,42 @@ export function linesScore(products: ProductPoints[], lines: EntryLine[]) {
     return { score: out.reduce((n, x) => n + x.subtotal, 0), lines: out, problems };
 }
 
+/** One invoice of an entry as the admin read it: its number, its files (pages), and what was on it. */
+export interface InvoiceIn { invoice_no: string; files: string[]; lines: EntryLine[] }
+
+/**
+ * An entry read invoice by invoice. Each invoice needs its number (that is
+ * what stops one invoice counting twice) and may have no counted products;
+ * the entry needs at least one product overall. The entry's lines are the
+ * invoices' lines added up per product, so totals, months and sell-through
+ * read exactly as before.
+ */
+export function invoicesScore(products: ProductPoints[], invoices: InvoiceIn[]) {
+    const problems: string[] = [];
+    const out: { invoice_no: string; files: string[]; lines: ReturnType<typeof linesScore>['lines']; points: number }[] = [];
+    const seen = new Map<string, number>();
+    invoices.forEach((inv, i) => {
+        const n = i + 1;
+        const no = String(inv?.invoice_no ?? '').trim().slice(0, 80);
+        if (!no) problems.push(`Give the invoice number for invoice ${n}`);
+        const key = invoiceKey(no);
+        if (key && seen.has(key)) problems.push(`Invoices ${seen.get(key)} and ${n} have the same number (${no}) — if they are pages of one invoice, put them together`);
+        else if (key) seen.set(key, n);
+        const given = (Array.isArray(inv?.lines) ? inv.lines : []).filter(l => Number(l?.qty) > 0);
+        const r = given.length ? linesScore(products, given) : { score: 0, lines: [], problems: [] };
+        problems.push(...r.problems.map(p => `Invoice ${n}: ${p}`));
+        out.push({ invoice_no: no, files: (Array.isArray(inv?.files) ? inv.files : []).map(String).slice(0, 20), lines: r.lines, points: r.score });
+    });
+    if (!invoices.length) problems.push('Add the invoice');
+    const total = new Map<string, ReturnType<typeof linesScore>['lines'][number]>();
+    for (const l of out.flatMap(o => o.lines)) {
+        const t = total.get(l.product_id);
+        if (t) { t.qty += l.qty; t.subtotal += l.subtotal; } else total.set(l.product_id, { ...l });
+    }
+    if (!problems.length && !total.size) problems.push('Add at least one product from the invoices');
+    return { score: out.reduce((n, o) => n + o.points, 0), lines: [...total.values()], invoices: out, problems };
+}
+
 export type SchemeStatus = 'draft' | 'published' | 'ended';
 export type SchemeState = 'draft' | 'upcoming' | 'live' | 'closed';
 
@@ -304,7 +340,11 @@ export function isEligible(
 
 /* ─── An entry ────────────────────────────────────────────────────────────── */
 
-export interface EntryFile { name: string; url: string; size: number; ext: string }
+/** A file on an entry; `sha256` (taken on upload) recognises the same file sent again. */
+export interface EntryFile { name: string; url: string; size: number; ext: string; sha256?: string }
+
+/** An invoice number as written, compared without case, spaces or punctuation. */
+export const invoiceKey = (v: unknown) => String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 const extOf = (name: string) => String(name ?? '').split('.').pop()?.toLowerCase() ?? '';
 
