@@ -26,6 +26,7 @@ import {
 import { downloadCSV, formatToIST, cn, getWarrantyExpiration } from "@/lib/utils";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { StoreActivityPanel } from "./AdminPortalActivity";
 
 interface AdminVendorDetailsProps {
     vendor: any;
@@ -37,7 +38,7 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
     const { toast } = useToast();
     const [vendor, setVendor] = useState(initialVendor);
     const [activeTab, setActiveTab] = useState<
-        'warranties' | 'manpower' | 'franchises' | 'orders' | 'posm' | 'grievances' | 'audits' | 'sourcing' | 'announcements'
+        'warranties' | 'manpower' | 'franchises' | 'orders' | 'posm' | 'grievances' | 'audits' | 'sourcing' | 'announcements' | 'activity'
     >('warranties');
     const [isLoadingDetails, setIsLoadingDetails] = useState(true);
     const [franchises, setFranchises] = useState<any[]>([]);
@@ -1030,9 +1031,11 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
                 {/* Eight tabs do not fit one readable row, so the franchise view
                     wraps onto two rather than squeezing the labels. */}
-                <TabsList className={`grid w-full h-auto p-1 bg-slate-100 rounded-lg ${isDistributorsView ? 'grid-cols-3' : 'grid-cols-4 lg:grid-cols-8'}`}>
+                <TabsList className={`grid w-full h-auto p-1 bg-slate-100 rounded-lg ${isDistributorsView ? 'grid-cols-4' : 'grid-cols-3 sm:grid-cols-5 lg:grid-cols-9'}`}>
                     <TabsTrigger value="warranties" className="py-2.5">Warranties ({vendor.warranties?.length || 0})</TabsTrigger>
                     <TabsTrigger value="manpower" className="py-2.5">Manpower ({vendor.manpower?.length || 0})</TabsTrigger>
+                    {/* Time in the portal and what they did — franchises and distributors alike. */}
+                    {vendor.vendor_details_id && <TabsTrigger value="activity" className="py-2.5">Activity</TabsTrigger>}
                     {isDistributorsView && (
                         <TabsTrigger value="franchises" className="py-2.5">Franchises ({franchises.length})</TabsTrigger>
                     )}
@@ -1124,6 +1127,16 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                             </Card>
                         </TabsContent>
                     </>
+                )}
+
+                {vendor.vendor_details_id && (
+                    <TabsContent value="activity">
+                        <Card className="border-orange-100 shadow-sm">
+                            <CardContent className="pt-6">
+                                <StoreActivityPanel vendorId={String(vendor.vendor_details_id)} />
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
                 )}
 
                 <TabsContent value="warranties">

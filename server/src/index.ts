@@ -42,6 +42,7 @@ import { getISTTimestamp } from './utils/dateUtils.js';
 import pool, { getDbRetryStats, pingDatabase } from './config/database.js';
 import { ensureCustomerMobileLimitTable } from './utils/customerMobileLimits.js';
 import { backfillWarrantyStores } from './services/warrantyStore.js';
+import { PORTAL_ACTIVITY_TABLE } from './services/portalActivity.service.js';
 
 // Keep the process alive on stray async errors. A single unhandled promise
 // rejection (e.g. a transient DB error in a background task) would otherwise
@@ -283,6 +284,8 @@ async function runMigrations() {
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     ];
     for (const sql of schemeTables) await pool.query(sql);
+    // Franchise & distributor portal activity (time spent, pages opened).
+    await pool.query(PORTAL_ACTIVITY_TABLE);
     // Time windows on a scheme, and the product lines an admin reads off an entry.
     const [winCol]: any = await pool.query("SHOW COLUMNS FROM schemes LIKE 'windows'");
     if (winCol.length === 0) await pool.query('ALTER TABLE schemes ADD COLUMN windows JSON NULL AFTER submit_until');
@@ -298,6 +301,7 @@ async function runMigrations() {
     await addColumn('scheme_entries', 'claimed_lines', 'claimed_lines JSON NULL');
     await addColumn('scheme_entries', 'source', "source VARCHAR(10) NOT NULL DEFAULT 'store'");
     await addColumn('scheme_entries', 'invoice_no', 'invoice_no VARCHAR(80) NULL');
+    await addColumn('scheme_entries', 'invoices', 'invoices JSON NULL');
     await addColumn('scheme_entries', 'import_key', 'import_key VARCHAR(200) NULL, ADD INDEX idx_se_import (scheme_id, import_key)');
     await addColumn('scheme_payouts', 'delivery', 'delivery VARCHAR(12) NULL');
     await addColumn('scheme_payouts', 'dispatched_at', 'dispatched_at TIMESTAMP NULL');

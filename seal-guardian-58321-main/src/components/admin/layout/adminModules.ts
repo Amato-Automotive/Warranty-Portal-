@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+    Activity,
     Archive,
     BellRing,
     BookOpen,
@@ -31,6 +32,7 @@ import {
 export type AdminModule =
     | 'overview'
     | 'vendors'
+    | 'portal-activity'
     | 'distributors'
     | 'manpower'
     | 'customers'
@@ -69,6 +71,7 @@ const moduleToPermKey: Record<string, string> = {
     'ppf-rolls': 'warranties',
     'warranty-form': 'warranty_form',
     'vendors': 'vendors',
+    'portal-activity': 'vendors',
     'manpower': 'vendors',
     'customers': 'customers',
     'products': 'products',
@@ -135,6 +138,7 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
         label: "Franchise Network",
         items: [
             { id: 'vendors', label: "Franchises", icon: Store, keywords: ['vendors', 'stores', 'dealers'] },
+            { id: 'portal-activity', label: "Portal Activity", icon: Activity, keywords: ['franchise activity', 'distributor activity', 'time spent', 'logins', 'usage', 'inactive'] },
             { id: 'manpower', label: "Manpower", icon: HardHat, keywords: ['staff', 'installers', 'team'] },
             { id: 'audits', label: "Store Audits", icon: ClipboardCheck, keywords: ['audit & compliance', 'compliance'] },
             { id: 'posm', label: "POSM Requests", icon: Flag, keywords: ['posm requirements', 'marketing material', 'branding'] },

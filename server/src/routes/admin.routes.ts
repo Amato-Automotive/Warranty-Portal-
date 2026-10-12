@@ -7,6 +7,7 @@ import { authenticateToken, requireRole, requirePermission, requireAnyPermission
 import { warrantyUpload, attachPublicUrls } from '../config/localUpload.js';
 import { signalAdminAttentionOnSuccess as signalAttention } from '../services/adminAttention.service.js';
 import type { Request, Response, NextFunction } from 'express';
+import { activityOverview, storeActivity, trackingSince } from '../services/portalActivity.service.js';
 
 const router = Router();
 const adminAuth = [authenticateToken, requireRole('admin')];
@@ -39,6 +40,29 @@ router.get('/stats', ...adminAuth, requirePermission('overview', 'read'), AdminC
 // Vendors (Franchises)
 router.get('/vendors', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getAllVendors);
 router.get('/vendors/:id', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getVendorDetails);
+
+// Franchise & distributor activity: time in the portal and what they did.
+router.get('/activity', ...adminAuth, requirePermission('vendors', 'read'), async (req: Request, res: Response) => {
+    try {
+        const [data, since] = await Promise.all([
+            activityOverview({ days: req.query.days, from: req.query.from, to: req.query.to, role: String(req.query.role ?? 'all') }), trackingSince(),
+        ]);
+        res.json({ success: true, ...data, tracking_since: since });
+    } catch (e: any) {
+        console.error('[Activity] overview failed:', e?.message);
+        res.status(500).json({ error: 'Could not load activity' });
+    }
+});
+router.get('/activity/:vendorId', ...adminAuth, requirePermission('vendors', 'read'), async (req: Request, res: Response) => {
+    try {
+        const [data, since] = await Promise.all([storeActivity(String(req.params.vendorId), { days: req.query.days, from: req.query.from, to: req.query.to }), trackingSince()]);
+        if (!data) return res.status(404).json({ error: 'Store not found' });
+        res.json({ success: true, ...data, tracking_since: since });
+    } catch (e: any) {
+        console.error('[Activity] store failed:', e?.message);
+        res.status(500).json({ error: 'Could not load activity' });
+    }
+});
 router.put('/vendors/:id/verification', ...adminAuth, requirePermission('vendors', 'write'), signalAttention, AdminController.updateVendorVerification);
 router.put('/vendors/:id/activation', ...adminAuth, requirePermission('vendors', 'write'), AdminController.toggleVendorActivation);
 router.put('/vendors/:id/profile', ...adminAuth, requirePermission('vendors', 'write'), AdminController.updateVendorProfile);

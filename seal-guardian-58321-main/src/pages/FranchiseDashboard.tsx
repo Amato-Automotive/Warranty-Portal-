@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Navigate, useOutletContext } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePortalActivity } from "@/hooks/usePortalActivity";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { Loader2, X, ChevronRight, Search, Hash } from "lucide-react";
@@ -65,6 +66,8 @@ const FranchiseDashboard = () => {
     // Use context state if available (from Layout), otherwise fallback to local state
     const activeModule = context?.activeModule || localActiveModule;
     const setActiveModule = context?.setActiveModule || setLocalActiveModule;
+    // What is open and for how long, for the admin's Portal Activity screens.
+    usePortalActivity(activeModule, user?.role === 'vendor');
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
