@@ -376,6 +376,19 @@ export class SchemeController {
             );
             const [payouts]: any = await db.execute('SELECT * FROM scheme_payouts WHERE scheme_id = ?', [scheme.id]);
             const board = await schemeStandings(scheme);
+            /* Every verified franchise that has not joined, and whether the scheme is open to it. */
+            const joinedIds = new Set(participants.map((p: any) => String(p.store_id)));
+            const [franchises]: any = await db.execute(
+                `SELECT vd.id, vd.store_code, vd.store_name, vd.city, vd.state, vd.allowed_brands
+                   FROM vendor_details vd
+                   JOIN vendor_verification vv ON vv.user_id = vd.user_id AND vv.is_verified = 1
+                  WHERE vd.is_franchise = 1 ORDER BY vd.store_name`
+            );
+            const notJoined = franchises.filter((f: any) => !joinedIds.has(String(f.id))).map((f: any) => ({
+                store_id: String(f.id), store_code: f.store_code ?? null, store_name: String(f.store_name ?? '').trim(),
+                city: f.city ?? null, state: f.state ?? null,
+                can_see: isEligible(scheme.eligibility, { id: String(f.id), state: f.state, allowed_brands: f.allowed_brands }),
+            }));
 
             const ids = [...new Set([
                 ...entries.map((e: any) => String(e.store_id)),
@@ -393,6 +406,7 @@ export class SchemeController {
                     store_id: String(p.store_id), store_name: name(String(p.store_id)),
                     city: stores.get(String(p.store_id))?.city ?? null, state: stores.get(String(p.store_id))?.state ?? null, joined_at: p.joined_at,
                 })),
+                not_joined: notJoined,
                 entries: entries.map((e: any) => ({
                     id: e.id, store_id: String(e.store_id), store_name: name(String(e.store_id)),
                     city: stores.get(String(e.store_id))?.city ?? null, state: stores.get(String(e.store_id))?.state ?? null,

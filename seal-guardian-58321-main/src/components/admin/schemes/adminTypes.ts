@@ -20,6 +20,8 @@ export interface BoardRow {
 export interface AdminDetail {
     scheme: Scheme; entries: AdminEntry[]; leaderboard: BoardRow[];
     participants: { store_id: string; store_name: string; city: string | null; state: string | null; joined_at: string }[];
+    /** Verified franchises that have not joined; `can_see` is whether the scheme is open to them. */
+    not_joined?: { store_id: string; store_code: string | null; store_name: string; city: string | null; state: string | null; can_see: boolean }[];
     adjustments: { id: string; store_id: string; store_name: string; points: number; note: string; created_at: string }[];
 }
 

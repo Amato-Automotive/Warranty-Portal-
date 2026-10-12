@@ -1,6 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Download, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { downloadCSV } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { ClubIcon, CLUB_COLORS } from "@/components/schemes/ClubBadge";
 import { formatMonth } from "@/lib/schemes";
@@ -151,17 +153,19 @@ export function SchemeOverview({ data, onReview }: { data: AdminDetail; onReview
             .sort((a, b) => b.value - a.value);
     }, [data.entries, products]);
 
-    const top = useMemo(() => [...data.leaderboard].sort((a, b) => a.rank - b.rank).slice(0, 10).map(r => ({
-        key: r.store_id,
-        label: <>
-            <span className="w-6 shrink-0 tabular-nums text-xs text-slate-400">#{r.rank}</span>
-            <span className="truncate">{r.store_name}</span>
-            {r.city && <span className="text-xs text-slate-400 truncate">{r.city}</span>}
-            {r.club && <span title={r.club.name} style={{ color: (CLUB_COLORS[r.club.color] ?? CLUB_COLORS.slate).swatch }}><ClubIcon icon={r.club.icon} className="h-3.5 w-3.5" /></span>}
-        </>,
-        value: r.score,
-        color: "#334155",
-    })), [data.leaderboard]);
+
+    /* Stores below a club, by how few points they need for the next one (admin only — stores never see their gap). */
+    const closest = useMemo(() => {
+        if (!clubs.length) return { rows: [], below: 0 };
+        const up = [...clubs].sort((a, b) => a.min - b.min);
+        const board = new Map(data.leaderboard.map(r => [r.store_id, r]));
+        const all = data.participants.map(p => {
+            const score = board.get(p.store_id)?.score ?? 0;
+            const next = up.find(c => c.min > score);
+            return next ? { store_id: p.store_id, store_name: p.store_name, city: p.city, score, next, need: next.min - score, club: board.get(p.store_id)?.club ?? null } : null;
+        }).filter((r): r is NonNullable<typeof r> => r !== null);
+        return { rows: all.sort((a, b) => a.need - b.need || b.score - a.score), below: all.length };
+    }, [clubs, data]);
 
     const states = useMemo(() => {
         const m = new Map<string, { joined: number; points: number }>();
@@ -244,15 +248,41 @@ export function SchemeOverview({ data, onReview }: { data: AdminDetail; onReview
                         <Bars rows={seriesMix} unit="sets" empty="Nothing approved yet." />
                     </Panel>
                 )}
-                {hasScore && (
-                    <Panel title="Top 10 stores" note="By points.">
-                        <Bars rows={top} unit="pts" empty="Nobody has an approved entry yet." />
-                    </Panel>
-                )}
                 <Panel title="By state" note={hasScore ? "Points, with the stores that joined." : "Stores that joined."}>
                     <Bars rows={states} unit={hasScore ? "pts" : undefined} empty="Nobody has joined yet." />
                 </Panel>
+                {clubs.length > 0 && (
+                    <Panel title="Closest to the next club" note={`${closest.below} store${closest.below === 1 ? "" : "s"} below a club, nearest first — for the team only; stores never see this.`}>
+                        {!closest.rows.length ? <p className="text-sm text-slate-400 py-8 text-center">Every store that joined is in the top club.</p> : (
+                            <ul className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                                {closest.rows.map(r => {
+                                    const color = (CLUB_COLORS[r.next.color] ?? CLUB_COLORS.slate).swatch;
+                                    return (
+                                        <li key={r.store_id}>
+                                            <div className="flex items-baseline justify-between gap-2 text-sm">
+                                                <span className="min-w-0 truncate text-slate-700 flex items-center gap-1.5">
+                                                    <span className="truncate">{r.store_name}</span>
+                                                    {r.city && <span className="text-xs text-slate-400 truncate">{r.city}</span>}
+                                                </span>
+                                                <span className="shrink-0 text-xs text-slate-500 flex items-center gap-1">
+                                                    <b className="tabular-nums text-slate-900 text-sm">{fmt(r.need)}</b> pts to
+                                                    <span className="inline-flex items-center gap-0.5 font-medium" style={{ color }}><ClubIcon icon={r.next.icon} className="h-3.5 w-3.5" />{r.next.name}</span>
+                                                </span>
+                                            </div>
+                                            <div className="h-2 mt-1 rounded-full bg-slate-100 overflow-hidden" title={`${fmt(r.score)} of ${fmt(r.next.min)} points`}>
+                                                <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, (r.score / r.next.min) * 100))}%`, background: color }} />
+                                            </div>
+                                            <p className="mt-0.5 text-[11px] text-slate-400 tabular-nums">{fmt(r.score)} / {fmt(r.next.min)}{r.club ? ` · now ${r.club.name}` : ""}</p>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </Panel>
+                )}
             </div>
+
+            <StoresPanel data={data} hasScore={hasScore} />
 
             <Panel title="How far stores got" note="Each step out of the stores that joined.">
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -269,5 +299,160 @@ export function SchemeOverview({ data, onReview }: { data: AdminDetail; onReview
                 </div>
             </Panel>
         </div>
+    );
+}
+
+/**
+ * Every store in the scheme, ranked and scrollable, and every verified
+ * franchise that has not joined — both searchable and exportable.
+ */
+function StoresPanel({ data, hasScore }: { data: AdminDetail; hasScore: boolean }) {
+    const [tab, setTab] = useState<"joined" | "not">("joined");
+    const [q, setQ] = useState("");
+    const notJoined = data.not_joined ?? [];
+    const joined = useMemo(() => {
+        const entries = new Map<string, number>();
+        /* Approved points and entries per store and month (IST), for the month columns. */
+        const byMonth = new Map<string, Map<string, { points: number; entries: number }>>();
+        for (const e of data.entries) {
+            if (e.status !== "approved") continue;
+            entries.set(e.store_id, (entries.get(e.store_id) ?? 0) + 1);
+            const m = istDay(e.created_at).slice(0, 7);
+            const sm = byMonth.get(e.store_id) ?? new Map();
+            const x = sm.get(m) ?? { points: 0, entries: 0 };
+            x.points += e.score; x.entries += 1; sm.set(m, x); byMonth.set(e.store_id, sm);
+        }
+        for (const a of data.adjustments) {
+            const m = istDay(a.created_at).slice(0, 7);
+            const sm = byMonth.get(a.store_id) ?? new Map();
+            const x = sm.get(m) ?? { points: 0, entries: 0 };
+            x.points += a.points; sm.set(m, x); byMonth.set(a.store_id, sm);
+        }
+        const board = new Map(data.leaderboard.map(r => [r.store_id, r]));
+        const rows = data.participants.map(p => {
+            const b = board.get(p.store_id);
+            return {
+                store_id: p.store_id, store_name: p.store_name, city: p.city, state: p.state,
+                rank: b?.rank ?? null, score: b?.score ?? 0, club: b?.club ?? null, approved: entries.get(p.store_id) ?? 0,
+                months: byMonth.get(p.store_id) ?? new Map<string, { points: number; entries: number }>(),
+            };
+        });
+        return rows.sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || a.store_name.localeCompare(b.store_name));
+    }, [data]);
+    /* Every month any store has points in, oldest first. */
+    const months = useMemo(() => [...new Set(joined.flatMap(r => [...r.months.keys()]))].sort(), [joined]);
+    const needle = q.trim().toLowerCase();
+    const hit = (...v: (string | null | undefined)[]) => !needle || v.some(x => String(x ?? "").toLowerCase().includes(needle));
+    const joinedShown = joined.filter(r => hit(r.store_name, r.city, r.state));
+    const notShown = notJoined.filter(r => hit(r.store_name, r.store_code, r.city, r.state));
+    const closed = notJoined.filter(r => !r.can_see).length;
+
+    const exportShown = () => tab === "joined"
+        ? downloadCSV(joinedShown.map(r => ({
+            Rank: r.rank ?? "", Store: r.store_name, City: r.city ?? "", State: r.state ?? "",
+            ...Object.fromEntries(months.flatMap(m => [[`${formatMonth(m)} points`, r.months.get(m)?.points ?? 0], [`${formatMonth(m)} entries`, r.months.get(m)?.entries ?? 0]])),
+            ...(hasScore ? { "Total points": r.score } : {}), Club: r.club?.name ?? "", "Approved entries": r.approved,
+        })), `${data.scheme.title}-joined.csv`)
+        : downloadCSV(notShown.map(r => ({
+            Store: r.store_name, Code: r.store_code ?? "", City: r.city ?? "", State: r.state ?? "", "Scheme open to them": r.can_see ? "Yes" : "No",
+        })), `${data.scheme.title}-not-joined.csv`);
+
+    return (
+        <Panel title="Stores" note={tab === "joined" ? "Everyone in the scheme, by rank." : "Verified franchises that have not joined."}
+            action={
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                    <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-medium">
+                        {([["joined", `Joined ${joined.length}`], ["not", `Not joined ${notJoined.length}`]] as const).map(([k, l]) => (
+                            <button key={k} type="button" onClick={() => setTab(k)}
+                                className={cn("px-2.5 py-1 rounded-md tabular-nums", tab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}>{l}</button>
+                        ))}
+                    </div>
+                    <div className="relative">
+                        <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Store, city, state…" className="h-8 w-[190px] pl-8 text-xs" aria-label="Search stores" />
+                    </div>
+                    <button type="button" onClick={exportShown} disabled={tab === "joined" ? !joinedShown.length : !notShown.length}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40">
+                        <Download className="h-3.5 w-3.5" /> Export
+                    </button>
+                </div>
+            }>
+            {tab === "not" && closed > 0 && (
+                <p className="mb-3 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800">
+                    {closed === notJoined.length ? "The scheme is not open to any of these stores yet, so they cannot see it to join."
+                        : `The scheme is not open to ${closed} of these stores, so they cannot see it to join.`} Change who can take part in the scheme's settings.
+                </p>
+            )}
+            <div className="max-h-[440px] overflow-auto rounded-lg border border-slate-200">
+                <table className="w-full text-sm" style={{ minWidth: tab === "joined" ? 420 + months.length * 96 : undefined }}>
+                    <thead className="sticky top-0 z-10 bg-slate-50 text-xs text-slate-500">
+                        {tab === "joined" ? (
+                            <tr>
+                                <th className="px-3 py-2 text-left font-semibold w-14 sticky left-0 bg-slate-50">Rank</th>
+                                <th className="px-3 py-2 text-left font-semibold min-w-[200px]">Store</th>
+                                {months.map(m => <th key={m} className="px-3 py-2 text-right font-semibold w-24 whitespace-nowrap">{formatMonth(m)}</th>)}
+                                {hasScore && <th className="px-3 py-2 text-right font-semibold w-20">Total</th>}
+                                <th className="px-3 py-2 text-right font-semibold w-24 hidden sm:table-cell">Approved</th>
+                            </tr>
+                        ) : (
+                            <tr>
+                                <th className="px-3 py-2 text-left font-semibold">Store</th>
+                                <th className="px-3 py-2 text-left font-semibold w-28 hidden sm:table-cell">Code</th>
+                                <th className="px-3 py-2 text-left font-semibold w-40 hidden md:table-cell">State</th>
+                                <th className="px-3 py-2 text-right font-semibold w-36">Can see it</th>
+                            </tr>
+                        )}
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {tab === "joined" ? joinedShown.map(r => (
+                            <tr key={r.store_id} className="hover:bg-slate-50">
+                                <td className="px-3 py-2 tabular-nums text-xs text-slate-400 sticky left-0 bg-white">{r.rank ? `#${r.rank}` : "—"}</td>
+                                <td className="px-3 py-2 max-w-[260px]">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="font-medium text-slate-800 truncate">{r.store_name}</span>
+                                        {r.club && <span title={r.club.name} className="shrink-0" style={{ color: (CLUB_COLORS[r.club.color] ?? CLUB_COLORS.slate).swatch }}><ClubIcon icon={r.club.icon} className="h-3.5 w-3.5" /></span>}
+                                    </div>
+                                    <div className="text-xs text-slate-400 truncate">{[r.city, r.state].filter(Boolean).join(", ") || "—"}</div>
+                                </td>
+                                {months.map(m => {
+                                    const x = r.months.get(m);
+                                    return (
+                                        <td key={m} className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                                            {x ? <>
+                                                <div className="text-slate-800">{fmt(x.points)}</div>
+                                                {x.entries > 0 && <div className="text-[11px] text-slate-400">{x.entries} entr{x.entries === 1 ? "y" : "ies"}</div>}
+                                            </> : <span className="text-slate-300">—</span>}
+                                        </td>
+                                    );
+                                })}
+                                {hasScore && <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-900">{fmt(r.score)}</td>}
+                                <td className="px-3 py-2 text-right tabular-nums text-slate-600 hidden sm:table-cell">{r.approved}</td>
+                            </tr>
+                        )) : notShown.map(r => (
+                            <tr key={r.store_id} className="hover:bg-slate-50">
+                                <td className="px-3 py-2">
+                                    <div className="font-medium text-slate-800 truncate">{r.store_name}</div>
+                                    <div className="text-xs text-slate-400 truncate">{r.city || "—"}</div>
+                                </td>
+                                <td className="px-3 py-2 text-xs text-slate-500 hidden sm:table-cell">{r.store_code ?? "—"}</td>
+                                <td className="px-3 py-2 text-xs text-slate-500 truncate hidden md:table-cell">{r.state ? stateLabel(stateKey(r.state)) : "—"}</td>
+                                <td className="px-3 py-2 text-right">
+                                    <span className={cn("inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
+                                        r.can_see ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500")}>
+                                        {r.can_see ? "Yes, not joined" : "Not open to them"}
+                                    </span>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                {(tab === "joined" ? !joinedShown.length : !notShown.length) && (
+                    <p className="py-10 text-center text-sm text-slate-400">{needle ? "No store matches." : tab === "joined" ? "Nobody has joined yet." : "Every verified franchise has joined."}</p>
+                )}
+            </div>
+            <p className="mt-2 text-xs text-slate-400 tabular-nums">
+                {tab === "joined" ? `${joinedShown.length} of ${joined.length} stores` : `${notShown.length} of ${notJoined.length} stores`}
+            </p>
+        </Panel>
     );
 }
