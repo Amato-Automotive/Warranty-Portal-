@@ -87,7 +87,7 @@ const T = {
         chartLabel: "Warranties each day",
         points: "points",
         pointsTip: "You earn points on every approved invoice. More points take you to a higher club and a bigger reward. Rank is your place among all stores in the scheme.",
-        rank: (r: number, of: number) => `Rank #${r} of ${of}`,
+        rank: (r: number) => `Rank #${r}`,
         openTill: (d: string) => `Open till ${d}`,
         opens: (d: string) => `Opens ${d}`,
         noPointsYet: "Your points show here once an invoice is approved.",
@@ -141,7 +141,7 @@ const T = {
         chartLabel: "हर दिन की वारंटी",
         points: "पॉइंट",
         pointsTip: "हर मंज़ूर इनवॉइस पर पॉइंट मिलते हैं। ज़्यादा पॉइंट से ऊँचा क्लब और बड़ा इनाम। रैंक बताता है कि स्कीम के सभी स्टोर में आप कहाँ हैं।",
-        rank: (r: number, of: number) => `रैंक #${r} / ${of}`,
+        rank: (r: number) => `रैंक #${r}`,
         openTill: (d: string) => `${d} तक खुला`,
         opens: (d: string) => `${d} से खुलेगा`,
         noPointsYet: "इनवॉइस मंज़ूर होते ही आपके पॉइंट यहाँ दिखेंगे।",
@@ -562,7 +562,7 @@ export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts 
                                         )}
                                         <div className="flex flex-wrap gap-2">
                                             {scheme.achieved.club && <ClubBadge club={scheme.achieved.club} />}
-                                            {scheme.has_score && <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">{t.rank(scheme.achieved.rank, scheme.achieved.of)}</span>}
+                                            {scheme.has_score && <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">{t.rank(scheme.achieved.rank)}</span>}
                                         </div>
                                     </>
                                 ) : (

@@ -196,7 +196,7 @@ export const FranchiseSchemes = () => {
                                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-px rounded-lg border border-slate-100 bg-slate-200 overflow-hidden text-sm [&>div]:bg-slate-50">
                                             {s.has_score && <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Points")}</p><p className="font-bold text-slate-900 tabular-nums">{a.score}</p></div>}
                                             {a.club !== undefined && <div className="px-3 py-2 min-w-0"><p className="text-xs text-slate-500">{t("Club")}</p>{a.club ? <ClubBadge club={a.club} className="mt-0.5" /> : <p className="text-slate-400">—</p>}</div>}
-                                            {s.has_score && <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Rank")}</p><p className="font-bold text-slate-900 tabular-nums">#{a.rank} <span className="font-normal text-slate-400">{tr(`of ${a.of}`, `/ ${a.of}`)}</span></p></div>}
+                                            {s.has_score && <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Rank")}</p><p className="font-bold text-slate-900 tabular-nums">#{a.rank}</p></div>}
                                             <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Approved")}</p><p className="font-bold text-slate-900 tabular-nums">{a.approved}</p></div>
                                         </div>
                                     )}
@@ -385,7 +385,7 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
                                 {a?.club ? <ClubBadge club={a.club} size="lg" /> : <span className="text-base font-medium text-slate-400">{t("Not in a club yet")}</span>}
                             </Stat>
                         )}
-                        {hasScore && <Stat label="Rank">{a ? <>#{a.rank} <span className="text-base font-normal text-slate-400">{tr(`of ${a.of}`, `/ ${a.of}`)}</span></> : <span className="text-slate-400">—</span>}</Stat>}
+                        {hasScore && <Stat label="Rank">{a ? <>#{a.rank}</> : <span className="text-slate-400">—</span>}</Stat>}
                         <Stat label="Approved entries">{a?.approved ?? 0}</Stat>
                         <Stat label="Under review" hint={inReview ? t("Counts once approved") : undefined}>{inReview}</Stat>
                         {a?.reward && !a.club && <Stat label="Reward earned" className="col-span-2 lg:col-span-1"><span className="text-lg text-emerald-700">{a.reward}</span></Stat>}
