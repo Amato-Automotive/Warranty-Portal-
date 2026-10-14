@@ -208,7 +208,7 @@ function nearbyList(
     return list(page === 1 ? LIST_BODY : LIST_BODY_MORE, 'View stores', 'Stores near you', rows);
 }
 
-/** The stores near the customer, alphabetical as the locator returned them. */
+/** The stores near the customer, in the locator's order: their city first, then A to Z. */
 export function storeList(leadId: string, stores: ListStore[], page = 1): InteractiveList | null {
     return nearbyList(leadId, 'store', stores.map(s => ({ id: s.id, name: s.store_name, city: s.city })), page);
 }

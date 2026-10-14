@@ -343,10 +343,40 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
         });
     }
 
+    /*
+     * The customer's city, to list its stores first: the district each store's
+     * own pincode belongs to, against the customer's. Delhi is one city — the
+     * directory splits it into eleven districts, and Karol Bagh is as much
+     * "Delhi" to a Lajpat Nagar customer as Lajpat Nagar is. A store whose
+     * pincode we cannot place falls back to its typed city.
+     */
+    const cityKey = (district: unknown, state: unknown) => {
+        const s = String(state ?? '').trim().toUpperCase();
+        if (s.includes('DELHI')) return 'DELHI';
+        const d = String(district ?? '').trim().toUpperCase();
+        return d && d !== 'NA' ? `${d}|${s}` : null;
+    };
+    const customerCity = cityKey(customer.district, customer.state);
+    const storePins = [...new Set(stores.map(s => String(s.row.pincode ?? '').trim()).filter(isPincode))];
+    const pinCity = new Map<string, string | null>();
+    if (customerCity && storePins.length) {
+        const [geo]: any = await db.query(
+            'SELECT pincode, district, state FROM pincode_geo WHERE pincode IN (?)', [storePins]);
+        for (const g of geo) if (!pinCity.has(String(g.pincode))) pinCity.set(String(g.pincode), cityKey(g.district, g.state));
+    }
+    const customerDistrict = String(customer.district ?? '').trim().toUpperCase();
+    const inCity = (s: { row: any }) => {
+        if (!customerCity) return false;
+        const placed = pinCity.get(String(s.row.pincode ?? '').trim());
+        if (placed !== undefined) return placed === customerCity;
+        const typed = String(s.row.city ?? '').trim().toUpperCase();
+        return Boolean(typed) && (typed === customerDistrict || (customerCity === 'DELHI' && typed.includes('DELHI')));
+    };
+
     const offered = storesToOffer(customer, stores, {
         radiusKm: settings.radius_km,
         minWarranties: settings.min_warranties,
-    });
+    }, inCity);
 
     return {
         pincode,
