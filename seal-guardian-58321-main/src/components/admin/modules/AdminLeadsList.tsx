@@ -526,7 +526,7 @@ export const AdminLeadsList = () => {
     const [loadingAddStores, setLoadingAddStores] = useState(false);
 
     const [addForm, setAddForm] = useState({
-        name: "", phone: "", pincode: "", area: "", product: "", car: "", source: "ivr",
+        name: "", phone: "", pincode: "", area: "", product: "", car: "", source: "ivr", internal_notes: "",
         /* 2w: goes to the Customer Executive, not a store — no pincode needed. */
         wheels: "4w" as "4w" | "2w",
     });
@@ -917,7 +917,7 @@ export const AdminLeadsList = () => {
 
             toast({ title: "Lead added", description: res.data.message + storeNote });
             setAddOpen(false);
-            setAddForm({ name: "", phone: "", pincode: "", area: "", product: "", car: "", source: "ivr", wheels: "4w" });
+            setAddForm({ name: "", phone: "", pincode: "", area: "", product: "", car: "", source: "ivr", internal_notes: "", wheels: "4w" });
             setAddPreview(null);
             setAddStores([]);
             setAddStore(null);
@@ -2142,6 +2142,17 @@ export const AdminLeadsList = () => {
                             </div>
 
                             <div className="space-y-1.5 min-w-0">
+                                <Label htmlFor="a-car" className="text-xs">Vehicle</Label>
+                                <Input
+                                    id="a-car"
+                                    value={addForm.car}
+                                    onChange={e => setAddForm({ ...addForm, car: e.target.value })}
+                                    placeholder={addTwoWheeler ? "e.g. Activa" : "e.g. Creta"}
+                                    className="h-9"
+                                />
+                            </div>
+
+                            <div className="space-y-1.5 min-w-0">
                                 <Label htmlFor="a-phone" className="text-xs">Phone *</Label>
                                 <Input
                                     id="a-phone"
@@ -2298,13 +2309,16 @@ export const AdminLeadsList = () => {
                             </div>
 
                             <div className="space-y-1.5 min-w-0">
-                                <Label htmlFor="a-car" className="text-xs">Vehicle</Label>
-                                <Input
-                                    id="a-car"
-                                    value={addForm.car}
-                                    onChange={e => setAddForm({ ...addForm, car: e.target.value })}
-                                    placeholder={addTwoWheeler ? "e.g. Activa" : "e.g. Creta"}
-                                    className="h-9"
+                                <Label htmlFor="a-notes" className="text-xs">
+                                    Internal notes <span className="font-normal text-slate-400">· only the team sees these</span>
+                                </Label>
+                                <Textarea
+                                    id="a-notes"
+                                    className="text-sm min-h-[64px]"
+                                    maxLength={2000}
+                                    value={addForm.internal_notes}
+                                    onChange={e => setAddForm({ ...addForm, internal_notes: e.target.value })}
+                                    placeholder="Anything for the next person on this lead — call back after 6, spoke to the brother…"
                                 />
                             </div>
                         </div>

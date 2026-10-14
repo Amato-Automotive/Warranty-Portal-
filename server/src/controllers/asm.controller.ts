@@ -440,6 +440,11 @@ export class AsmController {
         try {
             const { name, phone, product, car, source, preview } = req.body || {};
             const admin = (req as any).user;
+            // The team's notes, typed with the lead — the same field its Edit dialog keeps.
+            const notes = String(req.body?.internal_notes ?? '').trim().slice(0, 2000);
+            const saveNotes = async (leadId: string | null | undefined) => {
+                if (notes && leadId) await db.execute('UPDATE leads SET internal_notes = ? WHERE id = ?', [notes, leadId]);
+            };
 
             /*
              * The pincode is what lets the store message go out — the lead screen
@@ -501,6 +506,7 @@ export class AsmController {
                     car: car ? String(car) : null, source: channel, enteredBy: admin?.email || admin?.id || null,
                     pincode: pin, area: typedArea || area || null,
                 });
+                await saveNotes(made.leadId);
                 try {
                     await ActivityLogService.log({
                         adminId: admin?.id, adminName: admin?.name, adminEmail: admin?.email,
@@ -544,6 +550,7 @@ export class AsmController {
                     source: channel, enteredBy: admin?.email || admin?.id || null,
                     storePicked: req.body?.store_picked === true,
                 });
+                await saveNotes(made.leadId);
                 try {
                     await ActivityLogService.log({
                         adminId: admin?.id, adminName: admin?.name, adminEmail: admin?.email,
@@ -601,6 +608,7 @@ export class AsmController {
                 // The pincode where leadPincode reads it, so the lead screen finds its stores.
                 rawPayload: { entered_by: admin?.email || admin?.id, channel, ...(pin ? { pincode: pin } : {}) },
             });
+            await saveNotes(result.leadId);
 
             try {
                 await ActivityLogService.log({
