@@ -9,6 +9,7 @@ import { handleLocatorReply, handlePincodeMessage, handleChooseStoreTap } from '
 import { handleConversationMessage, startFromMessage } from '../services/locatorConversation.service.js';
 import { startWord } from '../services/locatorConversation.js';
 import { replyFromWebhook } from '../services/storeLocatorMessages.js';
+import { assignLeadChatFromWebhook } from '../services/leadChatAssignment.js';
 
 export class WebhookController {
 
@@ -113,6 +114,9 @@ export class WebhookController {
             // makes that question answerable with one query instead of
             // inference.
             void WebhookController.logRawEvent(eventType, payload);
+
+            // A lead's chat goes to the sales inbox in Interakt, if unassigned.
+            assignLeadChatFromWebhook(eventType, payload);
 
             // Handle delivery status events
             const statusEvents = ['message_api_sent', 'message_api_delivered', 'message_api_read', 'message_api_failed'];
