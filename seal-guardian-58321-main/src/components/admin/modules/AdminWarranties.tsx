@@ -134,6 +134,9 @@ export const AdminWarranties = () => {
        than being a tab of its own — a resubmitted warranty is genuinely
        pending, and moving it out would make the count disagree with the list. */
     const [resubmittedOnly, setResubmittedOnly] = useState(false);
+    /* Quick Review steps through both waiting queues; this narrows it to one —
+       Pending (with the head office) or Vendor (with the store). */
+    const [reviewQueue, setReviewQueue] = useState<'all' | 'pending' | 'pending_vendor'>('all');
     const [selectedMake, setSelectedMake] = useState<string>('all');
     const [selectedModel, setSelectedModel] = useState<string>('all');
     const [dateRange, setDateRange] = useState<DateRange | undefined>();
@@ -204,6 +207,7 @@ export const AdminWarranties = () => {
         setSelectedModel('all');
         setDateRange(undefined);
         setResubmittedOnly(false);
+        setReviewQueue('all');
         setSearch("");
         setCurrentPage(1);
     };
@@ -211,7 +215,7 @@ export const AdminWarranties = () => {
     // Reset pagination when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [statusFilter, productTypeFilter, selectedMake, selectedModel, dateRange, search, resubmittedOnly]);
+    }, [statusFilter, productTypeFilter, selectedMake, selectedModel, dateRange, search, resubmittedOnly, reviewQueue]);
 
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 350);
@@ -222,7 +226,7 @@ export const AdminWarranties = () => {
         const params = new URLSearchParams({
             page: exportAll ? String(exportPage) : String(currentPage),
             limit: String(limit),
-            status: statusFilter,
+            status: statusFilter === 'quick_review' && reviewQueue !== 'all' ? reviewQueue : statusFilter,
             product_type: productTypeFilter,
             make: selectedMake,
             model: selectedModel,
@@ -288,7 +292,7 @@ export const AdminWarranties = () => {
         fetchWarranties();
         // The individual values intentionally drive a new server request.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentPage, statusFilter, productTypeFilter, selectedMake, selectedModel, dateRange, debouncedSearch, resubmittedOnly, sortConfig.field, sortConfig.order]);
+    }, [currentPage, statusFilter, productTypeFilter, selectedMake, selectedModel, dateRange, debouncedSearch, resubmittedOnly, reviewQueue, sortConfig.field, sortConfig.order]);
 
     const fetchWarranties = async (isRefresh = false) => {
         setLoading(true);
@@ -517,7 +521,9 @@ export const AdminWarranties = () => {
                     <TabsTrigger value="quick_review" className="data-[state=active]:bg-amber-50 data-[state=active]:text-amber-700 gap-2 font-bold text-orange-600 border border-orange-200/50">
                         ⚡ Quick Review
                         <Badge variant="secondary" className="bg-amber-100 text-amber-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                            {statusCounts.pending + statusCounts.pending_vendor}
+                            {reviewQueue === 'pending' ? statusCounts.pending
+                                : reviewQueue === 'pending_vendor' ? statusCounts.pending_vendor
+                                : statusCounts.pending + statusCounts.pending_vendor}
                         </Badge>
                     </TabsTrigger>
 
@@ -533,6 +539,22 @@ export const AdminWarranties = () => {
                         <div className="w-1.5 h-6 bg-orange-500 rounded-full" />
                         <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Advanced Filters</span>
                     </div>
+
+                    {/* Quick Review queue: only on that tab, where both queues are mixed. */}
+                    {statusFilter === 'quick_review' && (
+                        <div className="relative z-10">
+                            <Select value={reviewQueue} onValueChange={(v) => setReviewQueue(v as typeof reviewQueue)}>
+                                <SelectTrigger className="w-[200px] h-11 bg-white border-orange-100 rounded-2xl text-xs font-bold shadow-sm hover:border-orange-200 transition-colors focus:ring-orange-500/20">
+                                    <SelectValue placeholder="Queue" />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-2xl border-orange-100 shadow-2xl p-1">
+                                    <SelectItem value="all" className="rounded-xl text-xs font-bold py-2.5">Pending + Vendor ({statusCounts.pending + statusCounts.pending_vendor})</SelectItem>
+                                    <SelectItem value="pending" className="rounded-xl text-xs font-bold py-2.5">Pending only ({statusCounts.pending})</SelectItem>
+                                    <SelectItem value="pending_vendor" className="rounded-xl text-xs font-bold py-2.5">Vendor only ({statusCounts.pending_vendor})</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
 
                     {/* Product Type Filter */}
                     <div className="relative z-10">
