@@ -331,6 +331,19 @@ async function runMigrations() {
     const [linesCol]: any = await pool.query("SHOW COLUMNS FROM scheme_entries LIKE 'lines'");
     if (linesCol.length === 0) await pool.query('ALTER TABLE scheme_entries ADD COLUMN `lines` JSON NULL AFTER score');
 
+    // POSM requests as item lines (posmCatalog), with dispatch and delivery
+    // details; the item lists the stores pick from, edited by the admin.
+    await addColumn('posm_requests', 'items', 'items JSON NULL');
+    await addColumn('posm_requests', 'dispatch', 'dispatch JSON NULL');
+    await addColumn('posm_requests', 'delivery', 'delivery JSON NULL');
+    await addColumn('posm_requests', 'history', 'history JSON NULL');
+    await pool.query(`CREATE TABLE IF NOT EXISTS posm_settings (
+         id TINYINT NOT NULL PRIMARY KEY,
+         catalog JSON NOT NULL,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');
   } catch (error: any) {

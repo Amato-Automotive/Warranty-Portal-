@@ -10,6 +10,14 @@ export interface POSMRequest {
     created_by?: string | null;
     status: 'open' | 'under_review' | 'approved' | 'in_production' | 'pending' | 'dispatched' | 'delivered' | 'closed' | 'rejected';
     internal_notes?: string | null;
+    /** Item lines (posmCatalog.PosmLine[]); null on the older free-text requests. */
+    items?: any[] | null;
+    /** { courier, tracking, date } once dispatched. */
+    dispatch?: Record<string, unknown> | null;
+    /** { by: 'franchise' | 'admin', at, photos[] } once delivered. */
+    delivery?: Record<string, unknown> | null;
+    /** Each step taken (posmFlow.HistoryEntry[]); null on requests from before it. */
+    history?: any[] | null;
     created_at?: Date;
     updated_at?: Date;
 }
@@ -34,11 +42,12 @@ export class POSMRepository extends BaseRepository<POSMRequest> {
      */
     async createPOSMRequest(request: Omit<POSMRequest, 'id'>, connection?: PoolConnection): Promise<number> {
         const result = await this.execute(
-            `INSERT INTO posm_requests (ticket_id, franchise_id, requirement, created_by_role, created_by, status) 
-             VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO posm_requests (ticket_id, franchise_id, requirement, created_by_role, created_by, status, items, history)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [request.ticket_id, request.franchise_id, request.requirement,
              request.created_by_role || 'franchise', request.created_by ?? null,
-             request.status || 'open'],
+             request.status || 'open', request.items ? JSON.stringify(request.items) : null,
+             request.history ? JSON.stringify(request.history) : null],
             connection
         );
         return result.insertId;
@@ -56,7 +65,35 @@ export class POSMRepository extends BaseRepository<POSMRequest> {
             [franchiseId],
             connection
         );
-        return rows as POSMRequest[];
+        return (rows as any[]).map(withJson) as POSMRequest[];
+    }
+
+    /** One request with its JSON columns read. */
+    async findRequest(requestId: number, connection?: PoolConnection): Promise<POSMRequest | null> {
+        const rows = await this.query<RowDataPacket[]>(
+            `SELECT r.*, vd.store_name, vd.allowed_brands, vd.user_id AS store_user_id FROM posm_requests r
+             LEFT JOIN vendor_details vd ON vd.id = r.franchise_id WHERE r.id = ?`,
+            [requestId],
+            connection
+        );
+        return rows.length ? withJson(rows[0]) as POSMRequest : null;
+    }
+
+    /** Set any of: status, internal notes, item lines, dispatch, delivery. */
+    async updateRequest(requestId: number, fields: {
+        status?: string; internal_notes?: string | null; items?: any[]; dispatch?: Record<string, unknown> | null;
+        delivery?: Record<string, unknown> | null; history?: any[];
+    }, connection?: PoolConnection): Promise<boolean> {
+        const sets: string[] = [], params: any[] = [];
+        for (const [col, v] of Object.entries(fields)) {
+            if (v === undefined) continue;
+            sets.push(`${col} = ?`);
+            params.push(['items', 'dispatch', 'delivery', 'history'].includes(col) && v !== null ? JSON.stringify(v) : v);
+        }
+        if (!sets.length) return true;
+        params.push(requestId);
+        const result = await this.execute(`UPDATE posm_requests SET ${sets.join(', ')} WHERE id = ?`, params, connection);
+        return result.affectedRows > 0;
     }
 
     /**
@@ -126,6 +163,7 @@ export class POSMRepository extends BaseRepository<POSMRequest> {
                 vd.city AS store_city,
                 vd.state AS store_state,
                 vd.pincode AS store_pincode,
+                vd.allowed_brands,
                 p.name as contact_name,
                 p.email as contact_email,
                 creator.name as created_by_name
@@ -137,7 +175,7 @@ export class POSMRepository extends BaseRepository<POSMRequest> {
             [],
             connection
         );
-        return rows;
+        return (rows as any[]).map(withJson);
     }
 
     /**
@@ -146,6 +184,17 @@ export class POSMRepository extends BaseRepository<POSMRequest> {
     async getOpenRequestsCount(connection?: PoolConnection): Promise<number> {
         return this.count("status != 'closed' AND status != 'rejected'", [], connection);
     }
+}
+
+/* mysql2 returns JSON columns parsed, but a string can still arrive (an older
+   row written as text); either way the caller gets objects. */
+function withJson(row: any) {
+    for (const col of ['items', 'dispatch', 'delivery', 'history']) {
+        if (typeof row[col] === 'string') {
+            try { row[col] = JSON.parse(row[col]); } catch { row[col] = null; }
+        }
+    }
+    return row;
 }
 
 export const posmRepository = new POSMRepository();

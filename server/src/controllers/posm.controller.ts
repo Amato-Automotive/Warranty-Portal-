@@ -5,6 +5,45 @@ import { vendorRepository } from '../repositories/vendor.repository.js';
 import { posmRepository } from '../repositories/posm.repository.js';
 import { NotificationService } from '../services/notification.service.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
+import {
+    readCatalog, catalogProblem, storeBrands, validateLines, requestSummary, applyDecisions, usageFrom,
+    type PosmLine, type PosmCatalog, type Usage,
+} from '../services/posmCatalog.js';
+import { nextStatus, actionsFor, ACTION_TEXT, type HistoryEntry, type PosmAction } from '../services/posmFlow.js';
+
+/** A step for the timeline, by whoever is signed in. */
+const step = (req: AuthRequest, e: Omit<HistoryEntry, 'at' | 'by_role' | 'by' | 'by_name'>): HistoryEntry => ({
+    ...e, at: new Date().toISOString(),
+    by_role: req.user?.role === 'admin' ? 'admin' : 'franchise',
+    by: req.user?.id ?? null, by_name: (req.user as any)?.name ?? null,
+});
+
+/** The item lists, as the admin last saved them (defaults until then). */
+async function loadCatalog(): Promise<PosmCatalog> {
+    const [rows]: any = await db.execute('SELECT catalog FROM posm_settings WHERE id = 1');
+    const raw = rows[0]?.catalog;
+    return readCatalog(typeof raw === 'string' ? JSON.parse(raw) : raw);
+}
+
+const fileUrl = (f: any) => f.path || f.secure_url || f.url;
+
+/** What a store already has of each item this month and year, for the limits. */
+async function storeUsage(franchiseId: string, exceptRequestId?: number): Promise<Usage> {
+    const [rows]: any = await db.execute(
+        `SELECT id, status, created_at, items FROM posm_requests
+          WHERE franchise_id = ? AND items IS NOT NULL AND created_at >= NOW() - INTERVAL 400 DAY`,
+        [franchiseId]
+    );
+    return usageFrom(rows
+        .filter((r: any) => r.id !== exceptRequestId)
+        .map((r: any) => ({ ...r, items: typeof r.items === 'string' ? JSON.parse(r.items) : r.items })));
+}
+
+/* What the store is told when its request moves on. */
+const STATUS_NOTE: Record<string, string> = {
+    approved: 'has been approved', in_production: 'is in production', dispatched: 'has been dispatched',
+    delivered: 'is marked delivered', rejected: 'was not approved', closed: 'is closed', pending: 'is on hold', open: 'is reopened',
+};
 
 class POSMController {
     private async authorizeRequestAccess(req: AuthRequest, requestIdParam: string) {
@@ -13,7 +52,7 @@ class POSMController {
             return { error: { status: 400, body: { success: false, error: 'Invalid ticket id' } } };
         }
 
-        const request = await posmRepository.findById(requestIdParam);
+        const request = await posmRepository.findRequest(requestId);
         if (!request) {
             return { error: { status: 404, body: { success: false, error: 'Ticket not found' } } };
         }
@@ -28,7 +67,7 @@ class POSMController {
         }
 
         const vendor = await vendorRepository.findByUserId(userId);
-        if (!vendor || vendor.id !== request.franchise_id) {
+        if (!vendor || String(vendor.id) !== String(request.franchise_id)) {
             return { error: { status: 403, body: { success: false, error: 'Access denied.' } } };
         }
 
@@ -93,7 +132,8 @@ class POSMController {
                 requirement: requirement,
                 created_by_role: 'franchise',
                 created_by: userId,
-                status: 'open'
+                status: 'open',
+                history: [step(req, { action: 'sent', status: 'open' })],
             });
 
             // 2. Add the first message if there's an attachment or just the requirement as message
@@ -192,7 +232,8 @@ class POSMController {
                 requirement: requirement,
                 created_by_role: 'admin',
                 created_by: adminId,
-                status: 'open'
+                status: 'open',
+                history: [step(req, { action: 'sent', status: 'open', note: 'Raised on the store\'s behalf' })],
             });
 
             // Logged as a franchise message so the ticket reads as the store's
@@ -227,6 +268,231 @@ class POSMController {
         } catch (error: any) {
             console.error('Submit POSM request on behalf error:', error);
             return res.status(500).json({ success: false, error: 'Failed to submit POSM request' });
+        }
+    }
+
+    /**
+     * The items a store can ask for, with the brands it sells.
+     * GET /api/posm/catalog — the admin gets the lists to edit them.
+     */
+    getCatalog = async (req: AuthRequest, res: Response) => {
+        try {
+            const catalog = await loadCatalog();
+            if (req.user?.role === 'admin') {
+                const forStore = String(req.query.franchiseId ?? '').trim();
+                if (!forStore) return res.json({ success: true, data: { catalog } });
+                const [[st]]: any = await db.execute('SELECT id, allowed_brands FROM vendor_details WHERE id = ? OR user_id = ? LIMIT 1', [forStore, forStore]);
+                if (!st) return res.status(404).json({ success: false, error: 'Franchise not found' });
+                return res.json({ success: true, data: {
+                    catalog: { items: catalog.items.filter(it => it.enabled) },
+                    brands: storeBrands(st.allowed_brands),
+                    usage: await storeUsage(st.id),
+                } });
+            }
+            const vendor: any = req.user?.id ? await vendorRepository.findByUserId(req.user.id) : null;
+            if (!vendor) return res.status(403).json({ success: false, error: 'Access denied.' });
+            const [[row]]: any = await db.execute('SELECT allowed_brands FROM vendor_details WHERE id = ?', [vendor.id]);
+            return res.json({ success: true, data: {
+                catalog: { items: catalog.items.filter(it => it.enabled) },
+                brands: storeBrands(row?.allowed_brands),
+                usage: await storeUsage(vendor.id),
+            } });
+        } catch (error: any) {
+            console.error('Get POSM catalog error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to load the POSM items' });
+        }
+    }
+
+    /**
+     * Save the items, their fields and limits (Admin only)
+     * PUT /api/posm/admin/catalog
+     */
+    saveCatalog = async (req: AuthRequest, res: Response) => {
+        try {
+            const catalog = readCatalog(req.body?.catalog);
+            const problem = catalogProblem(catalog);
+            if (problem) return res.status(400).json({ success: false, error: problem });
+            await db.execute(
+                `INSERT INTO posm_settings (id, catalog, updated_by) VALUES (1, ?, ?)
+                 ON DUPLICATE KEY UPDATE catalog = VALUES(catalog), updated_by = VALUES(updated_by)`,
+                [JSON.stringify(catalog), req.user?.id ?? null]
+            );
+            await ActivityLogService.log({
+                adminId: req.user?.id!, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
+                actionType: 'UPDATE_POSM_CATALOG', targetType: 'POSM_SETTINGS', targetId: '1',
+                details: { items: catalog.items.map(it => ({ id: it.id, name: it.name, enabled: it.enabled, limits: it.limits, fields: it.fields.length })) },
+                ipAddress: req.ip || req.socket?.remoteAddress,
+            });
+            return res.json({ success: true, data: { catalog } });
+        } catch (error: any) {
+            console.error('Save POSM catalog error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to save the POSM items' });
+        }
+    }
+
+    /**
+     * A picture for an item's card (Admin only)
+     * POST /api/posm/admin/catalog/image — one file, `image`.
+     */
+    uploadItemImage = async (req: AuthRequest, res: Response) => {
+        const f = ((req.files as Express.Multer.File[]) ?? [])[0];
+        if (!f) return res.status(400).json({ success: false, error: 'Choose a picture' });
+        if (!/^image\//.test(f.mimetype) && !/\.(jpe?g|png|webp)$/i.test(f.originalname)) {
+            return res.status(400).json({ success: false, error: 'The picture must be a JPG, PNG or WebP' });
+        }
+        return res.json({ success: true, data: { url: fileUrl(f) } });
+    }
+
+    /**
+     * Checks the lines and files, and files the request for a store. Shared by
+     * the store's own request and the admin's on its behalf; the admin may
+     * set aside the item limits.
+     */
+    private async createItemRequest(req: AuthRequest, res: Response, opts: {
+        franchiseId: string; byRole: 'franchise' | 'admin'; ignoreLimits?: boolean;
+    }) {
+        const userId = req.user!.id;
+        let raw: unknown;
+        try { raw = JSON.parse(String(req.body?.items ?? '[]')); } catch { return res.status(400).json({ success: false, error: 'The items could not be read' }); }
+        const [[store]]: any = await db.execute('SELECT store_name, allowed_brands, user_id FROM vendor_details WHERE id = ?', [opts.franchiseId]);
+        if (!store) return res.status(404).json({ success: false, error: 'Franchise not found' });
+
+        /* Files come as line_<n>_<field> for a line's file field, anything else is the note's. */
+        const files = ((req.files as Express.Multer.File[]) ?? []);
+        const fileCounts: Record<string, number> = {};
+        for (const f of files) {
+            const m = /^line_(\d+)_(.+)$/.exec(f.fieldname);
+            if (m) fileCounts[`${m[1]}.${m[2]}`] = (fileCounts[`${m[1]}.${m[2]}`] ?? 0) + 1;
+        }
+        const catalog = await loadCatalog();
+        const rules = opts.ignoreLimits
+            ? { items: catalog.items.map(it => ({ ...it, limits: {} })) }
+            : catalog;
+        const checked = validateLines(raw, rules, storeBrands(store.allowed_brands), await storeUsage(opts.franchiseId), fileCounts);
+        if ('error' in checked) return res.status(400).json({ success: false, error: checked.error });
+        const lines: PosmLine[] = checked.lines.map(l => ({ ...l, line_status: 'pending', approved_qty: null }));
+
+        const noteFiles: string[] = [];
+        for (const f of files) {
+            const m = /^line_(\d+)_(.+)$/.exec(f.fieldname);
+            if (m && lines[Number(m[1])]) (lines[Number(m[1])].files ??= []).push(fileUrl(f));
+            else noteFiles.push(fileUrl(f));
+        }
+        const note = String(req.body?.note ?? '').trim().slice(0, 1000);
+        const summary = requestSummary(lines);
+
+        const ticketId = await this.generateTicketId();
+        const requestId = await posmRepository.createPOSMRequest({
+            ticket_id: ticketId, franchise_id: opts.franchiseId, requirement: summary.slice(0, 2000),
+            created_by_role: opts.byRole, created_by: userId, status: 'open', items: lines,
+            history: [step(req, { action: 'sent', status: 'open', note: opts.byRole === 'admin' ? "Raised on the store's behalf" : null })],
+        });
+        if (note || noteFiles.length) {
+            await posmRepository.createMessage({
+                request_id: requestId, sender_id: userId, sender_role: opts.byRole,
+                message: note || null, attachments: noteFiles.length ? noteFiles : null,
+            });
+        }
+        await ActivityLogService.log({
+            adminId: userId, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
+            actionType: opts.byRole === 'admin' ? 'CREATE_POSM_REQUEST_ON_BEHALF' : 'CREATE_POSM_REQUEST',
+            targetType: 'POSM_REQUEST', targetId: String(requestId), targetName: store.store_name,
+            details: { ticketId, requestId, items: lines.length, franchiseId: opts.franchiseId, ignoreLimits: !!opts.ignoreLimits },
+            ipAddress: req.ip || req.socket?.remoteAddress,
+        });
+        try {
+            if (opts.byRole === 'admin') {
+                if (store.user_id) await NotificationService.notify(store.user_id, {
+                    title: `POSM ${ticketId} raised for you`, message: `The Autoform team added: ${summary.slice(0, 140)}`, type: 'posm',
+                });
+            } else {
+                await NotificationService.broadcast({
+                    title: `New POSM Request: ${ticketId}`,
+                    message: `${store.store_name || 'A franchise'} asked for: ${summary.slice(0, 140)}`,
+                    type: 'posm', targetRole: 'admin',
+                });
+            }
+        } catch (notifError) {
+            console.error('Failed to send the POSM request notification:', notifError);
+        }
+        return res.status(201).json({
+            success: true, message: opts.byRole === 'admin' ? `POSM request raised for ${store.store_name}` : 'POSM request sent',
+            data: { ticketId, requestId },
+        });
+    }
+
+    /**
+     * A request built from items (Franchise only)
+     * POST /api/posm/items — multipart: `items` (JSON lines), `note`, files
+     * `line_<n>_<field>` for a line's file field, others for the note.
+     */
+    submitItems = async (req: AuthRequest, res: Response) => {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+            const vendor: any = await vendorRepository.findByUserId(userId);
+            if (!vendor) return res.status(403).json({ success: false, error: 'Access denied. Only franchises can raise POSM requests.' });
+            return await this.createItemRequest(req, res, { franchiseId: String(vendor.id), byRole: 'franchise' });
+        } catch (error: any) {
+            console.error('Submit POSM items error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to send the POSM request' });
+        }
+    }
+
+    /**
+     * A request built from items, raised on a store's behalf (Admin only)
+     * POST /api/posm/admin/on-behalf/items — as /items, plus `franchiseId`
+     * and `ignore_limits` ('true' to set the item limits aside).
+     */
+    submitItemsOnBehalf = async (req: AuthRequest, res: Response) => {
+        try {
+            const id = String(req.body?.franchiseId ?? '').trim();
+            if (!id) return res.status(400).json({ success: false, error: 'Choose the franchise this request is for' });
+            const [[st]]: any = await db.execute('SELECT id FROM vendor_details WHERE id = ? OR user_id = ? LIMIT 1', [id, id]);
+            if (!st) return res.status(404).json({ success: false, error: 'Franchise not found' });
+            return await this.createItemRequest(req, res, {
+                franchiseId: String(st.id), byRole: 'admin', ignoreLimits: String(req.body?.ignore_limits) === 'true',
+            });
+        } catch (error: any) {
+            console.error('Submit POSM items on behalf error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to raise the POSM request' });
+        }
+    }
+
+    /**
+     * The store confirms its request arrived, with photos (Franchise only)
+     * POST /api/posm/:id/delivered
+     */
+    confirmDelivery = async (req: AuthRequest, res: Response) => {
+        try {
+            const access = await this.authorizeRequestAccess(req, req.params.id);
+            if (access.error) return res.status(access.error.status).json(access.error.body);
+            if (access.request.status !== 'dispatched') {
+                return res.status(409).json({ success: false, error: 'Only a dispatched request can be marked as received' });
+            }
+            const photos = ((req.files as Express.Multer.File[]) ?? []).map(fileUrl);
+            const delivery = { by: 'franchise', at: new Date().toISOString(), photos };
+            await posmRepository.updateRequest(access.requestId, {
+                status: 'delivered', delivery,
+                history: [...(access.request.history ?? []), step(req, { action: 'received', status: 'delivered' })],
+            });
+            const extra = String(req.body?.note ?? '').trim().slice(0, 500);
+            await posmRepository.createMessage({
+                request_id: access.requestId, sender_id: req.user!.id, sender_role: 'franchise',
+                message: 'Received the items.' + (extra ? ` ${extra}` : ''),
+                attachments: photos.length ? photos : null,
+            });
+            try {
+                await NotificationService.broadcast({
+                    title: `POSM delivered: ${access.request.ticket_id}`,
+                    message: `${(access.request as any).store_name || 'The store'} confirmed it received the items.`,
+                    type: 'posm', targetRole: 'admin',
+                });
+            } catch (e) { console.error('Failed to notify admins of POSM delivery:', e); }
+            return res.json({ success: true, data: { delivery } });
+        } catch (error: any) {
+            console.error('Confirm POSM delivery error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to confirm delivery' });
         }
     }
 
@@ -268,11 +534,24 @@ class POSMController {
 
             const messages = await posmRepository.getMessages(access.requestId);
 
+            /* For the admin deciding quantities: the store's other requests this
+               month and year, against each item's limits. */
+            let limits: Record<string, unknown> | undefined;
+            if (req.user?.role === 'admin' && Array.isArray(access.request.items)) {
+                const [catalog, usage] = await Promise.all([loadCatalog(), storeUsage(access.request.franchise_id, access.requestId)]);
+                limits = Object.fromEntries((access.request.items as PosmLine[]).map(l => {
+                    const it = catalog.items.find(x => x.id === l.item_id);
+                    return [l.item_id, { ...(it?.limits ?? {}), used_month: usage[l.item_id]?.month ?? 0, used_year: usage[l.item_id]?.year ?? 0 }];
+                }));
+            }
+
             return res.json({
                 success: true,
                 data: {
                     ...access.request,
-                    messages
+                    messages,
+                    ...(limits ? { limits } : {}),
+                    ...(req.user?.role === 'admin' ? { actions: actionsFor(access.request.status) } : {}),
                 }
             });
 
@@ -347,40 +626,168 @@ class POSMController {
      * Update request status or internal notes (Admin only)
      * PUT /api/posm/:id/status
      */
+    /**
+     * Save what is not a step: the internal note, the quantities while the
+     * request waits for approval, the dispatch details once sent (to correct
+     * them). The stage moves only through act().
+     * PUT /api/posm/:id/status
+     */
     updateRequest = async (req: AuthRequest, res: Response) => {
         try {
-            if (req.user?.role !== 'admin') {
-                return res.status(403).json({ success: false, error: 'Access denied.' });
+            if (req.user?.role !== 'admin') return res.status(403).json({ success: false, error: 'Access denied.' });
+            const requestId = parseInt(req.params.id);
+            const { internalNotes, decisions, dispatch, status } = req.body ?? {};
+            const current = await posmRepository.findRequest(requestId);
+            if (!current) return res.status(404).json({ success: false, error: 'Request not found' });
+            if (status && status !== current.status) {
+                return res.status(400).json({ success: false, error: 'Use the action buttons to move a request to another stage' });
             }
 
-            const { id } = req.params;
-            const requestId = parseInt(id);
-            const { status, internalNotes } = req.body;
-
-            if (!status) {
-                return res.status(400).json({ success: false, error: 'Status is required' });
+            const fields: Parameters<typeof posmRepository.updateRequest>[1] = {};
+            if (internalNotes !== undefined) fields.internal_notes = internalNotes === null ? null : String(internalNotes).slice(0, 2000);
+            let changedAfterApproval: string | null = null;
+            if (decisions !== undefined) {
+                if (!['open', 'under_review', 'pending', 'approved', 'in_production'].includes(current.status) || !Array.isArray(current.items)) {
+                    return res.status(400).json({ success: false, error: 'Quantities can be changed only until the request is dispatched' });
+                }
+                const applied = applyDecisions(current.items as PosmLine[], decisions);
+                if (!Array.isArray(applied)) return res.status(400).json({ success: false, error: applied.error });
+                if (['approved', 'in_production'].includes(current.status)) {
+                    const ok = applied.filter(l => l.line_status === 'approved' && (l.approved_qty ?? 0) > 0).length;
+                    if (!ok) return res.status(400).json({ success: false, error: 'Every item would be at 0: reject the request instead' });
+                    const before = current.items as PosmLine[];
+                    const diff = applied.map((l, k) => (l.approved_qty ?? null) !== (before[k]?.approved_qty ?? null)
+                        ? `${l.item_name} ${before[k]?.approved_qty ?? '-'} → ${l.approved_qty ?? '-'}` : null).filter(Boolean);
+                    if (diff.length) changedAfterApproval = diff.join(', ');
+                }
+                fields.items = applied;
             }
-
-            const updated = await posmRepository.updateStatus(requestId, status, internalNotes);
-
-            if (updated) {
-                // Log status change
-                await ActivityLogService.log({
-                    adminId: req.user?.id!,
-                    actionType: 'UPDATE_POSM_STATUS',
-                    targetType: 'POSM_REQUEST',
-                    targetId: id,
-                    details: { status, internalNotes }
-                });
-
-                return res.json({ success: true, message: 'Request updated successfully' });
-            } else {
-                return res.status(404).json({ success: false, error: 'Request not found' });
+            if (dispatch !== undefined && dispatch !== null) {
+                if (!['dispatched', 'delivered'].includes(current.status)) {
+                    return res.status(400).json({ success: false, error: 'Add the dispatch details when you dispatch the request' });
+                }
+                const d = this.readDispatch(dispatch);
+                if ('error' in d) return res.status(400).json({ success: false, error: d.error });
+                fields.dispatch = d;
             }
-
+            if (changedAfterApproval) {
+                fields.history = [...((current.history ?? []) as HistoryEntry[]), step(req, { action: 'update', status: current.status as HistoryEntry['status'], note: changedAfterApproval })];
+            }
+            await posmRepository.updateRequest(requestId, fields);
+            const storeUser = (current as any).store_user_id;
+            if (changedAfterApproval && storeUser) {
+                try {
+                    await NotificationService.notify(storeUser, { title: `POSM ${current.ticket_id}: quantities updated`, message: changedAfterApproval.slice(0, 200), type: 'posm' });
+                } catch (e) { console.error('Failed to notify the store of a POSM quantity change:', e); }
+            }
+            await ActivityLogService.log({
+                adminId: req.user.id, actionType: 'UPDATE_POSM_REQUEST', targetType: 'POSM_REQUEST', targetId: String(requestId),
+                details: { internalNotes: internalNotes !== undefined, decisions: decisions !== undefined, dispatch: fields.dispatch },
+            });
+            return res.json({ success: true, message: 'Saved', data: await posmRepository.findRequest(requestId) });
         } catch (error: any) {
             console.error('Update POSM request error:', error);
             return res.status(500).json({ success: false, error: 'Failed to update request' });
+        }
+    }
+
+    private readDispatch(d: any): { courier: string; tracking: string; date: string | null } | { error: string } {
+        const courier = String(d?.courier ?? '').trim().slice(0, 80);
+        const tracking = String(d?.tracking ?? '').trim().slice(0, 80);
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date ?? '')) ? String(d.date) : null;
+        if (!courier) return { error: 'Enter how it was sent (courier, by hand, through the distributor…)' };
+        return { courier, tracking, date };
+    }
+
+    /**
+     * Move a request to its next stage (Admin only)
+     * POST /api/posm/:id/action — { action, decisions?, dispatch?, reason?, note? }
+     * The allowed moves are posmFlow's; each one goes on the timeline and the
+     * store is told.
+     */
+    act = async (req: AuthRequest, res: Response) => {
+        try {
+            const requestId = parseInt(req.params.id);
+            const { action, decisions, dispatch, reason, note } = req.body ?? {};
+            const current = await posmRepository.findRequest(requestId);
+            if (!current) return res.status(404).json({ success: false, error: 'Request not found' });
+            const history = (current.history ?? []) as HistoryEntry[];
+            const moved = nextStatus(current.status, String(action), history);
+            if ('error' in moved) return res.status(409).json({ success: false, error: moved.error, data: { actions: actionsFor(current.status) } });
+            const a = String(action) as PosmAction;
+
+            const fields: Parameters<typeof posmRepository.updateRequest>[1] = { status: moved.status };
+            let stepNote = String(note ?? '').trim().slice(0, 500) || null;
+            const lines = Array.isArray(current.items) && current.items.length ? current.items as PosmLine[] : null;
+
+            if (a === 'approve' && lines) {
+                let out = lines;
+                if (decisions !== undefined) {
+                    const applied = applyDecisions(out, decisions);
+                    if (!Array.isArray(applied)) return res.status(400).json({ success: false, error: applied.error });
+                    out = applied;
+                }
+                // Approving approves every line still undecided, at its asked quantity.
+                out = out.map(l => !l.line_status || l.line_status === 'pending'
+                    ? { ...l, line_status: 'approved' as const, approved_qty: l.approved_qty ?? l.qty } : l);
+                out = out.map(l => l.line_status === 'approved' && !l.approved_qty ? { ...l, line_status: 'rejected' as const, approved_qty: 0 } : l);
+                const ok = out.filter(l => l.line_status === 'approved').length;
+                if (!ok) return res.status(400).json({ success: false, error: 'Every item is rejected: reject the request instead' });
+                fields.items = out;
+                stepNote = `${ok} of ${out.length} item${out.length === 1 ? '' : 's'} approved` + (stepNote ? ` · ${stepNote}` : '');
+            }
+            if (a === 'reject') {
+                const why = String(reason ?? '').trim().slice(0, 1000);
+                if (why.length < 3) return res.status(400).json({ success: false, error: 'Give the reason: the store sees it' });
+                stepNote = why;
+            }
+            if (a === 'dispatch') {
+                const d = this.readDispatch(dispatch);
+                if ('error' in d) return res.status(400).json({ success: false, error: d.error });
+                fields.dispatch = d;
+                stepNote = [d.courier, d.tracking].filter(Boolean).join(' · ');
+            }
+            if (a === 'deliver') fields.delivery = { by: 'admin', at: new Date().toISOString(), photos: [] };
+            if (a === 'reopen' && lines) {
+                // Back to To approve: the decisions are made again.
+                fields.items = lines.map(l => ({ ...l, line_status: 'pending' as const, approved_qty: null }));
+            }
+
+            fields.history = [...history, step(req, { action: a, status: moved.status, note: stepNote, ...(a === 'hold' ? { from: current.status as HistoryEntry['status'] } : {}) })];
+            await posmRepository.updateRequest(requestId, fields);
+
+            // A rejection's reason, and any note, reach the store in the chat too.
+            if ((a === 'reject' || (stepNote && String(note ?? '').trim())) && req.user?.id) {
+                await posmRepository.createMessage({
+                    request_id: requestId, sender_id: req.user.id, sender_role: 'admin',
+                    message: a === 'reject' ? `Not approved: ${stepNote}` : String(note).trim().slice(0, 500), attachments: null,
+                });
+            }
+
+            await ActivityLogService.log({
+                adminId: req.user!.id, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
+                actionType: 'POSM_ACTION', targetType: 'POSM_REQUEST', targetId: String(requestId), targetName: (current as any).store_name,
+                details: { action: a, from: current.status, to: moved.status, note: stepNote },
+                ipAddress: req.ip || req.socket?.remoteAddress,
+            });
+
+            const storeUser = (current as any).store_user_id;
+            const told = STATUS_NOTE[moved.status];
+            if (storeUser && told) {
+                try {
+                    await NotificationService.notify(storeUser, {
+                        title: `POSM ${current.ticket_id} ${a === 'resume' ? 'is moving again' : a === 'reopen' ? 'is reopened' : told}`,
+                        message: stepNote || String(current.requirement || '').slice(0, 140),
+                        type: 'posm',
+                    });
+                } catch (e) { console.error('Failed to notify the store of a POSM step:', e); }
+            }
+
+            const fresh = await posmRepository.findRequest(requestId);
+            return res.json({ success: true, message: ACTION_TEXT[a], data: { ...fresh, actions: actionsFor(moved.status) } });
+        } catch (error: any) {
+            console.error('POSM action error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to update the request' });
         }
     }
 }
