@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "in.co.autoformindia.portal"
+    namespace = "in.co.autoformindia.fms"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "in.co.autoformindia.portal"
+        applicationId "in.co.autoformindia.fms"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
