@@ -85,6 +85,9 @@ async function assignIfLead(key: string, fullPhone: string, agent: string) {
     );
     if (res.status === 200 && res.data?.result !== false) {
         console.log(`[LeadChat] ${key} assigned to ${agent}`);
+    } else if (/already assigned to same agent/i.test(String(res.data?.message))) {
+        // The webhook's assignee trait can lag a moment behind; the chat is where it should be.
+        console.log(`[LeadChat] ${key} already with ${agent}`);
     } else {
         console.warn(`[LeadChat] ${key} not assigned (${res.status}): ${JSON.stringify(res.data).slice(0, 300)}`);
     }
