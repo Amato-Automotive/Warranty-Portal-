@@ -4,6 +4,7 @@ import { useAuth } from "./AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import api, { API_URL } from "@/lib/api";
 import { getNativeToken } from '@/lib/nativeSession';
+import { NOTIFICATIONS_STALE_EVENT } from '@/lib/nativeShell';
 
 export interface Notification {
     id: number;
@@ -178,6 +179,26 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             if (socket) socket.disconnect();
         }
     }, [user, fetchNotifications]);
+
+    // The live socket only covers the time it is connected. A backgrounded
+    // tab, or the Android app while it isn't in front, drops the connection
+    // (and gives up after three reconnect attempts), so anything sent
+    // meanwhile never reaches the bell. Catch up from the server whenever the
+    // page comes back, and reconnect if the socket is down.
+    useEffect(() => {
+        if (!user) return;
+        const catchUp = () => {
+            if (document.visibilityState !== 'visible') return;
+            fetchNotifications();
+            if (socket && !socket.connected) socket.connect();
+        };
+        document.addEventListener('visibilitychange', catchUp);
+        window.addEventListener(NOTIFICATIONS_STALE_EVENT, catchUp);
+        return () => {
+            document.removeEventListener('visibilitychange', catchUp);
+            window.removeEventListener(NOTIFICATIONS_STALE_EVENT, catchUp);
+        };
+    }, [user, socket, fetchNotifications]);
 
     const markAsRead = async (id: number) => {
         try {

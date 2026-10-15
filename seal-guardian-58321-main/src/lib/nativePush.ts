@@ -1,6 +1,7 @@
 import { PushNotifications } from '@capacitor/push-notifications';
 import api from './api';
 import { isNativeApp } from './nativeSession';
+import { NOTIFICATIONS_STALE_EVENT } from './nativeShell';
 
 // ---------------------------------------------------------------------------
 // Push notifications in the native app (Firebase Cloud Messaging).
@@ -38,6 +39,11 @@ async function addListeners() {
     api.post('/push/register', { token: value, platform: 'android' }).catch(() => undefined);
   });
   await PushNotifications.addListener('registrationError', () => undefined);
+  // Android shows no banner for the app that's in front; the bell should
+  // pick it up instead (the socket usually does, this covers when it hasn't).
+  await PushNotifications.addListener('pushNotificationReceived', () => {
+    window.dispatchEvent(new Event(NOTIFICATIONS_STALE_EVENT));
+  });
   await PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
     openLink(notification.data?.link);
   });

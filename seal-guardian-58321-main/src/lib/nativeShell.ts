@@ -18,6 +18,12 @@ import { isNativeApp } from './nativeSession';
  */
 export const APP_BACK_EVENT = 'app:back';
 
+/**
+ * The bell may be out of date: the app came back to the front, or a push
+ * arrived while it was open. NotificationContext re-fetches on this.
+ */
+export const NOTIFICATIONS_STALE_EVENT = 'app:notifications-stale';
+
 const EXIT_WINDOW_MS = 2000;
 let lastBackAt = 0;
 
@@ -114,6 +120,9 @@ function interceptDownload(anchor: HTMLAnchorElement): boolean {
 
 if (isNativeApp) {
   void App.addListener('backButton', ({ canGoBack }) => handleBack(canGoBack));
+  // Android may not report a visibility change when the app returns from the
+  // background, so say it explicitly.
+  void App.addListener('resume', () => window.dispatchEvent(new Event(NOTIFICATIONS_STALE_EVENT)));
 
   // Programmatic downloads: link.click() on a detached <a download>.
   const nativeClick = HTMLAnchorElement.prototype.click;
