@@ -1513,15 +1513,24 @@ class GrievanceController {
             // throw after the assignment status had already been written, leaving the
             // assignment "completed" while the grievance stayed "submitted".
             try {
-                await db.execute(
-                    `INSERT INTO grievance_remarks (grievance_id, added_by, added_by_name, added_by_id, remark)
-                     VALUES (?, 'assignee', ?, 'external', ?)`,
-                    [
-                        assignment.grievance_id,
-                        assignment.assignee_name,
-                        `Status Update [${status}]: ${remarks || 'No remarks provided'}`
-                    ]
+                const remark = `Status Update [${status}]: ${remarks || 'No remarks provided'}`;
+                // The emailed link stays usable until the job is completed, so a
+                // reopened link can send the same update twice. Skip an exact
+                // repeat of this assignee's last update within ten minutes.
+                const [recent]: any = await db.execute(
+                    `SELECT 1 FROM grievance_remarks
+                      WHERE grievance_id = ? AND added_by = 'assignee' AND added_by_name <=> ?
+                        AND remark = ? AND created_at >= NOW() - INTERVAL 10 MINUTE
+                      LIMIT 1`,
+                    [assignment.grievance_id, assignment.assignee_name, remark]
                 );
+                if (!recent.length) {
+                    await db.execute(
+                        `INSERT INTO grievance_remarks (grievance_id, added_by, added_by_name, added_by_id, remark)
+                         VALUES (?, 'assignee', ?, 'external', ?)`,
+                        [assignment.grievance_id, assignment.assignee_name, remark]
+                    );
+                }
             } catch (historyError) {
                 console.error('Failed to log assignee remark history:', historyError);
             }
