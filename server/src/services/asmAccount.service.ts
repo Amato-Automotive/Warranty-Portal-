@@ -67,11 +67,13 @@ export async function syncAsmAccount(
     await assertNoClash(conn, asm.phone, asm.email, asm.profileId);
 
     if (asm.profileId) {
-        await conn.execute(
+        const [result]: any = await conn.execute(
             'UPDATE profiles SET name = ?, email = ?, phone_number = ? WHERE id = ?',
             [asm.name, asm.email, asm.phone, asm.profileId]
         );
-        return asm.profileId;
+        // affectedRows counts matched rows, changed or not; 0 means the account
+        // was deleted out from under the ASM — make them a new one below.
+        if (result.affectedRows > 0) return asm.profileId;
     }
 
     const profileId = uuidv4();
