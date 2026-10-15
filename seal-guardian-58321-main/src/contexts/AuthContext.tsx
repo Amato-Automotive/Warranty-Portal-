@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import api from "@/lib/api";
+import { setNativeToken } from "@/lib/nativeSession";
 
 export type UserRole = "customer" | "vendor" | "admin";
 
@@ -84,6 +85,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error(getErrorMessage(response.data.error, "OTP verification failed"));
     }
 
+    // Only the native app is sent a token; on the web this is a no-op.
+    if (response.data.token) await setNativeToken(response.data.token);
+
     if (response.data.user) {
       setUser(response.data.user);
     }
@@ -111,6 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error("Logout error:", error);
     }
+    await setNativeToken(null);
     setUser(null);
   };
 

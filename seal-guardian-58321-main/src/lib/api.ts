@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getNativeToken, isNativeApp, setNativeToken } from './nativeSession';
 
 // ---------------------------------------------------------------------------
 // API Base URL
@@ -39,6 +40,9 @@ api.interceptors.request.use((config) => {
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
   }
+  // The native app authenticates by header, not cookie — see nativeSession.ts.
+  const nativeToken = getNativeToken();
+  if (nativeToken) config.headers['Authorization'] = `Bearer ${nativeToken}`;
   if (isDev) console.log('API Request:', config.method?.toUpperCase(), config.url);
   return config;
 });
@@ -64,6 +68,7 @@ api.interceptors.response.use(
     // 401 = session expired / invalid token → force logout
     // 403 = insufficient permissions → let the component handle it (do NOT logout)
     if (status === 401 && !isAuthRoute) {
+      if (isNativeApp) void setNativeToken(null);
       if (!window.location.pathname.startsWith('/login')) {
         const role = new URL(window.location.href).searchParams.get('role');
         window.location.href = role ? `/login?role=${role}` : '/login';

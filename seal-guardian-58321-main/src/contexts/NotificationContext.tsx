@@ -3,6 +3,7 @@ import { io, Socket } from "socket.io-client";
 import { useAuth } from "./AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import api, { API_URL } from "@/lib/api";
+import { getNativeToken } from '@/lib/nativeSession';
 
 export interface Notification {
     id: number;
@@ -119,6 +120,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
             const newSocket = io(baseUrl, {
                 withCredentials: true, // SBP-006: Sends HttpOnly cookie for auth
+                // The native app has no usable cookie; the server falls back to this.
+                ...(getNativeToken() && { auth: { token: getNativeToken() } }),
                 transports: ['polling', 'websocket'],
                 reconnectionAttempts: 3,
                 reconnectionDelay: 2000
