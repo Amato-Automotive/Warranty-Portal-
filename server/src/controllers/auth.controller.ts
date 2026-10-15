@@ -10,6 +10,7 @@ import { NotificationService } from '../services/notification.service.js';
 import { signalAdminAttention } from '../services/adminAttention.service.js';
 import { RegisterData } from '../types/index.js';
 import { canonicalState } from '../services/indianStates.js';
+import { isAppRequest } from '../config/appOrigins.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -569,6 +570,8 @@ export class AuthController {
           return res.json({
             success: true,
             message: 'Registration successful!',
+            // The native app cannot use the cookie; see config/appOrigins.ts.
+            ...(isAppRequest(req) && { token }),
             user: {
               id: newUserId,
               email: pending.email,
@@ -665,6 +668,8 @@ export class AuthController {
 
       res.json({
         success: true,
+        // The native app cannot use the cookie; see config/appOrigins.ts.
+        ...(isAppRequest(req) && { token }),
         user: {
           id: user.id,
           email: user.email,

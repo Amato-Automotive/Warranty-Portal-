@@ -43,6 +43,7 @@ import pool, { getDbRetryStats, pingDatabase } from './config/database.js';
 import { ensureCustomerMobileLimitTable } from './utils/customerMobileLimits.js';
 import { backfillWarrantyStores } from './services/warrantyStore.js';
 import { PORTAL_ACTIVITY_TABLE } from './services/portalActivity.service.js';
+import { APP_ORIGINS } from './config/appOrigins.js';
 
 // Keep the process alive on stray async errors. A single unhandled promise
 // rejection (e.g. a transient DB error in a background task) would otherwise
@@ -430,6 +431,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
     'http://127.0.0.1:8080',
     'https://warranty2.autoformindia.co.in'
   ];
+allowedOrigins.push(...APP_ORIGINS.filter(o => !allowedOrigins.includes(o)));
 
 app.use(cors({
   origin: (origin, callback) => {
