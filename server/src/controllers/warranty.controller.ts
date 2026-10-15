@@ -458,11 +458,12 @@ export class WarrantyController {
             
             const userRoles = roles.map((r: any) => r.role);
             
-            // If the user is an admin or vendor, prevent using this account as a customer
-            if (userRoles.includes('admin') || userRoles.includes('vendor')) {
+            // Any account that is not purely a customer — admin, franchise,
+            // ASM — must not become one. See public.controller.ts.
+            if (userRoles.some((r: string) => r !== 'customer')) {
               const matchedBy = 'phone number';
-              return res.status(400).json({ 
-                error: `This ${matchedBy} is registered as a franchise or admin account and cannot be used as a customer profile.` 
+              return res.status(400).json({
+                error: `This ${matchedBy} is registered as a franchise or staff account and cannot be used as a customer profile.`
               });
             }
 

@@ -3463,6 +3463,20 @@ export class AdminController {
             // Get user ID to delete
             const user_id = customer[0].id;
 
+            // Deleting the profile deletes the person, not just their customer
+            // side. An account that is also a franchise, admin or ASM is refused:
+            // this once removed an ASM's login along with a test "customer".
+            const [otherRoles]: any = await db.execute(
+                "SELECT role FROM user_roles WHERE user_id = ? AND role <> 'customer'",
+                [user_id]
+            );
+            if (otherRoles.length > 0) {
+                const roles = otherRoles.map((r: any) => r.role === 'vendor' ? 'franchise' : r.role === 'asm' ? 'ASM' : r.role);
+                return res.status(409).json({
+                    error: `This number also belongs to a ${roles.join(' / ')} account, so it cannot be deleted as a customer.`
+                });
+            }
+
             // Delete from profiles - cascading should handle warranty_registrations
             await db.execute('DELETE FROM profiles WHERE id = ?', [user_id]);
 
