@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { LogOut, X } from "lucide-react";
 import { Tx } from "@/contexts/LanguageContext";
 import { menuGroups, SidebarItem } from "@/components/fms/DashboardSidebar";
+import { useAppBack } from "@/hooks/useAppBack";
 
 const VendorPortalLayout = () => {
     const { user, logout, loading: authLoading } = useAuth();
@@ -31,14 +32,23 @@ const VendorPortalLayout = () => {
         }
     }, [location.pathname]);
 
+    // Sections switch in state, not by URL, so the app's back button lands
+    // here; step back to Home rather than closing the app.
+    useAppBack(() => {
+        if (activeModule === 'home' || location.pathname !== '/dashboard/vendor') return false;
+        handleModuleChange('home');
+        return true;
+    });
+
     const handleModuleChange = (module: FmsModule) => {
         setActiveModule(module);
-        if (module === 'home') navigate('/dashboard/vendor');
+        if (module === 'home') { if (location.pathname !== '/dashboard/vendor') navigate('/dashboard/vendor'); }
         else if (module === 'catalogue') navigate('/catalogue');
         else if (module === 'profile') navigate('/profile');
 
-        else {
-            // Support other modules if they have routes, otherwise just set active (handles dashboard's state-based modules)
+        else if (location.pathname !== '/dashboard/vendor') {
+            // Support other modules if they have routes, otherwise just set active (handles dashboard's state-based modules).
+            // Already on the dashboard: don't push the same URL again, or Back steps through copies of it.
             navigate('/dashboard/vendor');
         }
     };

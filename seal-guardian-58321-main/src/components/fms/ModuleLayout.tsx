@@ -1,6 +1,8 @@
 import { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { HelpPopover } from "./HelpPopover";
+import { NotificationPopover } from "./NotificationPopover";
+import { isNativeApp } from "@/lib/nativeSession";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useB2BCart } from "@/contexts/B2BCartContext";
@@ -17,7 +19,7 @@ interface ModuleLayoutProps {
     onMenuToggle?: () => void;
 }
 
-export const ModuleLayout = ({ title, description, children, actions, onNavigate, onMenuToggle }: ModuleLayoutProps) => {
+export const ModuleLayout = ({ title, description, children, actions, onNavigate, onLinkClick, onMenuToggle }: ModuleLayoutProps) => {
     const { isDistributor, isFranchise } = useB2BCart();
     const { t } = useLanguage();
 
@@ -78,8 +80,8 @@ export const ModuleLayout = ({ title, description, children, actions, onNavigate
                                     />
                                     {actions}
                                     <div className="h-10 md:h-12 border-l border-slate-100 pl-2 md:pl-4 flex items-center gap-1 md:gap-2">
-                                        {/* TODO: Re-enable notifications in Phase 2 */}
-                                        {/* <NotificationPopover onNavigate={onNavigate} onLinkClick={onLinkClick} /> */}
+                                        {/* TODO: Re-enable notifications on the website in Phase 2. The app has them now. */}
+                                        {isNativeApp && <NotificationPopover onNavigate={onNavigate} onLinkClick={onLinkClick} />}
                                         <HelpPopover onNavigate={onNavigate} />
                                     </div>
                                 </div>

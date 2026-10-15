@@ -5,6 +5,7 @@ import { adminModuleTitle } from "./adminModules";
 import { AdminModuleLayout } from "./AdminModuleLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Navigate } from "react-router-dom";
+import { useAppBack } from "@/hooks/useAppBack";
 import { Loader2 } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
@@ -60,6 +61,13 @@ export const AdminLayout = () => {
         if (module === 'admins' && !user?.isSuperAdmin) return;
         setActiveModuleRaw(module);
     };
+
+    // App back button: modules are local state, so step back to Overview.
+    useAppBack(() => {
+        if (activeModule === 'overview') return false;
+        setActiveModuleRaw('overview');
+        return true;
+    });
 
     if (loading) {
         return (
