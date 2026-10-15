@@ -290,6 +290,9 @@ const CHANNEL_FILTERS: Record<string, {
     website: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: false },
     /* A WhatsApp enquiry the team added by hand: routed like IVR and website. */
     whatsapp_manual: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: true },
+    /* Instagram and Facebook DMs the team added by hand: the same. */
+    instagram_dm: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: true },
+    facebook_dm: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: true },
 };
 
 /* A day as YYYY-MM-DD in the browser's own time — the team's, in India. */
@@ -361,6 +364,8 @@ const CHANNEL_LABEL: Record<string, string> = {
     ivr: "IVR",
     website: "Website",
     whatsapp_manual: "WhatsApp (added)",
+    instagram_dm: "Instagram DM",
+    facebook_dm: "Facebook DM",
 };
 
 /* The channels that find their own ASM or store. The rest (IVR, website, and
@@ -1158,7 +1163,7 @@ export const AdminLeadsList = () => {
                 picked. A channel with nothing in it is still shown: a campaign
                 that has stopped producing leads is worth noticing. */}
             {counts && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
                     {([
                         { label: "Total", value: Object.values(counts.channel).reduce((a, b) => a + (b || 0), 0), tone: "text-slate-800", key: "all" },
                         { label: "WhatsApp", value: counts.channel.whatsapp, tone: "text-emerald-700", key: "whatsapp" },
@@ -1166,6 +1171,8 @@ export const AdminLeadsList = () => {
                         { label: "IVR", value: counts.channel.ivr, tone: "text-indigo-600", key: "ivr" },
                         { label: "Website", value: counts.channel.website, tone: "text-cyan-600", key: "website" },
                         { label: "WhatsApp (added)", value: counts.channel.whatsapp_manual, tone: "text-teal-600", key: "whatsapp_manual" },
+                        { label: "Instagram DM", value: counts.channel.instagram_dm, tone: "text-pink-700", key: "instagram_dm" },
+                        { label: "Facebook DM", value: counts.channel.facebook_dm, tone: "text-yellow-600", key: "facebook_dm" },
                     ] as const).map(s => {
                         const active = channel === s.key;
                         const empty = !s.value;
@@ -2288,6 +2295,8 @@ export const AdminLeadsList = () => {
                                             <SelectItem value="ivr">IVR</SelectItem>
                                             <SelectItem value="website">Website</SelectItem>
                                             <SelectItem value="whatsapp_manual">WhatsApp</SelectItem>
+                                            <SelectItem value="instagram_dm">Instagram DM</SelectItem>
+                                            <SelectItem value="facebook_dm">Facebook DM</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>

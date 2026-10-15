@@ -6,8 +6,13 @@
  * Free of any database import, so it is tested directly.
  */
 
-/* whatsapp_manual: an enquiry the team took on WhatsApp and added by hand. */
-export const CHART_CHANNELS = ['whatsapp', 'instagram', 'ivr', 'website', 'whatsapp_manual'] as const;
+/* whatsapp_manual, instagram_dm, facebook_dm: an enquiry the team took on
+   WhatsApp, an Instagram DM or a Facebook DM and added by hand. 'instagram'
+   is the Instagram ad form, which comes in by itself. */
+export const CHART_CHANNELS = ['whatsapp', 'instagram', 'ivr', 'website', 'whatsapp_manual', 'instagram_dm', 'facebook_dm'] as const;
+/** The channels Add Lead offers; anything else is filed as IVR. */
+export const MANUAL_CHANNELS: readonly string[] = ['ivr', 'website', 'whatsapp_manual', 'instagram_dm', 'facebook_dm'];
+type Channel = typeof CHART_CHANNELS[number];
 export const CHART_PRODUCTS = ['Seat Covers', 'Mats', 'Accessories'] as const;
 export const FORWARD_KINDS = ['store', 'asm', 'distributor', 'support'] as const;
 export const REVIEW_OUTCOMES = [
@@ -37,8 +42,8 @@ export interface Named { key: string; label: string; count: number }
 
 export interface LeadCharts {
     total: number;
-    /** One entry per day with a lead, oldest first; channels outside the five are "other". */
-    by_day: Array<{ day: string; whatsapp: number; instagram: number; ivr: number; website: number; whatsapp_manual: number; other: number }>;
+    /** One entry per day with a lead, oldest first; channels outside CHART_CHANNELS are "other". */
+    by_day: Array<{ day: string; other: number } & Record<Channel, number>>;
     product: Named[];
     /** A lead that went to two kinds of recipient counts under both; "none" is not forwarded yet. */
     went_to: Named[];
@@ -76,8 +81,9 @@ export function buildLeadCharts(rows: ChartRow[]): LeadCharts {
 
     for (const r of rows) {
         if (r.ist_day) {
-            const d = days.get(r.ist_day) ?? { day: r.ist_day, whatsapp: 0, instagram: 0, ivr: 0, website: 0, whatsapp_manual: 0, other: 0 };
-            const ch = (CHART_CHANNELS as readonly string[]).includes(String(r.source)) ? String(r.source) as typeof CHART_CHANNELS[number] : 'other';
+            const d = days.get(r.ist_day)
+                ?? { day: r.ist_day, ...Object.fromEntries(CHART_CHANNELS.map(c => [c, 0])) as Record<Channel, number>, other: 0 };
+            const ch = (CHART_CHANNELS as readonly string[]).includes(String(r.source)) ? String(r.source) as Channel : 'other';
             d[ch]++;
             days.set(r.ist_day, d);
         }

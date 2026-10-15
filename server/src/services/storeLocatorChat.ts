@@ -587,7 +587,7 @@ export interface ManualLeadInput {
     name: string | null;
     product: string | null;
     car: string | null;
-    /** The channel the auditor chose: 'ivr', 'website' or 'whatsapp_manual'. */
+    /** The channel the auditor chose: one of MANUAL_CHANNELS (leadCharts). */
     source: string;
     enteredBy: string | null;
     /** The auditor picked a store in the form; it is sent by the caller, and the chain stops there. */

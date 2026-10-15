@@ -10,7 +10,7 @@ import { extractPincode } from '../services/storeLocator.js';
 import { routeEnquiry, areaKey } from '../services/asmRouting.service.js';
 import { findState } from '../services/indianStates.js';
 import { isSamePlace, buildAddress } from '../services/placeMatch.js';
-import { buildLeadCharts } from '../services/leadCharts.js';
+import { buildLeadCharts, CHART_CHANNELS, MANUAL_CHANNELS } from '../services/leadCharts.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { WhatsAppService } from '../services/whatsapp.service.js';
 import { summariseIvr } from '../services/ivrLead.js';
@@ -490,8 +490,9 @@ export class AsmController {
             // Only the manual channels: an entry claiming to be from WhatsApp
             // or Instagram would be indistinguishable from a real one. An
             // enquiry the team took on WhatsApp by hand is its own channel,
-            // 'whatsapp_manual', so the bot's leads and logic never mix with it.
-            const channel = source === 'website' || source === 'whatsapp_manual' ? source : 'ivr';
+            // 'whatsapp_manual', so the bot's leads and logic never mix with it;
+            // Instagram and Facebook DMs likewise, apart from the Instagram ad form.
+            const channel = MANUAL_CHANNELS.includes(source) ? source : 'ivr';
 
             if (twoWheeler) {
                 const settings = await getLocatorSettings();
@@ -1486,7 +1487,7 @@ export class AsmController {
                 total: stageBase.length,
                 stage: Object.fromEntries(LEAD_STAGES.map(s => [s, 0])),
                 product: { 'Seat Covers': 0, Mats: 0, Accessories: 0, none: 0 } as Record<string, number>,
-                channel: { whatsapp: 0, instagram: 0, ivr: 0, website: 0, whatsapp_manual: 0 } as Record<string, number>,
+                channel: Object.fromEntries(CHART_CHANNELS.map(c => [c, 0])) as Record<string, number>,
                 review_pending: matching.filter((r: any) => !r.review_status).length,
                 // The Vehicle pills: every other filter, not its own.
                 vehicle: (() => {
