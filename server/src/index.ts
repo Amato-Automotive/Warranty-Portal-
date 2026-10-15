@@ -22,6 +22,7 @@ import catalogRoutes from './routes/catalog.routes.js';
 import grievanceRoutes from './routes/grievance.routes.js';
 import assignmentRoutes from './routes/assignment.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
+import pushRoutes from './routes/push.routes.js';
 import analyticsRoutes from './routes/analytics.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import oldWarrantiesRoutes from './routes/old-warranties.routes.js';
@@ -214,6 +215,19 @@ async function runMigrations() {
       await pool.query('ALTER TABLE leads ADD COLUMN internal_notes TEXT NULL AFTER review_reason');
       console.log('✅ Migration: Added internal_notes to leads.');
     }
+
+    // Phones running the Android app that accepted push notifications
+    // (push.service.ts). user_id matches profiles.id, collation included.
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS push_devices (
+         token VARCHAR(512) CHARACTER SET ascii NOT NULL PRIMARY KEY,
+         user_id VARCHAR(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+         platform VARCHAR(16) NOT NULL DEFAULT 'android',
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         KEY idx_push_devices_user (user_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    );
 
     // Offers & Schemes. Only created when missing; nothing is changed if they exist.
     const schemeTables = [
@@ -508,6 +522,7 @@ app.use('/api/catalog', generalApiLimiter, catalogRoutes);
 app.use('/api/grievance', generalApiLimiter, grievanceRoutes);
 app.use('/api/assignment', generalApiLimiter, assignmentRoutes);
 app.use('/api/notifications', generalApiLimiter, notificationRoutes);
+app.use('/api/push', generalApiLimiter, pushRoutes);
 app.use('/api/upload', generalApiLimiter, uploadRoutes);
 app.use('/api/admin/old-warranties', generalApiLimiter, oldWarrantiesRoutes);
 app.use('/api/settings', generalApiLimiter, settingsRoutes);
