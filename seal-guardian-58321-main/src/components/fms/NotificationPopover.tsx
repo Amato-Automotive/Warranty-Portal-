@@ -277,7 +277,10 @@ export const NotificationPopover = ({ onNavigate, onLinkClick }: { onNavigate?: 
                     <DialogTrigger asChild>
                         {TriggerButton}
                     </DialogTrigger>
-                    <DialogContent className="max-w-[90vw] h-[80vh] p-0 rounded-[24px] overflow-hidden gap-0 [&>button:last-child]:hidden">
+                    {/* The dialog is a grid whose implicit column grows to the widest line, and the
+                        scroll area's viewport wraps its children in a display:table div that does
+                        the same; pin both to the dialog's width so long titles wrap/truncate. */}
+                    <DialogContent className="w-[92vw] max-w-[92vw] h-[80vh] p-0 rounded-[24px] overflow-hidden gap-0 grid-cols-[minmax(0,1fr)] [&>button:last-child]:hidden [&_[data-radix-scroll-area-viewport]>div]:!block">
                         <DialogDescription className="sr-only">Activity Center</DialogDescription>
                         <DialogTitle className="sr-only">Activity Center</DialogTitle>
                         <NotificationListContent />
