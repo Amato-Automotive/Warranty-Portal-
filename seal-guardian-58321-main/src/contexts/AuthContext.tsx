@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import api from "@/lib/api";
 import { setNativeToken } from "@/lib/nativeSession";
+import { disablePush, enablePush } from "@/lib/nativePush";
 
 export type UserRole = "customer" | "vendor" | "admin";
 
@@ -56,6 +57,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetchCurrentUser();
   }, []);
 
+  // Native app only: register this phone for push once someone is logged in.
+  useEffect(() => {
+    if (user?.id) void enablePush();
+  }, [user?.id]);
+
   const fetchCurrentUser = async () => {
     try {
       const response = await api.get("/auth/me");
@@ -110,6 +116,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async (): Promise<void> => {
+    await disablePush();
     try {
       await api.post("/auth/logout");
     } catch (error) {

@@ -1,6 +1,7 @@
 import db from '../config/database.js';
 import { getISTTimestamp } from '../utils/dateUtils.js';
 import { getIO } from '../socket.js';
+import { pushInBackground } from './push.service.js';
 
 // Simple in-memory cache for deduplication
 // Stores hash(userId + title + message) -> timestamp
@@ -62,6 +63,9 @@ export class NotificationService {
             // 3. Emit via Socket.io to the user's specific room
             const io = getIO();
             io.to(`user_${userId}`).emit('notification:new', notification);
+
+            // 4. Phone push, for users with the app installed
+            pushInBackground([userId], { title: data.title, message: data.message, link: data.link, type: data.type });
 
             return notification;
         } catch (error) {
@@ -151,6 +155,9 @@ export class NotificationService {
                 };
                 io.to(`user_${userId}`).emit('notification:new', userNotificationPayload);
             });
+
+            // 4. Phone push, for users with the app installed
+            pushInBackground(userIds, { title: data.title, message: data.message, link, type });
 
             return { success: true, count: userIds.length };
         } catch (error) {

@@ -1,2 +1,5 @@
 /build/*
 !/build/.npmkeep
+
+# Firebase config for this app id. Not a secret by itself, but the repo is public.
+google-services.json

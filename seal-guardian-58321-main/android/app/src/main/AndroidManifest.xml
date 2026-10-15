@@ -34,6 +34,11 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+        <!-- Push notifications (nativePush.ts / server push.service.ts): status-bar
+             icon, tint and channel used when the app is closed. -->
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_notify" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/ic_launcher_background" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="default" />
     </application>
 
     <!-- Permissions -->
