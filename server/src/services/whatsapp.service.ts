@@ -613,6 +613,26 @@ export class WhatsAppService {
      *   {{9}} = Rejection Reason
      */
     /**
+     * Tell an ASM what head office did with their expense claim: decided it,
+     * changed the decision, or paid it.
+     *
+     * Template: af_asm_expense_update (ASM_EXPENSE_TEMPLATE overrides), values
+     * from expenseUpdateValues() in asmExpenseRules:
+     *   {{1}} ASM name  {{2}} Claim number  {{3}} What happened
+     *   {{4}} Claimed   {{5}} Approved      {{6}} Note or reason
+     * Off by default (asm_expense_update toggle) until Interakt approves it.
+     */
+    static async sendAsmExpenseUpdate(phone: string, values: string[], claimId: string): Promise<boolean> {
+        return this.sendTemplateMessage(
+            phone,
+            process.env.ASM_EXPENSE_TEMPLATE || 'af_asm_expense_update',
+            values,
+            'asm_expense_update',
+            claimId
+        );
+    }
+
+    /**
      * Tell an ASM about a customer enquiry in their area.
      *
      * The enquiry reaches us from two places — a customer messaging us directly,

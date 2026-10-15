@@ -3,7 +3,7 @@ import api, { getErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AsmExpenseForm } from "./AsmExpenseForm";
-import { EXPENSE_STATUS, claimDates, rupees, type ExpenseClaim } from "@/lib/asmExpenses";
+import { EXPENSE_STATUS, claimDates, isCut, rupees, type ExpenseClaim } from "@/lib/asmExpenses";
 import { ExpenseClaimLines } from "./ExpenseClaimLines";
 import { ChevronDown, Loader2, MapPin, Plane, Plus, Receipt } from "lucide-react";
 
@@ -103,10 +103,10 @@ export const AsmExpenses = () => {
                                         </p>
                                     </div>
                                     <span className="text-right shrink-0 tabular-nums">
-                                        <span className={cn("block font-black", c.status === "partially_approved" ? "text-xs text-slate-400 line-through" : "text-base md:text-lg text-slate-900")}>
+                                        <span className={cn("block font-black", isCut(c) ? "text-xs text-slate-400 line-through" : "text-base md:text-lg text-slate-900")}>
                                             {rupees(c.total_amount)}
                                         </span>
-                                        {c.status === "partially_approved" && (
+                                        {isCut(c) && (
                                             <span className="block text-base md:text-lg font-black text-emerald-700">{rupees(c.approved_amount ?? 0)}</span>
                                         )}
                                     </span>

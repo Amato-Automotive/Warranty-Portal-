@@ -1,6 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateExpenseClaim, decideExpenseClaim, ExpenseRuleError } from '../asmExpenseRules.js';
+import {
+    validateExpenseClaim, decideExpenseClaim, ExpenseRuleError,
+    canChangeDecision, canMarkPaid, validatePayment, expenseUpdateValues,
+} from '../asmExpenseRules.js';
 
 const TODAY = '2026-10-06';
 const rejects = (input: any, pattern: RegExp) =>
@@ -136,4 +139,46 @@ describe('head office decision', () => {
     });
 
     test('an unknown action is refused', () => refuses({ action: 'maybe' }, /approve, approve part or reject/));
+});
+
+describe('after the decision', () => {
+    test('a decision can be changed until the claim is paid', () => {
+        for (const s of ['approved', 'partially_approved', 'rejected']) assert.equal(canChangeDecision(s), true, s);
+        for (const s of ['submitted', 'paid']) assert.equal(canChangeDecision(s), false, s);
+    });
+
+    test('only a claim with money approved can be paid', () => {
+        assert.equal(canMarkPaid('approved'), true);
+        assert.equal(canMarkPaid('partially_approved'), true);
+        for (const s of ['submitted', 'rejected', 'paid']) assert.equal(canMarkPaid(s), false, s);
+    });
+
+    test('payment date: today or earlier, within 90 days; reference optional', () => {
+        assert.deepEqual(validatePayment({ paid_on: TODAY }, TODAY), { paid_on: TODAY, reference: null });
+        assert.deepEqual(validatePayment({ paid_on: '2026-10-01', reference: '  UTR 1234 ' }, TODAY),
+            { paid_on: '2026-10-01', reference: 'UTR 1234' });
+        const bad = (input: any, pattern: RegExp) =>
+            assert.throws(() => validatePayment(input, TODAY), (e: any) => e instanceof ExpenseRuleError && pattern.test(e.message));
+        bad({}, /Date paid is required/);
+        bad({ paid_on: '2026-10-07' }, /future/);
+        bad({ paid_on: '2026-06-01' }, /90 days/);
+        bad({ paid_on: TODAY, reference: 'x'.repeat(101) }, /too long/);
+    });
+});
+
+describe('WhatsApp values', () => {
+    const base = { asm_name: 'Ravi Kumar', claim_number: 'EXP-0007', total_amount: 5400, note: null };
+
+    test('six values, no blanks', () => {
+        const v = expenseUpdateValues({ ...base, status: 'approved', approved_amount: 5400 });
+        assert.deepEqual(v, ['Ravi Kumar', 'EXP-0007', 'approved', 'Rs 5,400', 'Rs 5,400', '-']);
+    });
+
+    test('partial, rejected, changed and paid read as they should', () => {
+        assert.equal(expenseUpdateValues({ ...base, status: 'partially_approved', approved_amount: 4200.5, note: 'Hotel over limit' })[4], 'Rs 4,200.50');
+        assert.equal(expenseUpdateValues({ ...base, status: 'rejected', approved_amount: 0, note: 'No bill' })[2], 'rejected');
+        assert.equal(expenseUpdateValues({ ...base, status: 'approved', approved_amount: 5400, changed: true })[2], 'changed to approved');
+        assert.equal(expenseUpdateValues({ ...base, status: 'paid', approved_amount: 5400, paid_on: '2026-10-08' })[2], 'paid on 8 Oct 2026');
+        assert.equal(expenseUpdateValues({ ...base, asm_name: null, status: 'paid', approved_amount: 1 })[0], 'Team');
+    });
 });

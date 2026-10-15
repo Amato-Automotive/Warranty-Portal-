@@ -283,3 +283,70 @@ export function decideExpenseClaim(
 function centsTotal(values: number[]): number {
     return values.reduce((t, v) => t + paise(v), 0) / 100;
 }
+
+/** A decision can be changed until the money has gone out. */
+export const DECIDED_STATUSES = ['approved', 'partially_approved', 'rejected'] as const;
+export const canChangeDecision = (status: string) => (DECIDED_STATUSES as readonly string[]).includes(status);
+
+/** Only a claim with something approved can be paid. */
+export const canMarkPaid = (status: string) => status === 'approved' || status === 'partially_approved';
+
+export interface PaymentDetails {
+    paid_on: string;
+    reference: string | null;
+}
+
+/**
+ * Head office marking an approved claim paid: the date the money went out
+ * (today or earlier, within the last 90 days) and an optional reference — a
+ * UTR, cheque number or "cash".
+ */
+export function validatePayment(input: any, today: string): PaymentDetails {
+    const paidOn = date(input?.paid_on, 'Date paid');
+    const diff = dayNumber(today) - dayNumber(paidOn);
+    if (diff < 0) fail('Date paid cannot be in the future');
+    if (diff > 90) fail('Date paid is more than 90 days ago — please check it');
+    return { paid_on: paidOn, reference: text(input?.reference, 'Payment reference', 100, false) };
+}
+
+// ── The WhatsApp message to the ASM ──────────────────────────────────────────
+
+const inr = (n: number) => `Rs ${n.toLocaleString('en-IN', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`;
+
+/**
+ * Body values for af_asm_expense_update, one template for every outcome:
+ *   {{1}} ASM name  {{2}} claim number  {{3}} what happened
+ *   {{4}} claimed   {{5}} approved      {{6}} note or reason ("-" if none)
+ * `changed` marks a decision head office has revised.
+ */
+export function expenseUpdateValues(c: {
+    asm_name: string | null;
+    claim_number: string;
+    status: string;
+    total_amount: number;
+    approved_amount: number | null;
+    note: string | null;
+    changed?: boolean;
+    paid_on?: string | null;
+}): string[] {
+    const outcome: Record<string, string> = {
+        approved: 'approved',
+        partially_approved: 'partly approved',
+        rejected: 'rejected',
+        paid: 'paid',
+    };
+    let what = outcome[c.status] ?? c.status;
+    if (c.changed) what = `changed to ${what}`;
+    if (c.status === 'paid' && c.paid_on) {
+        const [y, m, d] = c.paid_on.split('-').map(Number);
+        what += ` on ${new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}`;
+    }
+    return [
+        c.asm_name?.trim() || 'Team',
+        c.claim_number,
+        what,
+        inr(c.total_amount),
+        inr(c.approved_amount ?? 0),
+        c.note?.trim() || '-',
+    ];
+}

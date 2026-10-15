@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import api, { getErrorMessage } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,18 +12,21 @@ import { cn } from "@/lib/utils";
 import { ExpenseClaimLines } from "@/components/asm/ExpenseClaimLines";
 import { EXPENSE_STATUS, claimDates, rupees, type ExpenseClaim } from "@/lib/asmExpenses";
 import {
-    CheckCircle2, CircleDashed, FileText, Loader2, MapPin, Plane, RefreshCw, Scissors, XCircle
+    Banknote, CheckCircle2, CircleDashed, Pencil, FileText, Loader2, MapPin, Plane, RefreshCw, Scissors, XCircle
 } from "lucide-react";
 
 /**
- * ASM expense claims, for head office to decide.
+ * ASM Expenses — the ASMs' expense claims, for HR to decide and pay. Its own
+ * module and permission (`asm_expenses`), apart from ASM Management.
  *
- * Each claim is decided once: approve in full, approve part of it (an
- * approved amount per line, with a reason), or reject (with a reason). The
- * ASM sees the outcome, the reason and the approved figures on their portal.
+ * Each claim is decided: approve in full, approve part of it (an approved
+ * amount per line, with a reason), or reject (with a reason). The decision can
+ * be changed until the claim is marked paid, which only an approved or partly
+ * approved claim can be. The ASM sees each step on their portal, and on
+ * WhatsApp once that template is switched on.
  */
 
-type Filter = "submitted" | "approved" | "partially_approved" | "rejected" | "all";
+type Filter = "submitted" | "approved" | "partially_approved" | "rejected" | "paid" | "all";
 type Mode = "approve" | "partial" | "reject" | null;
 
 const FILTERS: { id: Filter; label: string; icon: typeof CheckCircle2; color: string }[] = [
@@ -30,17 +34,19 @@ const FILTERS: { id: Filter; label: string; icon: typeof CheckCircle2; color: st
     { id: "approved", label: "Approved", icon: CheckCircle2, color: "text-emerald-600" },
     { id: "partially_approved", label: "Partly approved", icon: Scissors, color: "text-amber-600" },
     { id: "rejected", label: "Rejected", icon: XCircle, color: "text-rose-600" },
+    { id: "paid", label: "Paid", icon: Banknote, color: "text-slate-800" },
 ];
+
+/** Today in IST, for the paid-on date. */
+const istToday = () => new Date().toLocaleString("en-CA", { timeZone: "Asia/Kolkata", hour12: false }).split(",")[0];
 
 const ITEM_LABEL: Record<string, string> = { trip: "Trip", onward: "Onward", return: "Return", hotel: "Hotel", other: "Other" };
 
-interface Props {
-    asms: { id: string; name: string }[];
-    canEdit: boolean;
-}
-
-export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
+export const AdminAsmExpenses = () => {
     const { toast } = useToast();
+    const { hasPermission, user } = useAuth();
+    const canEdit = !!user?.isSuperAdmin || hasPermission("asm_expenses", "write");
+    const [asms, setAsms] = useState<{ id: string; name: string; is_active: boolean }[]>([]);
     const [filter, setFilter] = useState<Filter>("submitted");
     const [asmId, setAsmId] = useState<string>("all");
     const [claims, setClaims] = useState<ExpenseClaim[]>([]);
@@ -53,6 +59,10 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
     const [note, setNote] = useState("");
     const [amounts, setAmounts] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
+    const [changing, setChanging] = useState(false);
+    const [paying, setPaying] = useState(false);
+    const [paidOn, setPaidOn] = useState(istToday());
+    const [paymentRef, setPaymentRef] = useState("");
 
     const load = async (silent = false) => {
         if (silent) setRefreshing(true);
@@ -63,6 +73,7 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
             });
             setClaims(res.data.claims || []);
             setCounts(res.data.counts || {});
+            setAsms(res.data.asms || []);
         } catch (error) {
             toast({ title: "Could not load claims", description: getErrorMessage(error, "Please try again"), variant: "destructive" });
         } finally {
@@ -78,9 +89,34 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
 
     const open = (claim: ExpenseClaim) => {
         setSelected(claim);
+        resetActions(claim);
+    };
+
+    const resetActions = (claim: ExpenseClaim) => {
         setMode(null);
         setNote("");
-        setAmounts(Object.fromEntries(claim.items.map(i => [i.id, String(i.amount)])));
+        setChanging(false);
+        setPaying(false);
+        setPaidOn(istToday());
+        setPaymentRef("");
+        // Changing a partial decision starts from what was approved, not what was claimed.
+        setAmounts(Object.fromEntries(claim.items.map(i => [i.id, String(claim.status === "rejected" ? i.amount : i.approved_amount ?? i.amount)])));
+    };
+
+    const markPaid = async () => {
+        if (!selected) return;
+        setSaving(true);
+        try {
+            const res = await api.put(`/asm/expenses/${selected.id}/paid`, { paid_on: paidOn, reference: paymentRef });
+            toast({ title: res.data?.message || "Marked paid" });
+            setSelected(res.data.claim);
+            resetActions(res.data.claim);
+            load(true);
+        } catch (error) {
+            toast({ title: "Could not mark paid", description: getErrorMessage(error, "Please try again"), variant: "destructive" });
+        } finally {
+            setSaving(false);
+        }
     };
 
     const partialTotal = useMemo(
@@ -103,7 +139,7 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
             });
             toast({ title: res.data?.message || "Decision saved" });
             setSelected(res.data.claim);
-            setMode(null);
+            resetActions(res.data.claim);
             load(true);
         } catch (error) {
             toast({ title: "Could not save", description: getErrorMessage(error, "Please try again"), variant: "destructive" });
@@ -117,7 +153,7 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
     return (
         <div className="space-y-5">
             {/* Filter cards double as the counts */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                 {FILTERS.map((f, i) => {
                     const c = counts[f.id] ?? { n: 0, claimed: 0 };
                     const active = filter === f.id;
@@ -151,7 +187,7 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
                     <SelectTrigger className="w-56 h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All ASMs</SelectItem>
-                        {asms.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                        {asms.map(a => <SelectItem key={a.id} value={a.id}>{a.name}{a.is_active ? "" : " (inactive)"}</SelectItem>)}
                     </SelectContent>
                 </Select>
                 {filter !== "all" && (
@@ -278,8 +314,53 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
                                 <ExpenseClaimLines claim={selected} />
                             )}
 
-                            {selected.status === "submitted" && canEdit && (
+                            {/* Decided and not yet paid: pay it, or change the decision */}
+                            {canEdit && ["approved", "partially_approved", "rejected"].includes(selected.status) && !changing && (
+                                paying ? (
+                                    <div className="rounded-2xl border border-slate-300 bg-slate-50 p-4 space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                        <p className="text-sm font-bold text-slate-700">Mark {rupees(selected.approved_amount ?? 0)} paid</p>
+                                        <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+                                            <label className="space-y-1">
+                                                <span className="text-xs text-slate-500">Date paid</span>
+                                                <Input type="date" value={paidOn} max={istToday()} onChange={e => setPaidOn(e.target.value)} className="bg-white" />
+                                            </label>
+                                            <label className="space-y-1">
+                                                <span className="text-xs text-slate-500">Reference (optional)</span>
+                                                <Input value={paymentRef} maxLength={100} onChange={e => setPaymentRef(e.target.value)}
+                                                    placeholder="UTR, cheque number or cash" className="bg-white" />
+                                            </label>
+                                        </div>
+                                        <p className="text-xs text-slate-500">Once paid, the decision on this claim can no longer change.</p>
+                                        <div className="flex justify-end gap-2">
+                                            <Button variant="ghost" onClick={() => setPaying(false)} disabled={saving}>Back</Button>
+                                            <Button onClick={markPaid} disabled={saving || !paidOn} className="bg-slate-800 hover:bg-slate-900 font-bold">
+                                                {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+                                                Confirm paid
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap justify-end gap-2 pt-1">
+                                        <Button variant="outline" onClick={() => setChanging(true)} className="font-bold">
+                                            <Pencil className="h-4 w-4 mr-1.5" /> Change decision
+                                        </Button>
+                                        {selected.status !== "rejected" && (
+                                            <Button onClick={() => setPaying(true)} className="bg-slate-800 hover:bg-slate-900 font-bold">
+                                                <Banknote className="h-4 w-4 mr-1.5" /> Mark paid
+                                            </Button>
+                                        )}
+                                    </div>
+                                )
+                            )}
+
+                            {(selected.status === "submitted" || changing) && canEdit && (
                                 <div className="space-y-3 pt-1">
+                                    {changing && mode === null && (
+                                        <div className="flex items-center justify-between gap-2">
+                                            <p className="text-xs text-slate-500">Choose the new decision. The ASM is told it changed.</p>
+                                            <Button variant="ghost" size="sm" onClick={() => setChanging(false)}>Cancel</Button>
+                                        </div>
+                                    )}
                                     {mode === null ? (
                                         <div className="grid gap-2 sm:grid-cols-3">
                                             <Button onClick={() => setMode("approve")} className="bg-emerald-600 hover:bg-emerald-700 font-bold">
@@ -320,7 +401,7 @@ export const AdminAsmExpenses = ({ asms, canEdit }: Props) => {
                                                             : mode === "partial" ? "bg-amber-600 hover:bg-amber-700" : "bg-rose-600 hover:bg-rose-700")}
                                                 >
                                                     {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-                                                    {mode === "approve" ? "Confirm approval" : mode === "partial" ? "Confirm partial approval" : "Confirm rejection"}
+                                                    {changing ? "Save new decision" : mode === "approve" ? "Confirm approval" : mode === "partial" ? "Confirm partial approval" : "Confirm rejection"}
                                                 </Button>
                                             </div>
                                         </div>

@@ -32,6 +32,10 @@ export interface ExpenseClaim {
     review_note: string | null;
     reviewed_by_name: string | null;
     reviewed_at: string | null;
+    paid_on?: string | null;
+    payment_ref?: string | null;
+    paid_by_name?: string | null;
+    paid_at?: string | null;
     asm_name?: string | null;
     asm_phone?: string | null;
     created_at: string;
@@ -46,8 +50,12 @@ export const EXPENSE_STATUS: Record<string, { label: string; tone: string }> = {
     paid: { label: "Paid", tone: "bg-slate-800 text-white border-slate-800" },
 };
 
-/** Head office has decided it — approved, partly approved or rejected. */
+/** Head office has decided it — approved, partly approved or rejected (or since paid). */
 export const isDecided = (status: string) => ['approved', 'partially_approved', 'rejected', 'paid'].includes(status);
+
+/** Less was approved than claimed (and the claim was not simply rejected). */
+export const isCut = (c: Pick<ExpenseClaim, "status" | "approved_amount" | "total_amount">) =>
+    c.status !== "rejected" && c.approved_amount !== null && c.approved_amount < c.total_amount;
 
 export const MODE_LABEL: Record<string, string> = {
     train: "Train", bus: "Bus", flight: "Flight", cab: "Cab", own_vehicle: "Own vehicle",

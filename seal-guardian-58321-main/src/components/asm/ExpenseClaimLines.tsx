@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { FileText } from "lucide-react";
-import { MODE_LABEL, rupees, isDecided, type ExpenseClaim, type ExpenseItem } from "@/lib/asmExpenses";
+import { MODE_LABEL, formatDay, rupees, isCut, isDecided, type ExpenseClaim, type ExpenseItem } from "@/lib/asmExpenses";
 
 /**
  * One claim's lines — what the ASM claimed and, once head office has decided,
@@ -68,14 +68,23 @@ export const ExpenseClaimLines = ({ claim }: { claim: ExpenseClaim }) => {
             {(claim.review_note || decided) && (
                 <div className={cn("text-xs rounded-xl border px-3 py-2",
                     claim.status === "rejected" ? "bg-rose-50 border-rose-100 text-rose-800"
-                        : claim.status === "partially_approved" ? "bg-amber-50 border-amber-100 text-amber-800"
+                        : isCut(claim) ? "bg-amber-50 border-amber-100 text-amber-800"
                             : "bg-emerald-50 border-emerald-100 text-emerald-800")}>
-                    {claim.review_note && <p><b>{claim.status === "approved" ? "Note" : "Reason"}:</b> {claim.review_note}</p>}
+                    {claim.review_note && <p><b>{claim.status === "rejected" || isCut(claim) ? "Reason" : "Note"}:</b> {claim.review_note}</p>}
                     {decided && claim.reviewed_at && (
                         <p className="opacity-70 mt-0.5">
                             Decided by {claim.reviewed_by_name || "head office"} · {formatWhen(claim.reviewed_at)}
                         </p>
                     )}
+                </div>
+            )}
+            {claim.status === "paid" && claim.paid_on && (
+                <div className="text-xs rounded-xl border px-3 py-2 bg-slate-800 border-slate-800 text-white">
+                    <p>
+                        <b>Paid {rupees(claim.approved_amount ?? 0)}</b> on {formatDay(claim.paid_on)}
+                        {claim.payment_ref && <> · Ref: {claim.payment_ref}</>}
+                    </p>
+                    {claim.paid_by_name && <p className="opacity-70 mt-0.5">Marked paid by {claim.paid_by_name}</p>}
                 </div>
             )}
         </div>

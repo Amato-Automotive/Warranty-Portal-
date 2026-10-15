@@ -39,7 +39,7 @@ export interface NotificationType {
     /** Human label shown in the admin UI. */
     label: string;
     /** UI grouping. */
-    group: 'Warranty' | 'Manpower' | 'Orders' | 'Auth' | 'Broadcast';
+    group: 'Warranty' | 'Manpower' | 'Orders' | 'Auth' | 'Broadcast' | 'ASM';
     /** Interakt template this maps to (informational — the sender still passes its own). */
     template: string;
     /** Who receives it. */
@@ -182,6 +182,17 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
         context: 'vendor_welcome',
         defaultEnabled: true,
         description: 'Welcomes a newly registered store.'
+    },
+    {
+        key: 'asm_expense_update',
+        label: 'ASM — Expense Claim Update',
+        group: 'ASM',
+        template: 'af_asm_expense_update',
+        recipient: 'ASM who filed the claim',
+        context: 'asm_expense_update',
+        // OFF until the template is approved in Interakt.
+        defaultEnabled: false,
+        description: 'Tells the ASM their expense claim was approved, partly approved, rejected, changed or paid.'
     },
 ];
 

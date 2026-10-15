@@ -4,17 +4,22 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../config/database.js';
 import { urlToDiskPath } from '../config/localUpload.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { validateExpenseClaim, decideExpenseClaim, ExpenseRuleError, type BillField } from '../services/asmExpenseRules.js';
+import {
+    validateExpenseClaim, decideExpenseClaim, ExpenseRuleError, type BillField,
+    canChangeDecision, canMarkPaid, validatePayment, expenseUpdateValues,
+} from '../services/asmExpenseRules.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
+import { WhatsAppService } from '../services/whatsapp.service.js';
 
 /**
  * ASM expense claims — the ASM's side: file a claim, see their own.
  *
  * The rules live in asmExpenseRules (pure, tested); this stores what they
- * return. Head office then decides each claim once, from ASM Management:
- * approve, approve part (an approved amount per line, with a reason) or
- * reject (with a reason). status: submitted → approved | partially_approved |
- * rejected.
+ * return. Head office then decides each claim from ASM Management: approve,
+ * approve part (an approved amount per line, with a reason) or reject (with a
+ * reason). The decision can be changed until the claim is marked paid.
+ * status: submitted → approved | partially_approved | rejected → paid
+ * (approved or partly approved only). The ASM hears of each step on WhatsApp.
  */
 
 /** Created at boot. status/type are VARCHAR, not ENUM, so the review flow can add states without an ALTER. */
@@ -74,6 +79,11 @@ export async function ensureAsmExpenseTables() {
         ['asm_expense_claims', 'approved_amount', 'DECIMAL(10,2) NULL AFTER total_amount'],
         ['asm_expense_claims', 'reviewed_by_name', 'VARCHAR(100) NULL AFTER reviewed_by'],
         ['asm_expense_items', 'approved_amount', 'DECIMAL(10,2) NULL AFTER amount'],
+        ['asm_expense_claims', 'paid_on', 'DATE NULL AFTER reviewed_at'],
+        ['asm_expense_claims', 'payment_ref', 'VARCHAR(100) NULL AFTER paid_on'],
+        ['asm_expense_claims', 'paid_by', 'VARCHAR(36) NULL AFTER payment_ref'],
+        ['asm_expense_claims', 'paid_by_name', 'VARCHAR(100) NULL AFTER paid_by'],
+        ['asm_expense_claims', 'paid_at', 'DATETIME NULL AFTER paid_by_name'],
     ];
     for (const [table, column, definition] of later) {
         const [found]: any = await db.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [column]);
@@ -107,12 +117,30 @@ async function asmIdFor(req: AuthRequest): Promise<string | null> {
 
 const claimNo = (n: number) => `EXP-${String(n).padStart(4, '0')}`;
 
+/** WhatsApp the ASM about their claim. Never fails the request it follows. */
+function tellAsm(claim: any, opts: { changed?: boolean } = {}) {
+    if (process.env.ENABLE_WHATSAPP !== 'true' || !claim?.asm_phone) return;
+    const values = expenseUpdateValues({
+        asm_name: claim.asm_name,
+        claim_number: claim.claim_number,
+        status: claim.status,
+        total_amount: claim.total_amount,
+        approved_amount: claim.approved_amount,
+        note: claim.status === 'paid' ? claim.payment_ref : claim.review_note,
+        changed: opts.changed,
+        paid_on: claim.paid_on,
+    });
+    WhatsAppService.sendAsmExpenseUpdate(claim.asm_phone, values, claim.id)
+        .catch(err => console.error('[ASM expense] WhatsApp failed:', err));
+}
+
 async function loadClaims(where: string, params: any[], limit = 200) {
     const [claims]: any = await db.execute(
         // DATEs as text: a DATE read back through the IST pool becomes a JS Date
         // at local midnight and serialises as the previous day in UTC.
         `SELECT c.*, a.name AS asm_name, a.phone_number AS asm_phone,
-                DATE_FORMAT(c.start_date, '%Y-%m-%d') AS start_day, DATE_FORMAT(c.end_date, '%Y-%m-%d') AS end_day
+                DATE_FORMAT(c.start_date, '%Y-%m-%d') AS start_day, DATE_FORMAT(c.end_date, '%Y-%m-%d') AS end_day,
+                DATE_FORMAT(c.paid_on, '%Y-%m-%d') AS paid_day
            FROM asm_expense_claims c
            LEFT JOIN asms a ON a.id = c.asm_id
           WHERE ${where} ORDER BY c.created_at DESC LIMIT ${limit}`,
@@ -128,6 +156,7 @@ async function loadClaims(where: string, params: any[], limit = 200) {
         ...c,
         start_date: c.start_day,
         end_date: c.end_day,
+        paid_on: c.paid_day,
         claim_number: claimNo(c.claim_no),
         total_amount: Number(c.total_amount),
         approved_amount: c.approved_amount === null ? null : Number(c.approved_amount),
@@ -233,7 +262,7 @@ export class AsmExpenseController {
 
     /**
      * GET /api/asm/expenses?status=&asm_id= — claims for review, newest first,
-     * with the count in each status for the filter cards.
+     * with the count in each status for the filter cards and the ASMs to filter by.
      */
     static async adminList(req: AuthRequest, res: Response) {
         try {
@@ -251,9 +280,13 @@ export class AsmExpenseController {
                   GROUP BY status`,
                 countParams
             );
+            // Names for the ASM filter, here because HR has this screen but
+            // not ASM Management, whose list carries far more than a name.
+            const [asms]: any = await db.execute('SELECT id, name, is_active FROM asms ORDER BY name');
             res.json({
                 success: true,
                 claims,
+                asms: asms.map((a: any) => ({ id: a.id, name: a.name, is_active: !!a.is_active })),
                 counts: Object.fromEntries(counts.map((r: any) => [r.status, { n: Number(r.n), claimed: Number(r.claimed || 0) }])),
             });
         } catch (error) {
@@ -264,7 +297,7 @@ export class AsmExpenseController {
 
     /**
      * PUT /api/asm/expenses/:id/decision — { action, note?, amounts? }.
-     * A claim is decided once, while it is still submitted.
+     * Decides a submitted claim, or changes the decision on one not yet paid.
      */
     static async decide(req: AuthRequest, res: Response) {
         const { id } = req.params;
@@ -272,7 +305,7 @@ export class AsmExpenseController {
         try {
             await conn.beginTransaction();
             const [rows]: any = await conn.execute(
-                'SELECT id, claim_no, status, asm_id, total_amount FROM asm_expense_claims WHERE id = ? FOR UPDATE',
+                'SELECT id, claim_no, status, asm_id, total_amount, approved_amount FROM asm_expense_claims WHERE id = ? FOR UPDATE',
                 [id]
             );
             if (!rows.length) {
@@ -280,9 +313,12 @@ export class AsmExpenseController {
                 return res.status(404).json({ error: 'Claim not found' });
             }
             const claim = rows[0];
-            if (claim.status !== 'submitted') {
+            const changing = claim.status !== 'submitted';
+            if (changing && !canChangeDecision(claim.status)) {
                 await conn.rollback();
-                return res.status(409).json({ error: 'This claim has already been decided' });
+                return res.status(409).json({
+                    error: claim.status === 'paid' ? 'This claim has been paid, so its decision can no longer change' : 'This claim cannot be decided',
+                });
             }
             const [items]: any = await conn.execute(
                 'SELECT id, amount FROM asm_expense_items WHERE claim_id = ? ORDER BY sort_order',
@@ -309,7 +345,7 @@ export class AsmExpenseController {
                 adminId: req.user!.id,
                 adminName: req.user!.name,
                 adminEmail: req.user!.email,
-                actionType: `ASM_EXPENSE_${decision.status.toUpperCase()}`,
+                actionType: changing ? 'ASM_EXPENSE_DECISION_CHANGED' : `ASM_EXPENSE_${decision.status.toUpperCase()}`,
                 targetType: 'asm_expense',
                 targetId: id,
                 targetName: `${saved.claim_number} · ${saved.asm_name ?? 'ASM'}`,
@@ -317,12 +353,23 @@ export class AsmExpenseController {
                     claimed: Number(claim.total_amount),
                     approved: decision.approved_total,
                     ...(decision.note ? { reason: decision.note } : {}),
+                    ...(changing ? {
+                        changes: {
+                            status: { from: claim.status, to: decision.status },
+                            approved: {
+                                from: claim.approved_amount === null ? null : Number(claim.approved_amount),
+                                to: decision.approved_total,
+                            },
+                        },
+                    } : {}),
                 },
                 ipAddress: req.ip,
             }).catch(() => {});
 
+            tellAsm(saved, { changed: changing });
+
             const verb = { approved: 'approved', partially_approved: 'partly approved', rejected: 'rejected' }[decision.status];
-            res.json({ success: true, claim: saved, message: `${saved.claim_number} ${verb}` });
+            res.json({ success: true, claim: saved, message: `${saved.claim_number} ${changing ? `changed to ${verb}` : verb}` });
         } catch (error: any) {
             await conn.rollback().catch(() => {});
             if (error instanceof ExpenseRuleError) return res.status(400).json({ error: error.message });
@@ -330,6 +377,56 @@ export class AsmExpenseController {
             res.status(500).json({ error: 'Could not save the decision' });
         } finally {
             conn.release();
+        }
+    }
+    /**
+     * PUT /api/asm/expenses/:id/paid — { paid_on, reference? }. Marks an
+     * approved or partly approved claim paid; after that its decision is fixed.
+     */
+    static async markPaid(req: AuthRequest, res: Response) {
+        const { id } = req.params;
+        try {
+            const payment = validatePayment(req.body, istToday());
+            const [rows]: any = await db.execute('SELECT status FROM asm_expense_claims WHERE id = ?', [id]);
+            if (!rows.length) return res.status(404).json({ error: 'Claim not found' });
+            if (!canMarkPaid(rows[0].status)) {
+                return res.status(409).json({
+                    error: rows[0].status === 'paid' ? 'This claim is already marked paid' : 'Only an approved claim can be marked paid',
+                });
+            }
+            // The status in the WHERE turns a second click, or a decision changed
+            // meanwhile, into a no-op instead of a second payment record.
+            const [result]: any = await db.execute(
+                `UPDATE asm_expense_claims
+                    SET status = 'paid', paid_on = ?, payment_ref = ?, paid_by = ?, paid_by_name = ?, paid_at = NOW()
+                  WHERE id = ? AND status = ?`,
+                [payment.paid_on, payment.reference, req.user!.id, req.user!.name || null, id, rows[0].status]
+            );
+            if (!result.affectedRows) return res.status(409).json({ error: 'This claim changed meanwhile. Reload and try again.' });
+
+            const [saved] = await loadClaims('c.id = ?', [id]);
+            ActivityLogService.log({
+                adminId: req.user!.id,
+                adminName: req.user!.name,
+                adminEmail: req.user!.email,
+                actionType: 'ASM_EXPENSE_PAID',
+                targetType: 'asm_expense',
+                targetId: id,
+                targetName: `${saved.claim_number} · ${saved.asm_name ?? 'ASM'}`,
+                details: {
+                    paid: saved.approved_amount,
+                    paid_on: payment.paid_on,
+                    ...(payment.reference ? { reference: payment.reference } : {}),
+                },
+                ipAddress: req.ip,
+            }).catch(() => {});
+
+            tellAsm(saved);
+            res.json({ success: true, claim: saved, message: `${saved.claim_number} marked paid` });
+        } catch (error: any) {
+            if (error instanceof ExpenseRuleError) return res.status(400).json({ error: error.message });
+            console.error('[ASM expense] mark paid failed:', error);
+            res.status(500).json({ error: 'Could not mark the claim paid' });
         }
     }
 }

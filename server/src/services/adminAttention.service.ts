@@ -80,7 +80,7 @@ export async function getAttentionCounts(user: { isSuperAdmin?: boolean; permiss
         counts.manpower = Number(m[0]?.n || 0);
     }
 
-    if (canRead(user, 'asms')) {
+    if (canRead(user, 'asm_expenses')) {
         try {
             const [rows]: any = await db.execute(
                 "SELECT COUNT(*) AS n FROM asm_expense_claims WHERE status = 'submitted'"

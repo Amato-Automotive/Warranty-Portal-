@@ -18,6 +18,7 @@ import {
     Package,
     PackageCheck,
     PenTool,
+    Receipt,
     QrCode,
     ShieldCheck,
     ShoppingCart,
@@ -56,6 +57,7 @@ export type AdminModule =
     | 'audits'
     | 'leads'
     | 'asm-management'
+    | 'asm-expenses'
     | 'profile';
 
 // Maps sidebar module IDs to permission keys
@@ -89,6 +91,7 @@ const moduleToPermKey: Record<string, string> = {
     'audits': 'audits',
     'leads': 'leads',
     'asm-management': 'asms',
+    'asm-expenses': 'asm_expenses',
     'profile': 'profile',  // Always visible
 };
 
@@ -139,7 +142,8 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
             { id: 'audits', label: "Store Audits", icon: ClipboardCheck, keywords: ['audit & compliance', 'compliance'] },
             { id: 'posm', label: "POSM Requests", icon: Flag, keywords: ['posm requirements', 'marketing material', 'branding'] },
             { id: 'grievances', label: "Grievances", icon: MessageSquareWarning, keywords: ['complaints', 'tickets'] },
-            { id: 'asm-management', label: "ASM Management", icon: BriefcaseBusiness, keywords: ['asm', 'area sales manager', 'expenses', 'sales team'] },
+            { id: 'asm-management', label: "ASM Management", icon: BriefcaseBusiness, keywords: ['asm', 'area sales manager', 'sales team'] },
+            { id: 'asm-expenses', label: "ASM Expenses", icon: Receipt, keywords: ['expense claims', 'reimbursement', 'hr', 'travel', 'conveyance', 'paid'] },
         ]
     },
     {

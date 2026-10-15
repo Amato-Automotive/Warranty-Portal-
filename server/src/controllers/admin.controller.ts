@@ -4188,7 +4188,7 @@ export class AdminController {
     static async createDistributor(req: Request, res: Response) {
         const connection = await db.getConnection();
         try {
-            const { name, email, phone_number, address, city, state, pincode, contact_name, gst_number, area_head_name, allowed_brands } = req.body;
+            const { name, email, phone_number, address, city, state, pincode, contact_name, gst_number, area_head_name, allowed_brands, asm_id } = req.body;
             const brandValue = ['AF', 'AC', 'AFAC'].includes(allowed_brands) ? allowed_brands : 'AF';
 
             if (!name || !email || !phone_number) {

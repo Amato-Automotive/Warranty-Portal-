@@ -67,8 +67,11 @@ router.post('/areas', ...adminAuth, requirePermission('leads', 'write'), AsmCont
 router.delete('/areas/:id', ...adminAuth, requirePermission('leads', 'write'), AsmController.removeArea);
 
 // ── Admin: ASM expense claims ───────────────────────────────────────────────
-router.get('/expenses', ...adminAuth, requirePermission('asms', 'read'), AsmExpenseController.adminList);
-router.put('/expenses/:id/decision', ...adminAuth, requirePermission('asms', 'write'), signalAdminAttentionOnSuccess, AsmExpenseController.decide);
+// Their own permission (`asm_expenses`, the ASM Expenses screen): HR decides
+// and pays claims; ASM Management (`asms`) stays with the main admin.
+router.get('/expenses', ...adminAuth, requirePermission('asm_expenses', 'read'), AsmExpenseController.adminList);
+router.put('/expenses/:id/decision', ...adminAuth, requirePermission('asm_expenses', 'write'), signalAdminAttentionOnSuccess, AsmExpenseController.decide);
+router.put('/expenses/:id/paid', ...adminAuth, requirePermission('asm_expenses', 'write'), AsmExpenseController.markPaid);
 
 // ── Admin: ASMs ─────────────────────────────────────────────────────────────
 // ASMs are managed from ASM Management (`asms`). The list is also what Lead
