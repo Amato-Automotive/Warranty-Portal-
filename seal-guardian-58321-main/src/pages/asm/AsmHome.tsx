@@ -10,11 +10,12 @@ import { ModuleLayout } from "@/components/fms/ModuleLayout";
 import { AsmExpenses } from "@/components/asm/AsmExpenses";
 import { AsmLeads } from "@/components/asm/AsmLeads";
 import { AsmAreas } from "@/components/asm/AsmAreas";
+import { AsmStores } from "@/components/asm/AsmStores";
 import api from "@/lib/api";
 import { rupees } from "@/lib/asmExpenses";
 import {
     Loader2, LogOut, Phone, Mail, Home, Receipt, User, ChevronLeft, ChevronRight, BriefcaseBusiness,
-    Inbox, MapPinned, CalendarDays, ArrowUpRight
+    Inbox, MapPinned, CalendarDays, ArrowUpRight, Store
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -23,7 +24,7 @@ import type { LucideIcon } from "lucide-react";
  * cream canvas) with the ASM's own modules.
  */
 
-type AsmModule = "home" | "leads" | "areas" | "expenses" | "profile";
+type AsmModule = "home" | "leads" | "stores" | "areas" | "expenses" | "profile";
 
 const MENU: { label: string; items: { id: AsmModule; label: string; icon: LucideIcon; comingSoon?: boolean }[] }[] = [
     { label: "Overview", items: [{ id: "home", label: "Home", icon: Home }] },
@@ -31,6 +32,7 @@ const MENU: { label: string; items: { id: AsmModule; label: string; icon: Lucide
         label: "Sales",
         items: [
             { id: "leads", label: "My Leads", icon: Inbox },
+            { id: "stores", label: "My Stores", icon: Store },
             { id: "areas", label: "My Areas", icon: MapPinned },
         ],
     },
@@ -38,13 +40,14 @@ const MENU: { label: string; items: { id: AsmModule; label: string; icon: Lucide
 ];
 
 const TITLES: Record<AsmModule, string> = {
-    home: "Home", leads: "My Leads", areas: "My Areas", expenses: "Expenses", profile: "My Profile",
+    home: "Home", leads: "My Leads", stores: "My Stores", areas: "My Areas", expenses: "Expenses", profile: "My Profile",
 };
 
 /** The numbers on Home and the sidebar badge. */
 interface Summary {
     leads: { total: number; today: number; week: number; this_month: number };
     areas: number;
+    stores: number;
     claims: { pending: number; amount: number };
 }
 
@@ -106,7 +109,7 @@ const AsmHome = () => {
     const tabs: { id: AsmModule; label: string; icon: LucideIcon }[] = [
         { id: "home", label: "Home", icon: Home },
         { id: "leads", label: "Leads", icon: Inbox },
-        { id: "areas", label: "Areas", icon: MapPinned },
+        { id: "stores", label: "Stores", icon: Store },
         { id: "expenses", label: "Expenses", icon: Receipt },
         { id: "profile", label: "Profile", icon: User },
     ];
@@ -244,6 +247,7 @@ const AsmHome = () => {
                     <div className="pb-28 md:pb-0">
                         {active === "home" && <AsmHomeModule name={user.name} summary={summary} onOpen={go} />}
                         {active === "leads" && <AsmLeads />}
+                        {active === "stores" && <AsmStores />}
                         {active === "areas" && <AsmAreas />}
                         {active === "expenses" && <AsmExpenses />}
                         {active === "profile" && (
@@ -321,7 +325,7 @@ const AsmHomeModule = ({ name, summary, onOpen }: { name: string; summary: Summa
     const stats: { label: string; value: string; sub: string; icon: LucideIcon; tone: string; to: AsmModule }[] = [
         { label: "Leads today", value: String(summary?.leads.today ?? "–"), sub: `${summary?.leads.week ?? 0} in the last 7 days`, icon: Inbox, tone: "bg-orange-50 text-orange-600", to: "leads" },
         { label: "This month", value: String(summary?.leads.this_month ?? "–"), sub: `${summary?.leads.total ?? 0} leads in total`, icon: CalendarDays, tone: "bg-blue-50 text-blue-600", to: "leads" },
-        { label: "Areas", value: String(summary?.areas ?? "–"), sub: "Places you cover", icon: MapPinned, tone: "bg-emerald-50 text-emerald-600", to: "areas" },
+        { label: "Stores", value: String(summary?.stores ?? "–"), sub: "Franchises and distributors", icon: Store, tone: "bg-emerald-50 text-emerald-600", to: "stores" },
         { label: "Claims pending", value: String(summary?.claims.pending ?? "–"), sub: summary ? `${rupees(summary.claims.amount)} awaiting review` : "Expense claims", icon: Receipt, tone: "bg-purple-50 text-purple-600", to: "expenses" },
     ];
 

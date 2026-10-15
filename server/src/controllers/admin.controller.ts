@@ -282,6 +282,8 @@ export class AdminController {
                     COALESCE(vv.is_active, true) as is_active,
                     COALESCE(vd.is_distributor, false) as is_distributor,
                     COALESCE(vd.is_franchise, true) as is_franchise,
+                    vd.asm_id,
+                    asm.name as asm_name,
                     vv.verified_at,
                     vv.rejection_reason,
                     COALESCE(mp.manpower_count, 0) as manpower_count,
@@ -306,6 +308,7 @@ export class AdminController {
                 LEFT JOIN vendor_details vd ON p.id = vd.user_id
                 LEFT JOIN vendor_verification vv ON p.id = vv.user_id
                 LEFT JOIN distributors dist ON dist.profile_id = p.id
+                LEFT JOIN asms asm ON asm.id = vd.asm_id
                 LEFT JOIN (
                     SELECT vendor_id,
                            COUNT(*) as manpower_count,
@@ -400,6 +403,8 @@ export class AdminController {
                     -- NULL for one. Fall back to the franchise's own column.
                     COALESCE(dist.gst_number, vd.gst_number) AS gst_number,
                     dist.area_head_name,
+                    vd.asm_id,
+                    asm.name AS asm_name,
                     vv.is_verified,
                     COALESCE(vv.is_active, true) as is_active,
                     vv.verified_at,
@@ -410,6 +415,7 @@ export class AdminController {
                 LEFT JOIN vendor_details vd ON p.id = vd.user_id
                 LEFT JOIN vendor_verification vv ON p.id = vv.user_id
                 LEFT JOIN distributors dist ON dist.profile_id = p.id
+                LEFT JOIN asms asm ON asm.id = vd.asm_id
                 WHERE p.id = ?
             `, [id]);
 
@@ -1564,6 +1570,73 @@ export class AdminController {
     }
 
     /**
+     * The ASMs a franchise can be put under, for the dropdown on its screen.
+     * Served under the franchise permission: an admin who edits franchises
+     * needn't also hold ASM Management to pick one.
+     */
+    static async getVendorAsmOptions(_req: Request, res: Response) {
+        try {
+            const [asms]: any = await db.execute(
+                'SELECT id, name, is_active FROM asms ORDER BY is_active DESC, name'
+            );
+            res.json({ success: true, asms: asms.map((a: any) => ({ ...a, is_active: Boolean(a.is_active) })) });
+        } catch (error: any) {
+            console.error('ASM options error:', error);
+            res.status(500).json({ error: 'Failed to load ASMs' });
+        }
+    }
+
+    /**
+     * Set or clear the ASM a franchise or distributor reports to.
+     * The ASM sees the store in their portal from the next load.
+     */
+    static async updateVendorAsm(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const asmId: string | null = req.body?.asm_id ? String(req.body.asm_id) : null;
+
+            const [before]: any = await db.execute(
+                `SELECT vd.store_name, vd.asm_id, a.name AS asm_name
+                   FROM vendor_details vd LEFT JOIN asms a ON a.id = vd.asm_id
+                  WHERE vd.user_id = ?`,
+                [id]
+            );
+            if (!before.length) return res.status(404).json({ error: 'Franchise not found' });
+
+            let asmName: string | null = null;
+            if (asmId) {
+                const [asm]: any = await db.execute('SELECT name, is_active FROM asms WHERE id = ?', [asmId]);
+                if (!asm.length) return res.status(400).json({ error: 'That ASM no longer exists' });
+                // A store already under an inactive ASM may stay there; a new one may not go to one.
+                if (!asm[0].is_active && before[0].asm_id !== asmId) {
+                    return res.status(400).json({ error: `${asm[0].name} is inactive` });
+                }
+                asmName = asm[0].name;
+            }
+
+            await db.execute('UPDATE vendor_details SET asm_id = ? WHERE user_id = ?', [asmId, id]);
+
+            const admin = (req as any).user;
+            await ActivityLogService.log({
+                adminId: admin.id,
+                adminName: admin.name,
+                adminEmail: admin.email,
+                actionType: 'VENDOR_ASM_UPDATED',
+                targetType: 'VENDOR',
+                targetId: id,
+                targetName: before[0].store_name || 'Unknown',
+                details: { changes: fieldChanges({ asm: before[0].asm_name ?? null }, { asm: asmName }) },
+                ipAddress: req.ip || req.socket?.remoteAddress
+            });
+
+            res.json({ success: true, asm_id: asmId, asm_name: asmName });
+        } catch (error: any) {
+            console.error('Update vendor ASM error:', error);
+            res.status(500).json({ error: 'Failed to update ASM' });
+        }
+    }
+
+    /**
      * Update vendor location coordinates
      */
     static async updateVendorCoordinates(req: Request, res: Response) {
@@ -1621,6 +1694,9 @@ export class AdminController {
             state = state ? String(state).substring(0, 100) : null;
             pincode = pincode ? String(pincode).substring(0, 10) : null;
             gst_number = gst_number ? String(gst_number).substring(0, 20) : null;
+            // The ASM dropdown replaced the free-text Area Head (Oct 2026), so the
+            // form no longer sends it. Absent means "leave it", not "clear it".
+            const keepAreaHead = area_head_name === undefined;
             area_head_name = area_head_name ? String(area_head_name).substring(0, 255) : null;
 
             if (!store_name || !contact_name || !email || !phone_number) {
@@ -1659,6 +1735,7 @@ export class AdminController {
                     [id]
                 );
                 const before = beforeRows[0] || {};
+                if (keepAreaHead) area_head_name = before.area_head_name ?? null;
 
                 const [existingEmail]: any = await connection.execute(
                     'SELECT id FROM profiles WHERE email = ? AND id != ?',
@@ -3599,6 +3676,7 @@ export class AdminController {
                 audits: { read: false, write: false },
                 leads: { read: false, write: false },
                 asms: { read: false, write: false },
+                asm_expenses: { read: false, write: false },
                 distributors: { read: false, write: false },
                 order_management: { read: false, write: false },
                 customers: { read: false, write: false },
@@ -4214,6 +4292,14 @@ export class AdminController {
                 return res.status(400).json({ error: 'Please enter a valid email address.' });
             }
 
+            // The ASM the distributor reports to (replaces the typed Area Head).
+            let asmId: string | null = null;
+            if (asm_id) {
+                const [asm]: any = await db.execute('SELECT id FROM asms WHERE id = ? AND is_active = 1', [String(asm_id)]);
+                if (!asm.length) return res.status(400).json({ error: 'That ASM is not active.' });
+                asmId = asm[0].id;
+            }
+
             await connection.beginTransaction();
 
             // Check if profile already exists for this email. A store email must
@@ -4263,8 +4349,8 @@ export class AdminController {
             const vendorDetailsId = uuidv4();
             await connection.execute(
                 `INSERT INTO vendor_details 
-                 (id, user_id, store_name, store_email, address, city, state, pincode, is_distributor, is_franchise) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 (id, user_id, store_name, store_email, address, city, state, pincode, is_distributor, is_franchise, asm_id) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     vendorDetailsId,
                     profileId,
@@ -4275,7 +4361,8 @@ export class AdminController {
                     state || '',
                     pincode || '',
                     true,
-                    false
+                    false,
+                    asmId
                 ]
             );
 

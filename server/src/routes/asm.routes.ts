@@ -79,6 +79,7 @@ router.put('/expenses/:id/paid', ...adminAuth, requirePermission('asm_expenses',
 router.get('/', ...adminAuth, requireAnyPermission(['asms', 'leads'], 'read'), AsmController.listAsms);
 router.post('/', ...adminAuth, requirePermission('asms', 'write'), AsmController.createAsm);
 router.get('/:id/leads', ...adminAuth, requirePermission('asms', 'read'), AsmController.asmLeads);
+router.get('/:id/stores', ...adminAuth, requirePermission('asms', 'read'), AsmController.asmStores);
 router.put('/:id', ...adminAuth, requirePermission('asms', 'write'), AsmController.updateAsm);
 router.delete('/:id', ...adminAuth, requirePermission('asms', 'write'), AsmController.deleteAsm);
 

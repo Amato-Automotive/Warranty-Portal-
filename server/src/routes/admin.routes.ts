@@ -38,12 +38,14 @@ router.get('/stats', ...adminAuth, requirePermission('overview', 'read'), AdminC
 
 // Vendors (Franchises)
 router.get('/vendors', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getAllVendors);
+router.get('/vendor-asm-options', ...adminAuth, requireAnyPermission(['vendors', 'distributors'], 'read'), AdminController.getVendorAsmOptions);
 router.get('/vendors/:id', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getVendorDetails);
 router.put('/vendors/:id/verification', ...adminAuth, requirePermission('vendors', 'write'), signalAttention, AdminController.updateVendorVerification);
 router.put('/vendors/:id/activation', ...adminAuth, requirePermission('vendors', 'write'), AdminController.toggleVendorActivation);
 router.put('/vendors/:id/profile', ...adminAuth, requirePermission('vendors', 'write'), AdminController.updateVendorProfile);
 router.put('/vendors/:id/coordinates', ...adminAuth, requirePermission('vendors', 'write'), AdminController.updateVendorCoordinates);
 router.put('/vendors/:id/store-code', ...adminAuth, requirePermission('vendors', 'write'), AdminController.updateStoreCode);
+router.put('/vendors/:id/asm', ...adminAuth, requirePermission('vendors', 'write'), AdminController.updateVendorAsm);
 router.put('/vendors/:id/allowed-brands', ...adminAuth, requirePermission('vendors', 'write'), AdminController.updateVendorAllowedBrands);
 router.put('/vendors/:id/distributor-status', ...adminAuth, requirePermission('vendors', 'write'), AdminController.updateVendorDistributorStatus);
 router.delete('/vendors/:id', ...adminAuth, requirePermission('vendors', 'write'), signalAttention, AdminController.deleteVendor);

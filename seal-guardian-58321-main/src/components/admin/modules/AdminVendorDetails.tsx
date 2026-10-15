@@ -8,7 +8,8 @@ import { VendorSourcingTab } from "./VendorSourcingTab";
 import { VendorAnnouncementsTab } from "./VendorAnnouncementsTab";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MapPin, User, Mail, Phone, Download, Search, Loader2, QrCode } from "lucide-react";
+import { MapPin, User, Mail, Phone, Download, Search, Loader2, QrCode, UserCheck } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AdminWarrantyList } from "@/components/admin/AdminWarrantyList";
@@ -194,6 +195,35 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
         }
     };
 
+    // ASM — the area sales manager this store reports to. Admin-only; the
+    // store itself never sees it.
+    const [asmOptions, setAsmOptions] = useState<{ id: string; name: string; is_active: boolean }[]>([]);
+    const [savingAsm, setSavingAsm] = useState(false);
+
+    useEffect(() => {
+        api.get('/admin/vendor-asm-options')
+            .then(res => setAsmOptions(res.data.asms || []))
+            .catch(() => setAsmOptions([]));
+    }, []);
+
+    const handleAsmChange = async (value: string) => {
+        const asmId = value === 'none' ? null : value;
+        if (asmId === (vendor.asm_id ?? null)) return;
+        setSavingAsm(true);
+        try {
+            const response = await api.put(`/admin/vendors/${vendor.user_id}/asm`, { asm_id: asmId });
+            setVendor((prev: any) => ({ ...prev, asm_id: response.data.asm_id, asm_name: response.data.asm_name }));
+            toast({
+                title: "ASM updated",
+                description: response.data.asm_name ? `Now under ${response.data.asm_name}` : "No ASM assigned",
+            });
+        } catch (error: any) {
+            toast({ title: "Error", description: getErrorMessage(error, "Failed to update ASM"), variant: "destructive" });
+        } finally {
+            setSavingAsm(false);
+        }
+    };
+
     // Location Coordinates State
     const [isEditingCoordinates, setIsEditingCoordinates] = useState(false);
     const [coordinatesInput, setCoordinatesInput] = useState({ latitude: '', longitude: '' });
@@ -289,8 +319,7 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
         city: '',
         state: '',
         pincode: '',
-        gst_number: '',
-        area_head_name: ''
+        gst_number: ''
     });
     const [savingProfile, setSavingProfile] = useState(false);
 
@@ -304,8 +333,7 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
             city: vendor.city || '',
             state: vendor.state || '',
             pincode: vendor.pincode || '',
-            gst_number: vendor.gst_number || '',
-            area_head_name: vendor.area_head_name || ''
+            gst_number: vendor.gst_number || ''
         });
         setIsEditProfileOpen(true);
     };
@@ -826,16 +854,6 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                                     </p>
                                 )}
                             </div>
-                            {isDistributorsView && (
-                                <div className="space-y-2">
-                                    <Label htmlFor="area_head_name">Area Head Name</Label>
-                                    <Input
-                                        id="area_head_name"
-                                        value={editProfileForm.area_head_name}
-                                        onChange={(e) => setEditProfileForm({ ...editProfileForm, area_head_name: e.target.value })}
-                                    />
-                                </div>
-                            )}
                         </div>
                     </div>
                     <div className="flex justify-end gap-3">
@@ -877,12 +895,45 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                             <span className="text-xs uppercase font-semibold tracking-wider text-slate-500 mb-1">GST Number</span>
                             <span className="font-medium text-slate-800 font-mono">{vendor.gst_number || 'Not set'}</span>
                         </div>
-                        {isDistributorsView && (
-                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col">
-                                <span className="text-xs uppercase font-semibold tracking-wider text-slate-500 mb-1">Area Head</span>
-                                <span className="font-medium text-slate-800">{vendor.area_head_name || 'Not set'}</span>
-                            </div>
-                        )}
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* ASM Section */}
+            <Card className="mb-6 border-orange-100 shadow-sm">
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <UserCheck className="h-5 w-5 text-orange-500" />
+                        <CardTitle className="text-lg">Area Sales Manager</CardTitle>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <Select value={vendor.asm_id ?? 'none'} onValueChange={handleAsmChange} disabled={savingAsm}>
+                            <SelectTrigger className="sm:w-72">
+                                <SelectValue placeholder="No ASM assigned" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="none">No ASM assigned</SelectItem>
+                                {asmOptions
+                                    // An inactive ASM is offered only to the store already under them.
+                                    .filter(a => a.is_active || a.id === vendor.asm_id)
+                                    .map(a => (
+                                        <SelectItem key={a.id} value={a.id}>
+                                            {a.name}{a.is_active ? '' : ' (inactive)'}
+                                        </SelectItem>
+                                    ))}
+                                {/* Shown even if the options failed to load, so the
+                                    current value never reads as unassigned. */}
+                                {vendor.asm_id && !asmOptions.some(a => a.id === vendor.asm_id) && (
+                                    <SelectItem value={vendor.asm_id}>{vendor.asm_name || 'Current ASM'}</SelectItem>
+                                )}
+                            </SelectContent>
+                        </Select>
+                        {savingAsm && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+                        <p className="text-sm text-slate-500">
+                            The ASM sees this {isDistributorsView ? 'distributor' : 'store'} in their portal. The {isDistributorsView ? 'distributor' : 'franchise'} does not see this.
+                        </p>
                     </div>
                 </CardContent>
             </Card>

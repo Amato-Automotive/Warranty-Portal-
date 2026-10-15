@@ -29,6 +29,8 @@ const billUpload = (req: Request, res: Response, next: NextFunction) => {
 router.get('/summary', ...asmOnly, AsmPortalController.summary);
 router.get('/leads', ...asmOnly, AsmPortalController.leads);
 router.get('/areas', ...asmOnly, AsmPortalController.areas);
+router.get('/stores', ...asmOnly, AsmPortalController.stores);
+router.get('/stores/:id', ...asmOnly, AsmPortalController.storeDetail);
 
 router.get('/expenses', ...asmOnly, AsmExpenseController.listMine);
 // A new claim raises the ASM Management badge for admins.

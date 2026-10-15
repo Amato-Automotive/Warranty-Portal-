@@ -30,6 +30,7 @@ const IDENTITY_FIELD_LABELS: Record<string, string> = {
     pincode: 'Pincode',
     gst_number: 'GST',
     area_head_name: 'Area head',
+    asm: 'ASM',
     store_code: 'Store code',
     latitude: 'Latitude',
     longitude: 'Longitude',

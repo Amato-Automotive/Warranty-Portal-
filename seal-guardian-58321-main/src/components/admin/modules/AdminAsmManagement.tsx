@@ -7,13 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AdminAsmExpenses } from "./AdminAsmExpenses";
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
 import {
-    Loader2, Plus, Trash2, Search, Phone, Mail, UserRound, RefreshCw, Power, Inbox, Copy, KeyRound, Receipt
+    Loader2, Plus, Trash2, Search, Phone, Mail, UserRound, RefreshCw, Power, Inbox, Copy, KeyRound, Store
 } from "lucide-react";
 
 /**
@@ -22,7 +20,9 @@ import {
  * Adding an ASM here also gives them a login: the hidden /asm/login page, OTP
  * on WhatsApp to this number. Switching one off logs them out. The areas they
  * cover are still set under Lead Management, which is where routing lives.
- * The Expense Claims tab is where head office decides the ASMs' claims.
+ * Their expense claims are a separate screen, ASM Expenses, run by HR.
+ * Which stores an ASM looks after is set on each franchise's own screen; the
+ * Stores button here only lists them.
  */
 
 interface Asm {
@@ -34,6 +34,21 @@ interface Asm {
     profile_id: string | null;
     area_count: number;
     lead_count: number;
+    store_count: number;
+}
+
+interface AsmStore {
+    vendor_details_id: string;
+    store_name: string;
+    store_code: string | null;
+    city: string | null;
+    state: string | null;
+    contact_name: string | null;
+    phone_number: string | null;
+    is_franchise: boolean;
+    is_distributor: boolean;
+    is_verified: boolean;
+    is_active: boolean;
 }
 
 interface AsmLead {
@@ -85,6 +100,11 @@ export const AdminAsmManagement = () => {
     const [leads, setLeads] = useState<AsmLead[]>([]);
     const [leadsLoading, setLeadsLoading] = useState(false);
 
+    // One ASM's stores
+    const [storesFor, setStoresFor] = useState<Asm | null>(null);
+    const [stores, setStores] = useState<AsmStore[]>([]);
+    const [storesLoading, setStoresLoading] = useState(false);
+
     const fetchAll = async (silent = false) => {
         if (silent) setRefreshing(true);
         else setLoading(true);
@@ -118,6 +138,21 @@ export const AdminAsmManagement = () => {
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [leadsFor]);
+
+    useEffect(() => {
+        if (!storesFor) return;
+        let cancelled = false;
+        setStoresLoading(true);
+        setStores([]);
+        api.get(`/asm/${storesFor.id}/stores`)
+            .then(res => { if (!cancelled) setStores(res.data.stores || []); })
+            .catch(error => {
+                if (!cancelled) toast({ title: "Could not load stores", description: getErrorMessage(error, ""), variant: "destructive" });
+            })
+            .finally(() => { if (!cancelled) setStoresLoading(false); });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [storesFor]);
 
     const visible = useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -190,6 +225,7 @@ export const AdminAsmManagement = () => {
         if (!window.confirm(
             `Remove ${asm.name}?\n\nTheir login is deleted` +
             (asm.area_count ? `, and their ${asm.area_count} area${asm.area_count > 1 ? "s" : ""} become unassigned — enquiries from there will queue as unmatched until someone else covers them.` : ".") +
+            (Number(asm.store_count) ? `\n\nTheir ${asm.store_count} store${Number(asm.store_count) > 1 ? "s go" : " goes"} back to having no ASM.` : "") +
             "\n\nTheir past leads are kept."
         )) return;
         setBusyId(asm.id);
@@ -226,17 +262,6 @@ export const AdminAsmManagement = () => {
 
     return (
         <div className="space-y-5">
-            <Tabs defaultValue="asms" className="space-y-5">
-                <TabsList className="bg-slate-100 rounded-xl p-1">
-                    <TabsTrigger value="asms" className="rounded-lg text-xs font-black uppercase gap-1.5">
-                        <UserRound className="h-3.5 w-3.5" /> ASMs
-                    </TabsTrigger>
-                    <TabsTrigger value="expenses" className="rounded-lg text-xs font-black uppercase gap-1.5">
-                        <Receipt className="h-3.5 w-3.5" /> Expense Claims
-                    </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="asms" className="space-y-5 mt-0">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-slate-500">
                     Your ASMs, their logins and their leads. Areas they cover are set under Leads.
@@ -256,11 +281,12 @@ export const AdminAsmManagement = () => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
                     { label: "ASMs", value: asms.length, icon: UserRound, color: "text-slate-700" },
                     { label: "Active", value: asms.filter(a => a.is_active).length, icon: Power, color: "text-emerald-600" },
                     { label: "Can log in", value: withLogin, icon: KeyRound, color: "text-blue-600" },
+                    { label: "Stores assigned", value: asms.reduce((n, a) => n + Number(a.store_count || 0), 0).toLocaleString(), icon: Store, color: "text-violet-600" },
                     { label: "Leads routed", value: asms.reduce((n, a) => n + Number(a.lead_count || 0), 0).toLocaleString(), icon: Inbox, color: "text-orange-600" },
                 ].map(s => (
                     <Card key={s.label} className="border-orange-100">
@@ -332,6 +358,10 @@ export const AdminAsmManagement = () => {
                                     </div>
 
                                     <div className="flex items-center gap-1.5 shrink-0">
+                                        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setStoresFor(asm)}>
+                                            <Store className="h-3.5 w-3.5 mr-1" /> Stores
+                                            <span className="ml-1 tabular-nums text-slate-400">{asm.store_count ?? 0}</span>
+                                        </Button>
                                         <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setLeadsFor(asm)}>
                                             <Inbox className="h-3.5 w-3.5 mr-1" /> Leads
                                             <span className="ml-1 tabular-nums text-slate-400">{asm.lead_count}</span>
@@ -369,13 +399,6 @@ export const AdminAsmManagement = () => {
                     ))}
                 </div>
             )}
-
-                </TabsContent>
-
-                <TabsContent value="expenses" className="mt-0">
-                    <AdminAsmExpenses asms={asms.map(a => ({ id: a.id, name: a.name }))} canEdit={canEdit} />
-                </TabsContent>
-            </Tabs>
 
             {/* Add / edit */}
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -416,6 +439,70 @@ export const AdminAsmManagement = () => {
                             {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
                             {editing ? "Save" : "Add ASM"}
                         </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* One ASM's stores */}
+            <Dialog open={!!storesFor} onOpenChange={open => { if (!open) setStoresFor(null); }}>
+                <DialogContent className="max-w-3xl grid-cols-1 [&>*]:min-w-0">
+                    <DialogHeader>
+                        <DialogTitle>Stores under {storesFor?.name}</DialogTitle>
+                        <DialogDescription>
+                            To move a store to another ASM, open it under Franchises or Distributors and change its ASM there.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[60vh] overflow-auto rounded-xl border border-slate-200">
+                        {storesLoading ? (
+                            <div className="flex items-center justify-center py-12 text-slate-400">
+                                <Loader2 className="h-5 w-5 animate-spin text-orange-500" />
+                            </div>
+                        ) : stores.length === 0 ? (
+                            <p className="text-sm text-slate-400 px-4 py-8 text-center">No stores assigned to this ASM yet.</p>
+                        ) : (
+                            <table className="w-full text-sm">
+                                <thead className="sticky top-0 bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <tr>
+                                        <th className="text-left px-3 py-2">Store</th>
+                                        <th className="text-left px-3 py-2">Location</th>
+                                        <th className="text-left px-3 py-2">Owner</th>
+                                        <th className="text-left px-3 py-2">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {stores.map(st => (
+                                        <tr key={st.vendor_details_id} className="align-top">
+                                            <td className="px-3 py-2">
+                                                <p className="font-semibold text-slate-800">{st.store_name}</p>
+                                                <div className="flex items-center gap-1.5 mt-0.5">
+                                                    {st.store_code && <span className="text-xs font-mono text-slate-500">{st.store_code}</span>}
+                                                    {st.is_distributor && (
+                                                        <Badge variant="outline" className="text-[9px] font-black uppercase bg-violet-50 text-violet-700 border-violet-200">Distributor</Badge>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-2 text-slate-600">{[st.city, st.state].filter(Boolean).join(", ") || "—"}</td>
+                                            <td className="px-3 py-2">
+                                                <p className="text-slate-700">{st.contact_name || "—"}</p>
+                                                <p className="text-xs font-mono text-slate-500">{st.phone_number}</p>
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                {!st.is_verified ? (
+                                                    <Badge variant="outline" className="text-[10px] font-black uppercase bg-amber-50 text-amber-700 border-amber-200">Not approved</Badge>
+                                                ) : st.is_active ? (
+                                                    <Badge variant="outline" className="text-[10px] font-black uppercase bg-emerald-50 text-emerald-700 border-emerald-200">Active</Badge>
+                                                ) : (
+                                                    <Badge variant="outline" className="text-[10px] font-black uppercase bg-slate-100 text-slate-500">Inactive</Badge>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setStoresFor(null)}>Close</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

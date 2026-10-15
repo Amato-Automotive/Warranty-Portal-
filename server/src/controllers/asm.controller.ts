@@ -23,6 +23,7 @@ import { PRODUCTS } from '../services/productMatch.js';
 import { titleCase } from '../services/asmTerritory.js';
 import { normalizeAsmMobile, normalizeAsmEmail, syncAsmAccount, AsmAccountError } from '../services/asmAccount.service.js';
 import { invalidateSessionState } from '../middleware/auth.js';
+import { storesOfAsm } from '../services/asmStores.js';
 
 /**
  * The verified franchises in a state, with the ones the customer's own words
@@ -216,7 +217,8 @@ export class AsmController {
             const [rows]: any = await db.execute(
                 `SELECT a.*,
                         (SELECT COUNT(*) FROM asm_areas ar WHERE ar.asm_id = a.id) AS area_count,
-                        (SELECT COUNT(*) FROM leads l WHERE l.asm_id = a.id) AS lead_count
+                        (SELECT COUNT(*) FROM leads l WHERE l.asm_id = a.id) AS lead_count,
+                        (SELECT COUNT(*) FROM vendor_details vd WHERE vd.asm_id = a.id) AS store_count
                    FROM asms a
                   ORDER BY a.is_active DESC, a.name ASC`
             );
@@ -365,6 +367,8 @@ export class AsmController {
                 return res.status(404).json({ error: 'ASM not found' });
             }
             // Areas cascade; leads keep asm_id so history survives the deletion.
+            // Their stores go back to unassigned rather than pointing at nobody.
+            await conn.execute('UPDATE vendor_details SET asm_id = NULL WHERE asm_id = ?', [id]);
             await conn.execute('DELETE FROM asms WHERE id = ?', [id]);
             // The login goes with them (user_roles cascades from profiles).
             const profileId: string | null = rows[0].profile_id;
@@ -400,6 +404,19 @@ export class AsmController {
         } catch (error: any) {
             console.error('ASM leads error:', error);
             res.status(500).json({ error: 'Failed to load leads' });
+        }
+    }
+
+    /** The franchises and distributors assigned to one ASM, for ASM Management. */
+    static async asmStores(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const [asm]: any = await db.execute('SELECT id FROM asms WHERE id = ?', [id]);
+            if (!asm.length) return res.status(404).json({ error: 'ASM not found' });
+            res.json({ success: true, stores: await storesOfAsm(id) });
+        } catch (error: any) {
+            console.error('ASM stores error:', error);
+            res.status(500).json({ error: 'Failed to load stores' });
         }
     }
 

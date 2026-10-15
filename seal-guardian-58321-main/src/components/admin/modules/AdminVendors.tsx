@@ -81,6 +81,8 @@ export const AdminVendors = () => {
     const [dateField, setDateField] = useState<'created_at' | 'purchase_date'>('created_at');
     const [stateFilter, setStateFilter] = useState("all");
     const [cityFilter, setCityFilter] = useState("all");
+    // 'all', 'none' (no ASM yet) or an ASM id.
+    const [asmFilter, setAsmFilter] = useState("all");
 
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
@@ -132,7 +134,7 @@ export const AdminVendors = () => {
     // Reset pagination
     useEffect(() => {
         setCurrentPage(1);
-    }, [filter, search, leaderboardMode, stateFilter, cityFilter]);
+    }, [filter, search, leaderboardMode, stateFilter, cityFilter, asmFilter]);
 
     const fetchVendors = async (silent = false) => {
         if (!silent) setLoading(true);
@@ -292,6 +294,7 @@ export const AdminVendors = () => {
                 "Longitude": v.longitude || 'N/A',
                 "Address": v.full_address,
                 "Pincode": v.pincode,
+                "ASM": v.asm_name || "",
                 "Status": v.is_verified ? "Active" : v.verified_at ? "Rejected" : "Pending",
                 "Verified At": v.verified_at ? new Date(v.verified_at).toLocaleDateString() : "N/A",
                 "Rejection Reason": v.is_verified ? "" : (v.rejection_reason || ""),
@@ -382,7 +385,17 @@ export const AdminVendors = () => {
         ).entries()
     ).sort((a, b) => a[1].localeCompare(b[1]));
 
+    // The ASMs that stores are actually under, for the filter.
+    const asmOptions = Array.from(
+        new Map(vendors.filter((v) => v.asm_id).map((v) => [v.asm_id, v.asm_name || 'Unknown ASM'] as [string, string])).entries()
+    ).sort((a, b) => a[1].localeCompare(b[1]));
+
     const filteredVendors = vendors
+        .filter((vendor) => {
+            if (asmFilter === 'none') return !vendor.asm_id;
+            if (asmFilter !== 'all') return vendor.asm_id === asmFilter;
+            return true;
+        })
         .filter((vendor) => {
             if (leaderboardMode) return Number(vendor[leaderboardCountField] || 0) > 0;
             if (filter === 'approved') return vendor.is_verified && vendor.is_active !== false;
@@ -404,7 +417,8 @@ export const AdminVendors = () => {
                 vendor.contact_name?.toLowerCase().includes(term) ||
                 vendor.store_email?.toLowerCase().includes(term) ||
                 vendor.phone_number?.includes(term) ||
-                vendor.city?.toLowerCase().includes(term)
+                vendor.city?.toLowerCase().includes(term) ||
+                vendor.asm_name?.toLowerCase().includes(term)
             );
         })
         .sort((a, b) => {
@@ -669,6 +683,18 @@ export const AdminVendors = () => {
                 </Tabs>
 
                 <div className="flex flex-col sm:flex-row w-full md:w-auto gap-2 md:ml-auto">
+                    <Select value={asmFilter} onValueChange={setAsmFilter}>
+                        <SelectTrigger className={`h-11 sm:h-10 sm:w-44 text-xs font-bold ${asmFilter !== 'all' ? 'text-orange-600 border-orange-200 bg-orange-50' : 'bg-white border-orange-100'}`}>
+                            <SelectValue placeholder="All ASMs" />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl border-orange-100 max-h-72">
+                            <SelectItem value="all" className="text-xs font-bold">All ASMs</SelectItem>
+                            <SelectItem value="none" className="text-xs font-bold">No ASM assigned</SelectItem>
+                            {asmOptions.map(([id, name]) => (
+                                <SelectItem key={id} value={id} className="text-xs font-bold">{name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                     <div className="flex gap-2">
                         <Button
                             variant="outline"
@@ -872,6 +898,9 @@ export const AdminVendors = () => {
                                                 <div className="text-[11px] text-slate-500 flex items-center gap-1">
                                                     <Phone className="h-3 w-3" /> {vendor.phone_number}
                                                 </div>
+                                                <div className={`text-[11px] ${vendor.asm_name ? 'text-slate-500' : 'text-slate-300'}`}>
+                                                    ASM: {vendor.asm_name || 'not assigned'}
+                                                </div>
                                             </div>
                                             <div className="space-y-1 text-right">
                                                 <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Location</div>
@@ -957,6 +986,9 @@ export const AdminVendors = () => {
                                                 <div className="font-medium text-slate-700">{vendor.contact_name}</div>
                                                 <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
                                                     <Phone className="h-3 w-3" /> {vendor.phone_number}
+                                                </div>
+                                                <div className={`text-[11px] mt-1 ${vendor.asm_name ? 'text-slate-500' : 'text-slate-300'}`}>
+                                                    ASM: {vendor.asm_name || 'not assigned'}
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">

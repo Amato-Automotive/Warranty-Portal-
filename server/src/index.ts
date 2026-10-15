@@ -243,6 +243,29 @@ async function runMigrations() {
       console.log('✅ Migration: Added profile_id to asms.');
     }
 
+    // The ASM a franchise or distributor reports to. Set by an admin from the
+    // franchise's screen; NULL until then. Typed and collated exactly like
+    // asms.id, read from the live column, since vendor_details is on the older
+    // collation and a join across the two would otherwise need a COLLATE.
+    const [vdAsmCol]: any = await pool.query("SHOW COLUMNS FROM vendor_details LIKE 'asm_id'");
+    if (vdAsmCol.length === 0) {
+      const [asmIdCol]: any = await pool.query(
+        `SELECT COLUMN_TYPE AS type, CHARACTER_SET_NAME AS cs, COLLATION_NAME AS coll
+           FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asms' AND COLUMN_NAME = 'id'`
+      );
+      const c = asmIdCol[0];
+      if (c) {
+        const charset = c.cs ? ` CHARACTER SET ${c.cs} COLLATE ${c.coll}` : '';
+        await pool.query(
+          `ALTER TABLE vendor_details
+             ADD COLUMN asm_id ${c.type}${charset} NULL,
+             ADD INDEX idx_vendor_details_asm (asm_id)`
+        );
+        console.log('✅ Migration: Added asm_id to vendor_details.');
+      }
+    }
+
     await ensureAsmExpenseTables();
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');

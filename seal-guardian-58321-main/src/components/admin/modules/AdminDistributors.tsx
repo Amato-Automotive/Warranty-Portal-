@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import api, { getErrorMessage } from "@/lib/api";
 import { downloadCSV, getISTTodayISO } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -90,9 +91,11 @@ export const AdminDistributors = () => {
         state: "",
         pincode: "",
         gst_number: "",
-        area_head_name: "",
+        asm_id: "",
         allowed_brands: "AF" as "AF" | "AC" | "AFAC"
     });
+    // ASMs a new distributor can be put under (replaces the typed Area Head).
+    const [asmOptions, setAsmOptions] = useState<{ id: string; name: string; is_active: boolean }[]>([]);
     const [createErrors, setCreateErrors] = useState<any>({});
 
     // Brand update
@@ -156,7 +159,7 @@ export const AdminDistributors = () => {
                     state: "",
                     pincode: "",
                     gst_number: "",
-                    area_head_name: "",
+                    asm_id: "",
                     allowed_brands: "AF"
                 });
                 fetchVendors(true);
@@ -175,6 +178,9 @@ export const AdminDistributors = () => {
 
     useEffect(() => {
         fetchVendors();
+        api.get("/admin/vendor-asm-options")
+            .then(res => setAsmOptions((res.data.asms || []).filter((a: { is_active: boolean }) => a.is_active)))
+            .catch(() => setAsmOptions([]));
     }, []);
 
     // Reset pagination
@@ -1088,14 +1094,21 @@ export const AdminDistributors = () => {
                                 <p className="text-[11px] text-slate-400">15-character GST Identification Number</p>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="area_head_name" className="text-sm font-bold text-slate-700">Area Head Name</Label>
-                                <Input
-                                    id="area_head_name"
-                                    placeholder="e.g. Suresh Sharma"
-                                    className="bg-white border-orange-100 focus:border-orange-300 focus:ring-orange-200 h-11"
-                                    value={newDistributor.area_head_name}
-                                    onChange={(e) => setNewDistributor({ ...newDistributor, area_head_name: e.target.value })}
-                                />
+                                <Label className="text-sm font-bold text-slate-700">ASM</Label>
+                                <Select
+                                    value={newDistributor.asm_id || "none"}
+                                    onValueChange={(v) => setNewDistributor({ ...newDistributor, asm_id: v === "none" ? "" : v })}
+                                >
+                                    <SelectTrigger className="bg-white border-orange-100 h-11">
+                                        <SelectValue placeholder="No ASM assigned" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none">No ASM assigned</SelectItem>
+                                        {asmOptions.map(a => (
+                                            <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
 

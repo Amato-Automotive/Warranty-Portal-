@@ -3,10 +3,11 @@ import db from '../config/database.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { leadPincode } from '../services/leadRouting.js';
 import { coverageOf } from '../services/asmTerritoryQuery.js';
+import { storesOfAsm, storeDetailForAsm } from '../services/asmStores.js';
 
 /**
  * The ASM's own view of their work: the leads routed to them, the areas they
- * cover, and a summary for their home screen.
+ * cover, the stores assigned to them, and a summary for their home screen.
  *
  * Entirely read-only: ASMs do not record lead outcomes (head office does).
  */
@@ -42,6 +43,7 @@ export class AsmPortalController {
                 [asmId]
             );
             const [[areas]]: any = await db.execute('SELECT COUNT(*) AS n FROM asm_areas WHERE asm_id = ?', [asmId]);
+            const [[stores]]: any = await db.execute('SELECT COUNT(*) AS n FROM vendor_details WHERE asm_id = ?', [asmId]);
             let claims = { pending: 0, amount: 0 };
             try {
                 const [[c]]: any = await db.execute(
@@ -61,6 +63,7 @@ export class AsmPortalController {
                     this_month: Number(leads.this_month || 0),
                 },
                 areas: Number(areas.n || 0),
+                stores: Number(stores.n || 0),
                 claims,
             });
         } catch (error) {
@@ -93,6 +96,33 @@ export class AsmPortalController {
         } catch (error) {
             console.error('[ASM portal] leads failed:', error);
             res.status(500).json({ error: 'Could not load your leads' });
+        }
+    }
+
+    /** GET /api/asm-portal/stores — the franchises and distributors assigned to the ASM. */
+    static async stores(req: AuthRequest, res: Response) {
+        try {
+            const asmId = await asmIdFor(req);
+            if (!asmId) return res.status(403).json({ error: 'Your ASM account was not found' });
+            res.json({ success: true, stores: await storesOfAsm(asmId) });
+        } catch (error) {
+            console.error('[ASM portal] stores failed:', error);
+            res.status(500).json({ error: 'Could not load your stores' });
+        }
+    }
+
+    /** GET /api/asm-portal/stores/:id — one of the ASM's stores, with its POSM requests and grievances. */
+    static async storeDetail(req: AuthRequest, res: Response) {
+        try {
+            const asmId = await asmIdFor(req);
+            if (!asmId) return res.status(403).json({ error: 'Your ASM account was not found' });
+            const detail = await storeDetailForAsm(asmId, String(req.params.id));
+            // Another ASM's store reads as missing, not forbidden.
+            if (!detail) return res.status(404).json({ error: 'Store not found' });
+            res.json({ success: true, ...detail });
+        } catch (error) {
+            console.error('[ASM portal] store detail failed:', error);
+            res.status(500).json({ error: 'Could not load this store' });
         }
     }
 
