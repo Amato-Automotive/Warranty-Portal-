@@ -317,11 +317,13 @@ export function POSMItemBuilder() {
                                                 <table className="w-full text-xs min-w-[480px]">
                                                     <thead>
                                                         <tr className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                                                            {(f.columns ?? []).map(c => <th key={c} className="text-left p-2">{c}</th>)}<th className="w-8" />
+                                                            {(f.columns ?? []).map(c => <th key={c} className="text-left p-2">{c}</th>)}
+                                                            {f.brand_split && <th className="text-left p-2">Brand</th>}
+                                                            <th className="w-8" />
                                                         </tr>
                                                     </thead>
                                                     <tbody>
-                                                        {(f.rows ?? []).map((r, ri) => (!f.brand_split || r.brand === tableBrand) && (
+                                                        {(f.rows ?? []).map((r, ri) => (!f.brand_split || (r.brand ?? "AF") === tableBrand) && (
                                                             <tr key={ri} className="border-b border-slate-50">
                                                                 {(f.columns ?? []).map((_, ci) => (
                                                                     <td key={ci} className="p-1">
@@ -329,6 +331,15 @@ export function POSMItemBuilder() {
                                                                             onChange={e => patchField(fi, { rows: (f.rows ?? []).map((x, k) => k === ri ? { ...x, cells: x.cells.map((c, m) => m === ci ? e.target.value : c) } : x) })} />
                                                                     </td>
                                                                 ))}
+                                                                {f.brand_split && (
+                                                                    <td className="p-1">
+                                                                        <select aria-label={`Brand of ${r.cells[0] || "row " + (ri + 1)}`} value={r.brand ?? "AF"}
+                                                                            onChange={e => patchField(fi, { rows: (f.rows ?? []).map((x, k) => k === ri ? { ...x, brand: e.target.value as Brand } : x) })}
+                                                                            className="h-8 rounded-md border border-slate-200 bg-white px-1.5 text-xs">
+                                                                            {(["AF", "AC"] as Brand[]).map(b => <option key={b} value={b}>{BRAND_LABEL[b]}</option>)}
+                                                                        </select>
+                                                                    </td>
+                                                                )}
                                                                 <td className="p-1 text-center">
                                                                     <button type="button" aria-label="Remove row" onClick={() => patchField(fi, { rows: (f.rows ?? []).filter((_, k) => k !== ri) })} className="text-slate-300 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
                                                                 </td>
