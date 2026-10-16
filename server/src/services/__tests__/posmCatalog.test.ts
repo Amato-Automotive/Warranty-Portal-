@@ -108,9 +108,31 @@ test('the admin catalog: problems are named', () => {
     const t = readCatalog({ items: [{ name: 'Mats', qty_mode: 'sizes', fields: [{ label: 'Note', type: 'text' }] }] });
     assert.match(catalogProblem(t)!, /exactly one sizes field/);
     const s = readCatalog({ items: [{ name: 'Seat', fields: [{ label: 'Design', type: 'table', brand_split: true, columns: ['Design'], rows: [{ brand: 'AF', cells: ['A'] }] }] }] });
-    assert.match(catalogProblem(s)!, /needs a single-choice Brand field/);
+    assert.match(catalogProblem(s)!, /needs a Brand field/);
     const ids = readCatalog({ items: [{ name: 'Flag' }, { name: 'Flag' }] });
     assert.notEqual(ids.items[0].id, ids.items[1].id, 'two items with one name still get their own ids');
+});
+
+test('FRP with a "both brands" Brand field: each line carries the brand of its design', () => {
+    const c = structuredClone(DEFAULT_CATALOG);
+    c.items.find(i => i.id === 'frp')!.fields.find(f => f.id === 'brand')!.multiple = true;
+    assert.equal(catalogProblem(c), null);
+    const lines = ok(validateLines([
+        { item_id: 'frp', qty: 1, values: { brand: ['AF'], design: 'U-Focus' } },
+        { item_id: 'frp', qty: 1, values: { brand: ['AC'], design: 'Amaze' } },
+    ], c, ['AF', 'AC']));
+    assert.equal(lines[0].display.find(d => d.label === 'Material')!.value, 'Signature');
+    assert.equal(lines[1].display.find(d => d.label === 'Material')!.value, 'Lucenzo');
+    assert.ok('error' in validateLines([{ item_id: 'frp', qty: 1, values: { brand: ['AF'], design: 'Amaze' } }], c, ['AF', 'AC']));
+});
+
+test('switching a table off "per brand" keeps each row\'s brand', () => {
+    const c = structuredClone(DEFAULT_CATALOG);
+    c.items.find(i => i.id === 'frp')!.fields.find(f => f.id === 'design')!.brand_split = false;
+    const back = readCatalog(JSON.parse(JSON.stringify(c)));
+    const rows = back.items.find(i => i.id === 'frp')!.fields.find(f => f.id === 'design')!.rows!;
+    assert.equal(rows.filter(r => r.brand === 'AF').length, 12);
+    assert.equal(rows.filter(r => r.brand === 'AC').length, 11);
 });
 
 test('a request in words', () => {

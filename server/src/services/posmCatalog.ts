@@ -142,10 +142,12 @@ function readField(f: any, i: number): PosmField {
     if (type === 'table') {
         field.columns = list(f?.columns, 40);
         field.brand_split = !!f?.brand_split;
-        field.rows = (Array.isArray(f?.rows) ? f.rows : []).map((r: any) => ({
-            ...(field.brand_split ? { brand: r?.brand === 'AC' ? 'AC' as Brand : 'AF' as Brand } : {}),
-            cells: (field.columns ?? []).map((_, c) => str(r?.cells?.[c], 80)),
-        })).filter((r: TableRow) => r.cells[0]);
+        // A row keeps its brand even while the table is not split by brand, so
+        // switching the split off and on again loses nothing.
+        field.rows = (Array.isArray(f?.rows) ? f.rows : []).map((r: any) => {
+            const brand: Brand | null = r?.brand === 'AC' ? 'AC' : r?.brand === 'AF' ? 'AF' : field.brand_split ? 'AF' : null;
+            return { ...(brand ? { brand } : {}), cells: (field.columns ?? []).map((_, c) => str(r?.cells?.[c], 80)) };
+        }).filter((r: TableRow) => r.cells[0]);
     }
     return field;
 }
@@ -194,7 +196,7 @@ export function catalogProblem(c: PosmCatalog): string | null {
             if (f.type === 'table') {
                 if (!f.columns?.length) return `${fw}: add the table's columns`;
                 if (!f.rows?.length) return `${fw}: add at least one row`;
-                if (f.brand_split && !it.fields.some(x => x.type === 'brand' && !x.multiple)) return `${fw}: a table split by brand needs a single-choice Brand field on the item`;
+                if (f.brand_split && !it.fields.some(x => x.type === 'brand')) return `${fw}: a table split by brand needs a Brand field on the item`;
                 const keys = f.rows.map(r => `${r.brand ?? ''}|${r.cells[0].toLowerCase()}`);
                 if (new Set(keys).size !== keys.length) return `${fw}: a row is listed twice`;
             }
@@ -254,7 +256,8 @@ export function validateLines(
         const values: Record<string, unknown> = {};
         const display: PosmLine['display'] = [];
         let sizesTotal = 0;
-        const brandField = item.fields.find(f => f.type === 'brand' && !f.multiple);
+        // The brand a design-table pick belongs to: the line's Brand, one or a list of one.
+        const brandField = item.fields.find(f => f.type === 'brand');
 
         for (const f of item.fields) {
             const v = inValues[f.id];
@@ -323,7 +326,9 @@ export function validateLines(
                 }
                 case 'table': {
                     // Read from what was sent, so the table works whatever the field order.
-                    const sent = brandField ? String(inValues[brandField.id] ?? '').toUpperCase() as Brand : null;
+                    const raw = brandField ? inValues[brandField.id] : null;
+                    const one = Array.isArray(raw) ? (raw.length === 1 ? raw[0] : null) : raw;
+                    const sent = one ? String(one).toUpperCase() as Brand : null;
                     const brand = f.brand_split && sent && brands.includes(sent) ? sent : null;
                     if (f.brand_split && !brand) return { error: `${item.name}: choose the brand first` };
                     const row = tableRows(f, brand).find(x => x.cells[0] === str(v, 80));

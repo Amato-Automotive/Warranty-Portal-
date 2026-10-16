@@ -33,8 +33,10 @@ export function Stepper({ value, onChange, min = 0, max, label }: { value: numbe
 }
 
 const brandOf = (item: PosmItem, values: Record<string, any>): Brand | null => {
-    const f = item.fields.find(x => x.type === "brand" && !x.multiple);
-    return f ? (values[f.id] as Brand) ?? null : null;
+    const f = item.fields.find(x => x.type === "brand");
+    if (!f) return null;
+    const v = values[f.id];
+    return (Array.isArray(v) ? (v.length === 1 ? v[0] : null) : v) ?? null;
 };
 
 /** The same words the server will store, for the cart. */
@@ -100,7 +102,7 @@ export function POSMItemForm({ item, brands, left, onAdd, onClose }: {
     /* A design table split by brand (FRP): the store sees the designs of every
        brand it sells, each with its own quantity, and each design picked
        becomes its own line. The brand comes with the design. */
-    const brandField = item.fields.find(f => f.type === "brand" && !f.multiple);
+    const brandField = item.fields.find(f => f.type === "brand");
     const pickTable = item.qty_mode === "number" && brandField
         ? item.fields.find(f => f.type === "table" && f.brand_split) : undefined;
     const [picks, setPicks] = useState<Record<string, number>>({});
@@ -130,7 +132,7 @@ export function POSMItemForm({ item, brands, left, onAdd, onClose }: {
             // One line per design picked; the other fields (remarks, photos) go with each.
             onAdd(Object.entries(picks).filter(([, n]) => n > 0).map(([key, n], i) => {
                 const [b, design] = key.split(/\|(.*)/s) as [Brand, string];
-                const v = { ...clean, [brandField.id]: b, [pickTable.id]: design };
+                const v = { ...clean, [brandField.id]: brandField.multiple ? [b] : b, [pickTable.id]: design };
                 const f = i === 0 ? files : {};
                 return { item_id: item.id, item_name: item.name, qty: n, values: v, display: displayOf(item, v, f), files: f };
             }));

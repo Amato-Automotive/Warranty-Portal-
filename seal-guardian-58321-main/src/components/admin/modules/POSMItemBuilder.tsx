@@ -72,7 +72,7 @@ export function POSMItemBuilder() {
     const idx = items?.findIndex(i => i.id === cur) ?? -1;
     const patch = (p: Partial<PosmItem>) => setItems(list => list!.map(i => i.id === cur ? { ...i, ...p } : i));
     const patchField = (fi: number, p: Partial<PosmField>) => item && patch({ fields: item.fields.map((f, j) => j === fi ? { ...f, ...p } : f) });
-    const hasSingleBrand = useMemo(() => !!item?.fields.some(f => f.type === "brand" && !f.multiple), [item]);
+    const hasBrandField = useMemo(() => !!item?.fields.some(f => f.type === "brand"), [item]);
 
     useEffect(() => setConfirmDelete(false), [cur]);
 
@@ -299,10 +299,10 @@ export function POSMItemBuilder() {
                                                 <ListInput value={f.columns ?? []} onChange={v => patchField(fi, { columns: v, rows: (f.rows ?? []).map(r => ({ ...r, cells: v.map((_, k) => r.cells[k] ?? "") })) })} />
                                             </div>
                                             <label className="flex items-center gap-2 text-xs text-slate-600">
-                                                <Switch checked={!!f.brand_split} onCheckedChange={v => patchField(fi, { brand_split: v, rows: (f.rows ?? []).map(r => ({ ...r, brand: v ? (r.brand ?? "AF") : null })) })} />
+                                                <Switch checked={!!f.brand_split} onCheckedChange={v => patchField(fi, { brand_split: v, rows: (f.rows ?? []).map(r => ({ ...r, brand: r.brand ?? (v ? "AF" : null) })) })} />
                                                 Separate rows per brand (the store sees the rows of the brand it picks)
                                             </label>
-                                            {f.brand_split && !hasSingleBrand && <p className="text-[11px] font-semibold text-amber-600">Add a Brand field (single choice) to this item for this to work.</p>}
+                                            {f.brand_split && !hasBrandField && <p className="text-[11px] font-semibold text-amber-600">Add a Brand field to this item for this to work.</p>}
                                             {f.brand_split && (
                                                 <div className="inline-flex rounded-lg border border-slate-200 p-0.5 text-xs font-semibold bg-white">
                                                     {(["AF", "AC"] as Brand[]).map(b => (
