@@ -60,7 +60,7 @@ interface HomeScheme {
     next_window: { start: string; end: string } | null;
     achieved: { score: number; rank: number; of: number; club?: Club | null } | null;
 }
-interface HomeLead { id: string; customer_name: string | null; customer_phone: string | null; car: string | null; received: string | null; status: string }
+interface HomeLead { id: string; customer_name: string | null; customer_phone: string | null; car: string | null; received: string | null; status: string; group?: string }
 interface PendingWarranty { id?: string; uid?: string; customer_name?: string; registration_number?: string; car_make?: string; car_model?: string }
 interface ShippedOrder { id: string; distributor_name?: string | null; total_amount?: number | string | null }
 
@@ -355,13 +355,13 @@ export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts 
         const day = (l: HomeLead) => String(l.received ?? "").slice(0, 10);
         const cur = leads.filter(l => within(day(l), ranges.cur));
         const called = cur.filter(l => l.status !== "pending");
-        const won = cur.filter(l => l.status === "closed_won").length;
+        const won = cur.filter(l => (l.group ?? (l.status === "closed_won" ? "won" : "")) === "won").length;
         return {
             count: cur.length,
             diff: cur.length - leads.filter(l => within(day(l), ranges.prev)).length,
             won,
             rate: called.length ? Math.round((won / called.length) * 100) : null,
-            followUp: leads.filter(l => l.status === "follow_up"),
+            followUp: leads.filter(l => (l.group ?? (l.status === "follow_up" ? "follow" : "")) === "follow"),
         };
     }, [leads, ranges]);
 

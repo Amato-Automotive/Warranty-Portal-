@@ -5,6 +5,8 @@ import { EmailService } from '../services/email.service.js';
 import { v4 as uuidv4 } from 'uuid';
 import { NotificationService } from '../services/notification.service.js';
 import { storeLeadView } from '../services/storeLeads.js';
+import { loadLeadOptions } from '../services/leadOptionsStore.js';
+import { storeGroupOf } from '../services/leadOptions.js';
 
 
 export class VendorController {
@@ -469,9 +471,12 @@ export class VendorController {
         [String(store.id), `store:${store.id}`]
       );
 
+      // Each lead's group in My Leads (won, follow up, lost, no answer, not called), from the admin's outcomes.
+      const options = await loadLeadOptions();
       const leads = rows
         .map((r: any) => storeLeadView(r, String(store.id)))
-        .filter(Boolean);
+        .filter(Boolean)
+        .map((l: any) => ({ ...l, group: storeGroupOf(options, l.status) }));
 
       res.json({ success: true, store: { id: store.id, name: store.store_name }, leads });
     } catch (error: any) {

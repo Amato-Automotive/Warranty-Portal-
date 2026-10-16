@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useLeadOptions, DEFAULT_LEAD_OPTIONS, TONE_BADGE, TONE_TEXT, type LeadOptions } from "@/lib/leadOptions";
+import { LeadSettingsDialog } from "./LeadSettingsDialog";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
@@ -18,7 +20,7 @@ import {
 import {
     Loader2, Search, RefreshCw, Inbox, AlertTriangle, Copy,
     Check, CheckCheck, XCircle, Pencil, Plus, MapPin, Download, CalendarDays,
-    Store as StoreIcon, Send, X, SlidersHorizontal, ChevronDown
+    Store as StoreIcon, Send, X, SlidersHorizontal, ChevronDown, Settings2
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -331,46 +333,37 @@ const STAGE_LABEL: Record<Stage, string> = {
 };
 
 /*
- * The seven ways a lead conversation ends, as found when an admin calls the
- * customer back. Stored as an enum, so this list and the database must agree.
+ * The review outcomes and the channels come from the admin's Lead settings
+ * (lib/leadOptions). They are module-level because helpers outside the
+ * component read them; applyLists() refreshes them in place when the lists
+ * load or are saved, and the component re-renders with them.
  */
-const OUTCOMES = [
-    { value: "no_response", label: "No response" },
-    { value: "follow_up", label: "Follow up" },
-    { value: "closed_won", label: "Closed won" },
-    { value: "closed_lost", label: "Closed lost" },
-    { value: "call_disconnected", label: "Call disconnected" },
-    { value: "switched_off", label: "Switched off" },
-    { value: "number_not_working", label: "Number not working" },
-] as const;
+type Outcome = string;
+const OUTCOMES: { value: string; label: string; active: boolean }[] = [];
+const OUTCOME_LABEL: Record<string, string> = {};
+const OUTCOME_TONE: Record<string, string> = {};
+const CHANNEL_LABEL: Record<string, string> = {};
+const CHANNEL_TEXT: Record<string, string> = {};
+/* The channels that find their own ASM or store (WhatsApp, the Instagram ad
+   form). The rest wait for the auditor to forward them. */
+const AUTO_ROUTED: string[] = [];
+const SHOWN_CHANNELS: string[] = [];
+const ADD_LEAD_CHANNELS: { value: string; label: string }[] = [];
 
-type Outcome = (typeof OUTCOMES)[number]["value"];
+function applyLists(o: LeadOptions) {
+    const reset = (r: Record<string, string>) => Object.keys(r).forEach(k => delete r[k]);
+    OUTCOMES.splice(0, OUTCOMES.length, ...o.outcomes.map(x => ({ value: x.value, label: x.label, active: x.active })));
+    reset(OUTCOME_LABEL); reset(OUTCOME_TONE); reset(CHANNEL_LABEL); reset(CHANNEL_TEXT);
+    for (const x of o.outcomes) { OUTCOME_LABEL[x.value] = x.label; if (x.tone !== "slate") OUTCOME_TONE[x.value] = TONE_BADGE[x.tone]; }
+    for (const c of o.channels) { CHANNEL_LABEL[c.value] = c.label; CHANNEL_TEXT[c.value] = TONE_TEXT[c.tone]; }
+    AUTO_ROUTED.splice(0, AUTO_ROUTED.length, ...o.channels.filter(c => c.auto_routed).map(c => c.value));
+    SHOWN_CHANNELS.splice(0, SHOWN_CHANNELS.length, ...o.channels.filter(c => c.active).map(c => c.value));
+    ADD_LEAD_CHANNELS.splice(0, ADD_LEAD_CHANNELS.length, ...o.channels.filter(c => c.active && c.add_lead).map(c => ({ value: c.value, label: c.label })));
+}
+applyLists(DEFAULT_LEAD_OPTIONS);
 
-const OUTCOME_LABEL: Record<string, string> =
-    Object.fromEntries(OUTCOMES.map(o => [o.value, o.label]));
-
-/* Only the two decided outcomes carry colour. The rest are states of not
-   having reached anyone yet, and colouring five of seven would leave the
-   column looking like a warning light. */
-const OUTCOME_TONE: Record<string, string> = {
-    closed_won: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    closed_lost: "bg-rose-50 text-rose-700 border-rose-200",
-    follow_up: "bg-blue-50 text-blue-700 border-blue-200",
-};
-
-const CHANNEL_LABEL: Record<string, string> = {
-    whatsapp: "WhatsApp",
-    instagram: "Instagram",
-    ivr: "IVR",
-    website: "Website",
-    whatsapp_manual: "WhatsApp (added)",
-    instagram_dm: "Instagram DM",
-    facebook_dm: "Facebook DM",
-};
-
-/* The channels that find their own ASM or store. The rest (IVR, website, and
-   WhatsApp enquiries added by hand) wait for the auditor to forward them. */
-const AUTO_ROUTED = ["whatsapp", "instagram"];
+/* A channel added in Lead settings is forwarded by hand, like a WhatsApp enquiry added by hand. */
+const filtersFor = (channel: string) => CHANNEL_FILTERS[channel] ?? CHANNEL_FILTERS.whatsapp_manual;
 
 /* 2-wheelers are filed with "2-Wheeler" in the vehicle (the chat's first
    question, or Add Lead); everything else is a car. The model on its own,
@@ -457,6 +450,10 @@ const formatWhen = (iso: string) => {
 };
 
 export const AdminLeadsList = () => {
+    /* The admin's lists; applied before anything below reads them. */
+    const leadOpts = useLeadOptions();
+    applyLists(leadOpts);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const { toast } = useToast();
     const [leads, setLeads] = useState<Lead[]>([]);
     const [counts, setCounts] = useState<Counts | null>(null);
@@ -474,8 +471,14 @@ export const AdminLeadsList = () => {
     /* What the server searches for: the box, a moment after typing stops. */
     const [searchQuery, setSearchQuery] = useState("");
     const [stage, setStage] = useState("all");
-    /* How many leads matched, when more than the page shows. */
+    /* How many leads matched in all, across the pages. */
     const [matched, setMatched] = useState(0);
+    /* Which page of the matches is on screen, and how many make a page. */
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState<number>(() => {
+        try { const n = Number(localStorage.getItem("leads.pageSize")); return [50, 100, 200].includes(n) ? n : 100; } catch { return 100; }
+    });
+    const [exporting, setExporting] = useState(false);
     /* Filters that only mean something for some channels — see CHANNEL_FILTERS. */
     const [forwardedTo, setForwardedTo] = useState("all");
     const [storeId, setStoreId] = useState("all");
@@ -556,12 +559,8 @@ export const AdminLeadsList = () => {
         && (addTwoWheeler || addPinOk || Boolean(addForm.area.trim()));
 
 
-    const fetchLeads = useCallback(async (silent = false) => {
-        const request = ++latestRequest.current;
-        if (silent) setRefreshing(true);
-        else if (loadedOnce.current) setUpdating(true);
-        else setLoading(true);
-        try {
+    /* The filters as the server takes them; the list's page and the export share them. */
+    const filterParams = useCallback(() => {
             const params: Record<string, string> = {};
             if (stage !== "all") params.stage = stage;
             if (searchQuery) params.q = searchQuery;
@@ -577,7 +576,19 @@ export const AdminLeadsList = () => {
             if (review !== "all") params.review = review;
             if (dateFrom) params.dateFrom = dateFrom;
             if (dateTo) params.dateTo = dateTo;
+            return params;
+    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, vehicleFilter, product, delivery, asmId, channel, review, dateFrom, dateTo]);
 
+    /* A new filter starts again from the first page. */
+    useEffect(() => { setPage(1); }, [filterParams, pageSize]);
+
+    const fetchLeads = useCallback(async (silent = false) => {
+        const request = ++latestRequest.current;
+        if (silent) setRefreshing(true);
+        else if (loadedOnce.current) setUpdating(true);
+        else setLoading(true);
+        try {
+            const params = { ...filterParams(), limit: String(pageSize), offset: String((page - 1) * pageSize) };
             const res = await api.get("/asm/leads/list", { params });
             if (request !== latestRequest.current) return;
             if (res.data.success) {
@@ -610,7 +621,7 @@ export const AdminLeadsList = () => {
                 setUpdating(false);
             }
         }
-    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, vehicleFilter, product, delivery, asmId, channel, review, dateFrom, dateTo, toast]);
+    }, [filterParams, page, pageSize, toast]);
 
     const clearFilters = () => {
         setSearch(""); setStage("all"); setProduct("all"); setChannel("all");
@@ -624,9 +635,9 @@ export const AdminLeadsList = () => {
      * switching drops any that no longer apply — a hidden filter still
      * narrowing the list is worse than no filter.
      */
-    const shows = CHANNEL_FILTERS[channel] ?? CHANNEL_FILTERS.all;
+    const shows = channel === "all" ? CHANNEL_FILTERS.all : filtersFor(channel);
     const pickChannel = (next: string) => {
-        const allowed = CHANNEL_FILTERS[next] ?? CHANNEL_FILTERS.all;
+        const allowed = next === "all" ? CHANNEL_FILTERS.all : filtersFor(next);
         setChannel(next);
         if (!allowed.stages.includes(stage as Stage)) setStage("all");
         if (!allowed.forwardedTo) { setForwardedTo("all"); setStoreId("all"); }
@@ -950,13 +961,27 @@ export const AdminLeadsList = () => {
      * Columns mirror the table, in the same order, with the codes spelled out:
      * a spreadsheet reading "closed_won" helps nobody.
      */
-    const exportCsv = () => {
-        if (!visible.length) {
+    const exportCsv = async () => {
+        if (!matched) {
             toast({ title: "Nothing to export", description: "No enquiries match the current filters." });
             return;
         }
+        /* Every match, not only the page on screen. */
+        let all: Lead[] = visible;
+        if (matched > visible.length || page > 1) {
+            setExporting(true);
+            try {
+                const res = await api.get("/asm/leads/list", { params: { ...filterParams(), limit: String(matched), offset: "0", export: "1" } });
+                all = res.data.leads || [];
+            } catch (error) {
+                toast({ title: "Export failed", description: getErrorMessage(error, "Please try again"), variant: "destructive" });
+                return;
+            } finally {
+                setExporting(false);
+            }
+        }
 
-        const rows = visible.map(lead => ({
+        const rows = all.map(lead => ({
             Date: formatWhen(lead.created_at),
             Customer: lead.customer_name || "",
             Phone: lead.customer_phone,
@@ -1044,7 +1069,9 @@ export const AdminLeadsList = () => {
     const pillFilters: FilterDef[] = [
         {
             label: "Channel", value: channel, set: pickChannel,
-            options: [["all", "All"], ...Object.entries(CHANNEL_LABEL).map(([k, l]) => [k, l, counts?.channel[k]] as [string, string, number?])],
+            options: [["all", "All"], ...Object.entries(CHANNEL_LABEL)
+                .filter(([k]) => SHOWN_CHANNELS.includes(k) || (counts?.channel[k] ?? 0) > 0)
+                .map(([k, l]) => [k, l, counts?.channel[k]] as [string, string, number?])],
         },
         {
             label: "Stage", value: stage, set: setStage,
@@ -1088,7 +1115,7 @@ export const AdminLeadsList = () => {
         }] : []),
         {
             label: "Review", value: review, set: setReview,
-            options: [["all", "Any"], ["pending", "Not reviewed"], ...OUTCOMES.map(o => [o.value, o.label])] as [string, string][],
+            options: [["all", "Any"], ["pending", "Not reviewed"], ...OUTCOMES.map(o => [o.value, o.active ? o.label : `${o.label} (hidden)`])] as [string, string][],
         },
         ...(shows.asm && asmOptions.length ? [{
             label: "ASM", value: asmId, set: setAsmId,
@@ -1143,14 +1170,18 @@ export const AdminLeadsList = () => {
                         variant="outline" size="sm"
                         onClick={exportCsv}
                         disabled={!visible.length}
-                        title="Export the enquiries currently shown"
+                        title="Export every enquiry the filters match"
                     >
                         <Download className="h-4 w-4 mr-1.5" />
-                        Export{visible.length ? ` (${visible.length})` : ""}
+                        {exporting ? "Exporting…" : `Export${matched ? ` (${matched})` : ""}`}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setSettingsOpen(true)} title="Review outcomes and channels">
+                        <Settings2 className="h-4 w-4 mr-1.5" /> Lead settings
                     </Button>
                     <Button size="sm" onClick={() => setAddOpen(true)} className="bg-orange-500 hover:bg-orange-600">
                         <Plus className="h-4 w-4 mr-1.5" /> Add Lead
                     </Button>
+                    <LeadSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
                 </div>
             </div>
 
@@ -1166,14 +1197,10 @@ export const AdminLeadsList = () => {
                 <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
                     {([
                         { label: "Total", value: Object.values(counts.channel).reduce((a, b) => a + (b || 0), 0), tone: "text-slate-800", key: "all" },
-                        { label: "WhatsApp", value: counts.channel.whatsapp, tone: "text-emerald-700", key: "whatsapp" },
-                        { label: "Instagram", value: counts.channel.instagram, tone: "text-pink-500", key: "instagram" },
-                        { label: "IVR", value: counts.channel.ivr, tone: "text-indigo-600", key: "ivr" },
-                        { label: "Website", value: counts.channel.website, tone: "text-cyan-600", key: "website" },
-                        { label: "WhatsApp (added)", value: counts.channel.whatsapp_manual, tone: "text-teal-600", key: "whatsapp_manual" },
-                        { label: "Instagram DM", value: counts.channel.instagram_dm, tone: "text-pink-700", key: "instagram_dm" },
-                        { label: "Facebook DM", value: counts.channel.facebook_dm, tone: "text-yellow-600", key: "facebook_dm" },
-                    ] as const).map(s => {
+                        ...Object.keys(CHANNEL_LABEL)
+                            .filter(k => SHOWN_CHANNELS.includes(k) || (counts.channel[k] ?? 0) > 0)
+                            .map(k => ({ label: CHANNEL_LABEL[k], value: counts.channel[k] ?? 0, tone: CHANNEL_TEXT[k] ?? "text-slate-700", key: k })),
+                    ]).map(s => {
                         const active = channel === s.key;
                         const empty = !s.value;
                         return (
@@ -1351,8 +1378,8 @@ export const AdminLeadsList = () => {
                     ))}
                     <span className="ml-auto text-xs text-slate-400 tabular-nums">
                         {matched > visible.length
-                            ? `Newest ${visible.length} of ${matched} enquiries`
-                            : `${visible.length} ${visible.length === 1 ? "enquiry" : "enquiries"}`}
+                            ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + visible.length} of ${matched} enquiries`
+                            : `${matched} ${matched === 1 ? "enquiry" : "enquiries"}`}
                     </span>
                 </div>
 
@@ -1704,6 +1731,37 @@ export const AdminLeadsList = () => {
                             </tbody>
                         </table>
                     </div>
+                    {/* Pages of the matches: where you are, and the way to the rest. */}
+                    {matched > 0 && (() => {
+                        const pages = Math.max(1, Math.ceil(matched / pageSize));
+                        const first = (page - 1) * pageSize + 1;
+                        const nums = [...new Set([1, page - 1, page, page + 1, pages])].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b);
+                        return (
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+                                <span className="tabular-nums">{first}–{Math.min(first + visible.length - 1, matched)} of {matched}</span>
+                                <div className="flex items-center gap-1">
+                                    <Button size="sm" variant="outline" className="h-8" disabled={page <= 1 || updating} onClick={() => setPage(p => p - 1)}>‹ Previous</Button>
+                                    {nums.map((n, i) => (
+                                        <span key={n} className="flex items-center">
+                                            {i > 0 && n - nums[i - 1] > 1 && <span className="px-1 text-slate-300">…</span>}
+                                            <Button size="sm" variant={n === page ? "default" : "ghost"} disabled={updating}
+                                                className={`h-8 min-w-8 px-2 tabular-nums ${n === page ? "bg-slate-900 hover:bg-slate-900" : ""}`}
+                                                onClick={() => setPage(n)} aria-current={n === page ? "page" : undefined}>{n}</Button>
+                                        </span>
+                                    ))}
+                                    <Button size="sm" variant="outline" className="h-8" disabled={page >= pages || updating} onClick={() => setPage(p => p + 1)}>Next ›</Button>
+                                </div>
+                                <label className="flex items-center gap-2">
+                                    Per page
+                                    <select value={pageSize} aria-label="Leads per page"
+                                        onChange={e => { const n = Number(e.target.value); setPageSize(n); try { localStorage.setItem("leads.pageSize", String(n)); } catch { /* not kept */ } }}
+                                        className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs">
+                                        {[50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+                                    </select>
+                                </label>
+                            </div>
+                        );
+                    })()}
                 </Card>
             )}
 
@@ -1822,8 +1880,8 @@ export const AdminLeadsList = () => {
                                         </SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="none">Not reviewed</SelectItem>
-                                            {OUTCOMES.map(o => (
-                                                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                            {OUTCOMES.filter(o => o.active || o.value === editForm.review_status).map(o => (
+                                                <SelectItem key={o.value} value={o.value}>{o.label}{o.active ? "" : " (hidden)"}</SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
@@ -2292,11 +2350,7 @@ export const AdminLeadsList = () => {
                                     <Select value={addForm.source} onValueChange={v => setAddForm({ ...addForm, source: v })}>
                                         <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="ivr">IVR</SelectItem>
-                                            <SelectItem value="website">Website</SelectItem>
-                                            <SelectItem value="whatsapp_manual">WhatsApp</SelectItem>
-                                            <SelectItem value="instagram_dm">Instagram DM</SelectItem>
-                                            <SelectItem value="facebook_dm">Facebook DM</SelectItem>
+                                            {ADD_LEAD_CHANNELS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
                                 </div>

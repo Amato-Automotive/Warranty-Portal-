@@ -10,7 +10,9 @@ import { extractPincode } from '../services/storeLocator.js';
 import { routeEnquiry, areaKey } from '../services/asmRouting.service.js';
 import { findState } from '../services/indianStates.js';
 import { isSamePlace, buildAddress } from '../services/placeMatch.js';
-import { buildLeadCharts, CHART_CHANNELS, MANUAL_CHANNELS } from '../services/leadCharts.js';
+import { buildLeadCharts } from '../services/leadCharts.js';
+import { loadLeadOptions, saveLeadOptions } from '../services/leadOptionsStore.js';
+import { addLeadChannels, outcomeAllowed } from '../services/leadOptions.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { WhatsAppService } from '../services/whatsapp.service.js';
 import { summariseIvr } from '../services/ivrLead.js';
@@ -492,7 +494,11 @@ export class AsmController {
             // enquiry the team took on WhatsApp by hand is its own channel,
             // 'whatsapp_manual', so the bot's leads and logic never mix with it;
             // Instagram and Facebook DMs likewise, apart from the Instagram ad form.
-            const channel = MANUAL_CHANNELS.includes(source) ? source : 'ivr';
+            const offered = addLeadChannels(await loadLeadOptions());
+            if (source && !offered.includes(String(source))) {
+                return res.status(400).json({ error: 'That channel is not offered in Add Lead. Pick another, or turn it on in Lead settings.' });
+            }
+            const channel = source ? String(source) : (offered.includes('ivr') ? 'ivr' : offered[0]);
 
             if (twoWheeler) {
                 const settings = await getLocatorSettings();
@@ -664,7 +670,7 @@ export class AsmController {
                 customer_name, raw_area, state, product, car_model, pincode,
             } = req.body || {};
 
-            const [rows]: any = await db.execute('SELECT id, raw_area, raw_payload FROM leads WHERE id = ?', [id]);
+            const [rows]: any = await db.execute('SELECT id, raw_area, raw_payload, review_status, lead_status FROM leads WHERE id = ?', [id]);
             if (!rows.length) return res.status(404).json({ error: 'Lead not found' });
 
             if (pincode !== undefined && pincode !== null && pincode !== '' && !/^[1-9]\d{5}$/.test(String(pincode).trim())) {
@@ -674,17 +680,15 @@ export class AsmController {
                 return res.status(400).json({ error: `Product must be one of ${PRODUCTS.join(', ')}` });
             }
 
-            const OUTCOMES = [
-                'no_response', 'follow_up', 'closed_won', 'closed_lost',
-                'call_disconnected', 'switched_off', 'number_not_working',
-            ];
+            // The admin's outcomes: a shown one, or the hidden one the lead already has.
+            const options = await loadLeadOptions();
             for (const [field, value] of [
                 ['lead_status', lead_status],
                 ['review_status', review_status],
             ] as Array<[string, any]>) {
                 if (value !== undefined && value !== null && value !== ''
-                    && !OUTCOMES.includes(String(value))) {
-                    return res.status(400).json({ error: `${field} is not one of the allowed outcomes` });
+                    && !outcomeAllowed(options, String(value), rows[0][field])) {
+                    return res.status(400).json({ error: `That ${field === 'review_status' ? 'review' : 'ASM'} outcome is not in the list` });
                 }
             }
 
@@ -1229,13 +1233,44 @@ export class AsmController {
         }
     }
 
+    /** The review outcomes and channels Lead Management works from. GET /api/asm/leads/options */
+    static async getLeadOptions(_req: Request, res: Response) {
+        try {
+            res.json({ success: true, options: await loadLeadOptions() });
+        } catch (error: any) {
+            console.error('Get lead options error:', error);
+            res.status(500).json({ error: 'Could not load the lead settings' });
+        }
+    }
+
+    /** Save them. PUT /api/asm/leads/options — a value some lead uses may be hidden, not deleted. */
+    static async saveLeadOptions(req: Request, res: Response) {
+        try {
+            const admin = (req as any).user;
+            const r = await saveLeadOptions(req.body?.options, admin?.id ?? null);
+            if ('error' in r) return res.status(400).json({ error: r.error });
+            try {
+                await ActivityLogService.log({
+                    adminId: admin?.id, adminName: admin?.name, adminEmail: admin?.email,
+                    actionType: 'LEAD_OPTIONS_UPDATED', targetType: 'LEAD_SETTINGS', targetId: '1',
+                    details: { outcomes: r.options.outcomes.map(o => `${o.value}${o.active ? '' : ' (hidden)'}`), channels: r.options.channels.map(c => `${c.value}${c.active ? '' : ' (hidden)'}`) },
+                    ipAddress: req.ip || req.socket?.remoteAddress,
+                });
+            } catch (e) { console.error('Failed to log lead options', e); }
+            res.json({ success: true, options: r.options });
+        } catch (error: any) {
+            console.error('Save lead options error:', error);
+            res.status(500).json({ error: 'Could not save the lead settings' });
+        }
+    }
+
     static async listLeads(req: Request, res: Response) {
         /* A 2-wheeler enquiry: from the chat's first question, or added by hand. */
         const isTwoWheeler = (r: any) => /2-Wheeler/i.test(String(r.car_model ?? ''));
         try {
             const {
                 status, stage, source, asm_id, product, delivery, review, dateFrom, dateTo, q, limit,
-                forwarded_to, store, ivr_call, state, vehicle,
+                forwarded_to, store, ivr_call, state, vehicle, offset, export: forExport,
             } = req.query as Record<string, string>;
             /*
              * The date range and the plain column filters narrow in SQL.
@@ -1483,11 +1518,13 @@ export class AsmController {
             const sourceBase = found.filter((r: any) => byStage(r) && byProduct(r));
             const matching = found.filter((r: any) => byStage(r) && byProduct(r) && bySource(r));
 
+            const leadOpts = await loadLeadOptions();
+            const leadLists = { channels: leadOpts.channels.map(c => c.value), outcomes: leadOpts.outcomes.map(o => o.value) };
             const counts = {
                 total: stageBase.length,
                 stage: Object.fromEntries(LEAD_STAGES.map(s => [s, 0])),
                 product: { 'Seat Covers': 0, Mats: 0, Accessories: 0, none: 0 } as Record<string, number>,
-                channel: Object.fromEntries(CHART_CHANNELS.map(c => [c, 0])) as Record<string, number>,
+                channel: Object.fromEntries(leadLists.channels.map(c => [c, 0])) as Record<string, number>,
                 review_pending: matching.filter((r: any) => !r.review_status).length,
                 // The Vehicle pills: every other filter, not its own.
                 vehicle: (() => {
@@ -1513,12 +1550,15 @@ export class AsmController {
                 review_status: r.review_status,
                 forward_kinds: forwardKinds(r),
                 stores: leadStores(r),
-            }))) : undefined;
+            })), leadLists) : undefined;
 
-            const cap = Math.min(Number(limit) || 200, 1000);
+            /* A page of the matches, newest first. An export asks for all of them. */
+            const cap = Math.min(Math.max(Number(limit) || 200, 1), forExport === '1' ? 20000 : 1000);
+            const from = Math.max(Number(offset) || 0, 0);
             res.json({
                 success: true,
-                leads: chartsOnly ? [] : matching.slice(0, cap),
+                leads: chartsOnly ? [] : matching.slice(from, from + cap),
+                offset: from,
                 charts,
                 // How many matched, when that is more than the page shows.
                 matched: matching.length,

@@ -587,7 +587,7 @@ export interface ManualLeadInput {
     name: string | null;
     product: string | null;
     car: string | null;
-    /** The channel the auditor chose: one of MANUAL_CHANNELS (leadCharts). */
+    /** The channel the auditor chose: one Add Lead offers (leadOptions). */
     source: string;
     enteredBy: string | null;
     /** The auditor picked a store in the form; it is sent by the caller, and the chain stops there. */

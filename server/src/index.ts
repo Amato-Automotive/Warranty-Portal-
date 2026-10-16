@@ -344,6 +344,22 @@ async function runMigrations() {
          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+    // Lead Management's lists the admin keeps (review outcomes, channels), and
+    // the two outcome columns as text, so an outcome the admin adds can be stored.
+    await pool.query(`CREATE TABLE IF NOT EXISTS lead_options (
+         id TINYINT NOT NULL PRIMARY KEY,
+         options JSON NOT NULL,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    for (const col of ['review_status', 'lead_status']) {
+      const [c]: any = await pool.query(`SHOW COLUMNS FROM leads LIKE '${col}'`);
+      if (c[0] && String(c[0].Type).startsWith('enum(')) {
+        await pool.query(`ALTER TABLE leads MODIFY ${col} VARCHAR(40) NULL DEFAULT NULL`);
+        console.log(`✅ Migration: leads.${col} is now text (outcomes are admin-managed).`);
+      }
+    }
+
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');
   } catch (error: any) {

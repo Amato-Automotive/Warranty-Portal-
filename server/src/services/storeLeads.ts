@@ -49,8 +49,8 @@ export interface StoreLead {
     state: string | null;
     /** How it reached the store. */
     via: 'customer' | 'autoform';
-    /** The auditor's outcome; "pending" until someone has called. */
-    status: StoreLeadStatus;
+    /** The auditor's outcome (a value from the admin's list); "pending" until someone has called. */
+    status: string;
     status_at: string | null;
 }
 
@@ -79,9 +79,7 @@ export function storeLeadView(row: StoreLeadRow, storeId: string): StoreLead | n
     const sentByTeam = String(row.store_id ?? '') === String(storeId)
         && Boolean(row.store_sent_by) && row.store_sent_by !== 'customer';
 
-    const status = (STORE_LEAD_STATUSES as readonly string[]).includes(String(row.review_status))
-        ? row.review_status as StoreLeadStatus
-        : 'pending';
+    const status = row.review_status ? String(row.review_status) : 'pending';
 
     return {
         id: row.id,

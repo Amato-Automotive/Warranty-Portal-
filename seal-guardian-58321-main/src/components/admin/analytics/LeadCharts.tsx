@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from "recharts";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { useLeadOptions, DEFAULT_LEAD_OPTIONS, TONE_HEX, type LeadOptions } from "@/lib/leadOptions";
 
 /**
  * Leads at a glance: per day by channel, product, where they went, states,
@@ -19,7 +20,7 @@ export interface Named { key: string; label: string; count: number }
 export interface LeadChartsData {
     total: number;
     /* A channel the server does not send counts as 0. */
-    by_day: Array<{ day: string; other: number } & Partial<Record<ChannelKey, number>>>;
+    by_day: Array<{ day: string; other: number } & Record<string, number | string>>;
     product: Named[];
     went_to: Named[];
     states: Named[];
@@ -38,20 +39,10 @@ export interface ChartActive {
     asm?: string; store?: string; review?: string; day?: string;
 }
 
-export const CHANNELS = [
-    { key: "whatsapp", label: "WhatsApp", color: "#047857" },
-    { key: "instagram", label: "Instagram", color: "#f472b6" },
-    { key: "ivr", label: "IVR", color: "#4f46e5" },
-    { key: "website", label: "Website", color: "#0891b2" },
-    /* Hand-added WhatsApp enquiries: a lighter green, read as WhatsApp's family. */
-    { key: "whatsapp_manual", label: "WhatsApp (added)", color: "#5eead4" },
-    /* DMs the team added by hand: a deep pink in Instagram's family, and an
-       amber for Facebook, which no other channel is near. */
-    { key: "instagram_dm", label: "Instagram DM", color: "#be185d" },
-    { key: "facebook_dm", label: "Facebook DM", color: "#ca8a04" },
-] as const;
-type ChannelKey = typeof CHANNELS[number]["key"];
-const dayTotal = (d: LeadChartsData["by_day"][number]) => CHANNELS.reduce((n, c) => n + (d[c.key] ?? 0), d.other);
+/* The channels and their colours are the admin's (Lead settings). */
+type Channel = { key: string; label: string; color: string };
+const channelsOf = (o: LeadOptions): Channel[] => o.channels.map(c => ({ key: c.value, label: c.label, color: TONE_HEX[c.tone] }));
+const totalOf = (channels: Channel[], d: LeadChartsData["by_day"][number]) => channels.reduce((n, c) => n + (Number(d[c.key]) || 0), d.other);
 
 const PRODUCT_COLOR: Record<string, string> = {
     "Seat Covers": "#ea580c", Mats: "#7c3aed", Accessories: "#0284c7", none: "#cbd5e1",
@@ -61,11 +52,6 @@ const WENT_TO_LABEL: Record<string, string> = {
     store: "Store", asm: "ASM", distributor: "Distributor", support: "Customer support", none: "Not forwarded yet",
 };
 
-const REVIEW_LABEL: Record<string, string> = {
-    pending: "Not reviewed", follow_up: "Follow up", closed_won: "Closed won", closed_lost: "Closed lost",
-    no_response: "No response", call_disconnected: "Call disconnected", switched_off: "Switched off",
-    number_not_working: "Number not working",
-};
 
 /* Buckets that stand for "we don't know yet" read lighter than real answers. */
 const MISSING = new Set(["none", "pending", "__others"]);
@@ -143,9 +129,18 @@ function BarList({ items, labelOf, active, onPick, empty }: {
     );
 }
 
-export function LeadCharts({ data, onPick, active = {}, collapsible = true }: {
+export function LeadCharts(props: Parameters<typeof LeadChartsView>[0]) {
+    const opts = useLeadOptions();
+    return <LeadChartsView {...props} lists={opts} />;
+}
+
+function LeadChartsView({ data, onPick, active = {}, collapsible = true, lists = DEFAULT_LEAD_OPTIONS }: {
+    lists?: LeadOptions;
     data: LeadChartsData; onPick?: (pick: ChartPick) => void; active?: ChartActive; collapsible?: boolean;
 }) {
+    const CHANNELS = channelsOf(lists);
+    const dayTotal = (d: LeadChartsData["by_day"][number]) => totalOf(CHANNELS, d);
+    const REVIEW_LABEL: Record<string, string> = { pending: "Not reviewed", ...Object.fromEntries(lists.outcomes.map(o => [o.value, o.label])) };
     const [range, setRange] = useState<"7" | "30" | "all">("30");
     const [topOf, setTopOf] = useState<"asm" | "store">("asm");
     const [hidden, setHidden] = useState<boolean>(() => {
@@ -172,7 +167,7 @@ export function LeadCharts({ data, onPick, active = {}, collapsible = true }: {
         return out;
     }, [data.by_day, range]);
     const inRange = days.reduce((n, d) => n + dayTotal(d), 0);
-    const channelTotals = CHANNELS.map(c => ({ ...c, count: days.reduce((n, d) => n + (d[c.key] ?? 0), 0) }));
+    const channelTotals = CHANNELS.map(c => ({ ...c, count: days.reduce((n, d) => n + (Number(d[c.key]) || 0), 0) }));
     const hasOther = days.some(d => d.other > 0);
 
     const products = data.product.filter(p => p.count > 0);

@@ -18,9 +18,8 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
  * the customer was offered — the server does not send them.
  */
 
-type Status =
-    | "pending" | "follow_up" | "closed_won" | "closed_lost" | "no_response"
-    | "call_disconnected" | "switched_off" | "number_not_working";
+/* An outcome from the admin's list, or "pending" before anyone has called. */
+type Status = string;
 
 interface StoreLead {
     id: string;
@@ -34,6 +33,8 @@ interface StoreLead {
     via: "customer" | "autoform";
     status: Status;
     status_at: string | null;
+    /* Which group the outcome counts in, set by the admin (Lead settings). */
+    group?: Group;
 }
 
 /*
@@ -53,8 +54,8 @@ const GROUPS: { key: Group; label: string; color: string }[] = [
     { key: "noanswer", label: "No answer", color: "#64748b" },
     { key: "pending", label: "Not called yet", color: "#cbd5e1" },
 ];
-const groupOf = (s: Status): Group =>
-    s === "closed_won" ? "won" : s === "follow_up" ? "follow" : s === "closed_lost" ? "lost" : s === "pending" ? "pending" : "noanswer";
+const groupOf = (l: { status: Status; group?: Group }): Group => l.group ?? (
+    l.status === "closed_won" ? "won" : l.status === "follow_up" ? "follow" : l.status === "closed_lost" ? "lost" : l.status === "pending" ? "pending" : "noanswer");
 
 const PERIODS = [
     { key: "30", label: "Last 30 days" },
@@ -147,10 +148,10 @@ export const FranchiseLeads = ({ initial }: { initial?: LeadsView } = {}) => {
     );
     const counts = useMemo(() => {
         const c: Record<string, number> = { all: inRange.length };
-        for (const l of inRange) { const g = groupOf(l.status); c[g] = (c[g] ?? 0) + 1; }
+        for (const l of inRange) { const g = groupOf(l); c[g] = (c[g] ?? 0) + 1; }
         return c;
     }, [inRange]);
-    const shown = status === "all" ? inRange : inRange.filter(l => groupOf(l.status) === status);
+    const shown = status === "all" ? inRange : inRange.filter(l => groupOf(l) === status);
 
     /* The same length of time just before, for "3 more than the 30 days
        before". All time has nothing before it. */
@@ -185,7 +186,7 @@ export const FranchiseLeads = ({ initial }: { initial?: LeadsView } = {}) => {
         for (const l of inRange) {
             const i = index.get(keyOf(dayOf(l)));
             if (i === undefined) continue;
-            if (groupOf(l.status) === "won") out[i].won++; else out[i].other++;
+            if (groupOf(l) === "won") out[i].won++; else out[i].other++;
         }
         return out;
     }, [inRange, bounds, weekly, tr]);

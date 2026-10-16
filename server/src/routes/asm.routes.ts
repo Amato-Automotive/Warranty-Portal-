@@ -50,6 +50,9 @@ router.get('/known-areas', ...adminAuth, requirePermission('leads', 'read'), Asm
 // States, districts and pincodes to give an ASM, from the pincode directory.
 router.get('/area-search', ...adminAuth, requirePermission('leads', 'read'), AsmController.searchAreas);
 router.get('/leads/list', ...adminAuth, requirePermission('leads', 'read'), AsmController.listLeads);
+// The review outcomes and channels, kept by the admin (before '/leads/:id').
+router.get('/leads/options', ...adminAuth, requirePermission('leads', 'read'), AsmController.getLeadOptions);
+router.put('/leads/options', ...adminAuth, requirePermission('leads', 'write'), AsmController.saveLeadOptions);
 router.post('/leads', ...adminAuth, requirePermission('leads', 'write'), AsmController.createLead);
 router.put('/leads/:id', ...adminAuth, requirePermission('leads', 'write'), AsmController.updateLead);
 // Stores for a typed area, for the add form — before a lead exists to key on.
