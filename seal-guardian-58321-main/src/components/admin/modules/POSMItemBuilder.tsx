@@ -200,8 +200,8 @@ export function POSMItemBuilder() {
                             </div>
                             <div className="space-y-2">
                                 <p className="text-xs font-semibold text-slate-500">Picture</p>
-                                <div className="aspect-[3/2] rounded-xl bg-gradient-to-br from-orange-50 to-amber-50/40 grid place-items-center relative">
-                                    <PosmArt clipart={item.clipart} image={item.image} className="h-[75%] w-[75%]" />
+                                <div className="aspect-[3/2] w-full rounded-xl relative overflow-hidden bg-gradient-to-br from-orange-50 to-amber-50/40 grid place-items-center">
+                                    <PosmArt clipart={item.clipart} image={item.image} fill className="h-[75%] w-[75%]" />
                                     {item.image && (
                                         <button type="button" aria-label="Remove the picture" onClick={() => patch({ image: null })}
                                             className="absolute top-1.5 right-1.5 rounded-full bg-white/90 p-1 text-slate-500 hover:text-red-600"><X className="h-3.5 w-3.5" /></button>
@@ -221,6 +221,7 @@ export function POSMItemBuilder() {
                                 <label htmlFor="pb-image" className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-200 py-1.5 text-xs text-slate-500 cursor-pointer hover:border-orange-200">
                                     {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} Upload a photo instead
                                 </label>
+                                <p className="text-[10px] text-slate-400">Ideal: 1200 × 800 px (3:2), JPG or PNG under 500 KB, on a plain background. The whole picture always fits in the card's box.</p>
                             </div>
                         </section>
 

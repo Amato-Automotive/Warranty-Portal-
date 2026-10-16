@@ -136,9 +136,25 @@ const ART: Record<string, { label: string; svg: JSX.Element }> = {
 export const CLIPART_KEYS = Object.keys(ART);
 export const clipartLabel = (k: string) => ART[k]?.label ?? k;
 
-/** An item's picture: the uploaded image if there is one, else its clip art. */
-export function PosmArt({ clipart, image, className }: { clipart?: string | null; image?: string | null; className?: string }) {
-    if (image) return <img src={image} alt="" className={className} style={{ objectFit: "contain" }} />;
+/**
+ * An item's picture: the uploaded photo if there is one, else its clip art.
+ *
+ * The box never changes size with the photo. A photo is shrunk to fit inside
+ * it whole, never trimmed, over a soft blurred copy of itself that fills the
+ * spare space, so any photo the admin uploads sits the same way.
+ *
+ * `fill`: the picture fills the nearest positioned box (the card's banner);
+ * otherwise `className` sizes it.
+ */
+export function PosmArt({ clipart, image, className, fill }: { clipart?: string | null; image?: string | null; className?: string; fill?: boolean }) {
+    if (image) {
+        return (
+            <span className={`${fill ? "absolute inset-0" : "relative block rounded-lg"} overflow-hidden bg-slate-100 ${fill ? "" : className ?? ""}`}>
+                <img src={image} alt="" aria-hidden="true" loading="lazy" className="absolute inset-0 h-full w-full object-cover scale-110 blur-md opacity-60" />
+                <img src={image} alt="" loading="lazy" className={`relative h-full w-full object-contain ${fill ? "p-1.5" : ""}`} />
+            </span>
+        );
+    }
     const art = ART[clipart || "box"] ?? ART.box;
     return (
         <svg viewBox="0 0 120 80" className={className} role="img" aria-label={art.label}>

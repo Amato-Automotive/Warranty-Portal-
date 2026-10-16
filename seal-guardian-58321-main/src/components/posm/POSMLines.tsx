@@ -36,7 +36,7 @@ export function POSMLines({ lines, items, limits, onDecide, disabled }: {
                 return (
                     <div key={i} className={cn("grid grid-cols-[56px_minmax(0,1fr)] sm:grid-cols-[56px_minmax(0,1fr)_auto] gap-3 items-center rounded-2xl border p-3",
                         rejected ? "border-red-100 bg-red-50/40" : "border-gray-100 bg-white")}>
-                        <div className="h-12 w-14 rounded-xl bg-orange-50/60 grid place-items-center overflow-hidden">
+                        <div className="h-12 w-14 rounded-xl bg-orange-50/60 grid place-items-center overflow-hidden relative">
                             <PosmArt clipart={it?.clipart} image={it?.image} className="h-10 w-12" />
                         </div>
                         <div className="min-w-0">

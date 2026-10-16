@@ -84,8 +84,8 @@ export function POSMShop({ items, brands, usage, ignoreLimits, onSend, sendLabel
                         return (
                             <article key={it.id} className={cn("flex flex-col rounded-2xl border bg-white overflow-hidden transition-shadow",
                                 n ? "border-orange-200 shadow-md shadow-orange-50" : "border-gray-100 hover:shadow-sm")}>
-                                <div className="aspect-[3/2] max-w-full bg-gradient-to-br from-orange-50 to-amber-50/40 grid place-items-center relative">
-                                    <PosmArt clipart={it.clipart} image={it.image} className="h-[72%] w-[72%]" />
+                                <div className="aspect-[3/2] w-full max-w-full relative overflow-hidden bg-gradient-to-br from-orange-50 to-amber-50/40 grid place-items-center">
+                                    <PosmArt clipart={it.clipart} image={it.image} fill className="h-[72%] w-[72%]" />
                                     {n > 0 && (
                                         <span className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-emerald-600 text-white text-[11px] font-bold px-2 py-0.5">
                                             <Check className="h-3 w-3" /> {isSimple(it) ? n : lines}
