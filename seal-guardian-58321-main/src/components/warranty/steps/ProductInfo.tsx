@@ -531,7 +531,7 @@ const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, exis
             label above it, ran well past the bottom of a phone screen; paired,
             the five take three rows. */}
         <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:gap-4">
-          {PHOTO_FIELDS.map(({ field, photoKey, label, fullWidth }) => (
+          {PHOTO_FIELDS.map(({ field, photoKey, label }) => (
             <PhotoField
               key={field}
               field={field}
@@ -540,7 +540,6 @@ const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, exis
               file={formData[field] as File | null}
               onChange={handleFileChange}
               loading={loading}
-              fullWidth={fullWidth}
             />
           ))}
         </div>

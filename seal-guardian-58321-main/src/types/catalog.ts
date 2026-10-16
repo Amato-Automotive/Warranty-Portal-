@@ -16,6 +16,8 @@ export interface Product {
   inStock?: boolean;
   rating?: number;
   reviews?: Review[];
+  isFeatured?: boolean;
+  isNewArrival?: boolean;
 }
 
 export interface Review {

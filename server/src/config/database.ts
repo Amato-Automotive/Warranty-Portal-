@@ -217,4 +217,7 @@ export function getISTDate(): string {
   return getISTTimestamp().split(' ')[0];
 }
 
+/** A value the driver takes for a `?` placeholder. */
+export type SqlValue = string | number | bigint | boolean | Date | Buffer | null;
+
 export default pool;

@@ -1124,11 +1124,13 @@ const FranchiseDashboard = () => {
                                                     active={activeModule === item.id}
                                                     onClick={() => {
                                                         setActiveModule(item.id);
-                                                        if (item.id !== 'catalogue') setIsMobileMenuOpen(false);
+                                                        if ((item.id as string) !== 'catalogue') setIsMobileMenuOpen(false);
                                                     }}
-                                                    comingSoon={item.comingSoon}
+                                                    comingSoon={'comingSoon' in item ? item.comingSoon : undefined}
                                                 />
-                                                {item.id === 'catalogue' && activeModule === 'catalogue' && (
+                                                {/* No menu item is 'catalogue' now (the e-catalogue is 'ecatalogue'),
+                                                    so this sub-list does not show; kept for when it returns. */}
+                                                {(item.id as string) === 'catalogue' && (activeModule as string) === 'catalogue' && (
                                                     <div className="pl-12 py-1 space-y-1 animate-in slide-in-from-top-2 duration-300">
                                                         <button
                                                             onClick={() => {

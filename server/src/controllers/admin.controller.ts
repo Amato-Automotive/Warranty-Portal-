@@ -2882,7 +2882,7 @@ export class AdminController {
                         WHERE car_make = ? AND car_model IS NOT NULL AND car_model != ''
                         ORDER BY car_model ASC
                         LIMIT 250
-                    `, [make])
+                    `, [String(make)])
                     : Promise.resolve([[]])
             ]);
             const totalCount = countResult[0].total;

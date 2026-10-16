@@ -1,4 +1,4 @@
-import db from '../config/database.js';
+import db, { type SqlValue } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
 import { WhatsAppService } from './whatsapp.service.js';
 import { phoneKey, normaliseProduct } from './asmRouting.service.js';
@@ -79,7 +79,7 @@ async function saveSession(leadId: string, session: Record<string, unknown>, ext
                 ${cols.map(c => `, ${c} = ?`).join('')},
                 updated_at = NOW()
           WHERE id = ?`,
-        [JSON.stringify(session), ...Object.values(extra), leadId]
+        [JSON.stringify(session), ...(Object.values(extra) as SqlValue[]), leadId]
     );
 }
 

@@ -1,4 +1,4 @@
-import db from '../config/database.js';
+import db, { type SqlValue } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
 import { WhatsAppService } from './whatsapp.service.js';
 import { findState } from './indianStates.js';
@@ -84,12 +84,12 @@ async function writeLead(existingId: string | undefined, newId: string, cols: Re
             : `${n} = ?`;
         await db.execute(
             `UPDATE leads SET ${names.map(set).join(', ')}, updated_at = NOW() WHERE id = ?`,
-            [...Object.values(cols), existingId]
+            [...(Object.values(cols) as SqlValue[]), existingId]
         );
     } else {
         await db.execute(
             `INSERT INTO leads (id, ${names.join(', ')}) VALUES (?, ${names.map(() => '?').join(', ')})`,
-            [newId, ...Object.values(cols)]
+            [newId, ...(Object.values(cols) as SqlValue[])]
         );
     }
 }

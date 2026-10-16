@@ -49,7 +49,7 @@ export class VendorController {
       // Find vendor by token
       const [verifications]: any = await db.execute(
         'SELECT * FROM vendor_verification WHERE verification_token = ?',
-        [token]
+        [String(token)]
       );
 
       if (verifications.length === 0) {
@@ -167,7 +167,7 @@ export class VendorController {
       // Update verification status
       await db.execute(
         'UPDATE vendor_verification SET is_verified = TRUE, verified_at = ? WHERE verification_token = ?',
-        [getISTTimestamp(), token]
+        [getISTTimestamp(), String(token)]
       );
 
       // Send confirmation email to vendor with login link

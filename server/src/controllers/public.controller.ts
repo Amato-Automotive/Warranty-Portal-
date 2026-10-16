@@ -143,7 +143,7 @@ export class PublicController {
                 } else {
                     const [existingReg]: any = await db.execute(
                         'SELECT uid, customer_name FROM warranty_registrations WHERE product_type = ? AND status != "rejected" AND registration_number = ? LIMIT 1',
-                        [normalizedType, reg]
+                        [normalizedType, String(reg)]
                     );
 
                     if (existingReg.length > 0) {
