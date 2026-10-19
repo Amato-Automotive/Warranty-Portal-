@@ -994,7 +994,6 @@ export class PublicController {
                                 warrantyData.installerName || 'Franchise Partner',
                                 warrantyData.customerName,
                                 warrantyData.customerPhone,
-                                warrantyData.registrationNumber,
                                 productName,
                                 warrantyId,
                                 warrantyId
@@ -1042,7 +1041,6 @@ export class PublicController {
                         warrantyData.customerPhone,
                         warrantyData.customerName,
                         productName,
-                        warrantyData.registrationNumber,
                         warrantyId,
                         warrantyData.productType,
                         warrantyData.purchaseDate,

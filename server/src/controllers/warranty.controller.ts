@@ -751,7 +751,6 @@ export class WarrantyController {
                 warrantyData.installerName || 'Franchise Partner',
                 warrantyData.customerName,
                 warrantyData.customerPhone,
-                warrantyData.registrationNumber,
                 productName,
                 warrantyId,
                 warrantyId
@@ -799,7 +798,6 @@ export class WarrantyController {
             warrantyData.customerPhone,
             warrantyData.customerName,
             productName,
-            warrantyData.registrationNumber,
             warrantyId,
             warrantyData.productType,
             warrantyData.purchaseDate,

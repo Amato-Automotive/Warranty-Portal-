@@ -419,7 +419,6 @@ export class EmailService {
       
       <div class="info-box">
         <p><strong>Customer Name:</strong> ${customerName}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || productDetails?.carRegistration || 'N/A'}</p>
         ${(productType !== 'seat-cover' && ((carMake && String(carMake).toLowerCase() !== 'null') || (carModel && String(carModel).toLowerCase() !== 'null'))) ? `<p><strong>Vehicle:</strong> ${carMake || ''} ${carModel || ''}</p>` : ''}
         ${productType === 'seat-cover' ? `<p><strong>UID:</strong> ${uid}</p>` : ''}
         ${productType === 'ev-products' ? `
@@ -431,7 +430,7 @@ export class EmailService {
       </div>
       
       <div class="warning-box">
-        <strong>Important:</strong> In case of warranty claims, please provide your ${productType === 'seat-cover' ? 'UID' : productType === 'ev-products' ? 'serial number and vehicle registration' : 'warranty details'}.
+        <strong>Important:</strong> In case of warranty claims, please provide your ${productType === 'seat-cover' ? 'UID' : productType === 'ev-products' ? 'serial number' : 'warranty details'}.
       </div>
       
       <p>Thank you for choosing our products!</p>
@@ -504,7 +503,6 @@ export class EmailService {
         <p><strong>Product:</strong> ${String(productName).replace(/-/g, ' ').toUpperCase()}</p>
         <p><strong>Product Type:</strong> ${productType}</p>
         <p><strong>Warranty Type:</strong> ${warrantyType || '1 Year'}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || productDetails?.carRegistration || 'N/A'}</p>
         ${(productType !== 'seat-cover' && ((carMake && String(carMake).toLowerCase() !== 'null') || (carModel && String(carModel).toLowerCase() !== 'null'))) ? `<p><strong>Vehicle:</strong> ${carMake || ''} ${carModel || ''}</p>` : ''}
         <p><strong>Approval Date:</strong> ${formatDateIST()}</p>
         ${purchaseDate ? `<p><strong>Purchase Date:</strong> ${purchaseDate}</p>` : ''}
@@ -603,7 +601,6 @@ export class EmailService {
           <p><strong>Serial Number:</strong> ${serialsForEmail(productDetails, uid)}</p>
         ` : ''}
         <p><strong>Product Type:</strong> ${productType}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || productDetails?.carRegistration || 'N/A'}</p>
         ${(productType !== 'seat-cover' && ((carMake && String(carMake).toLowerCase() !== 'null') || (carModel && String(carModel).toLowerCase() !== 'null'))) ? `<p><strong>Vehicle:</strong> ${carMake || ''} ${carModel || ''}</p>` : ''}
         <p><strong>Review Date:</strong> ${formatDateIST()}</p>
       </div>
@@ -675,7 +672,6 @@ export class EmailService {
         <p><strong>Product Name:</strong> ${productName}</p>
         <p><strong>Product Type:</strong> ${productType}</p>
         <p><strong>Warranty Type:</strong> ${warrantyType || '1 Year'}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || productDetails?.carRegistration || 'N/A'}</p>
         ${(productType !== 'seat-cover' && ((carMake && String(carMake).toLowerCase() !== 'null') || (carModel && String(carModel).toLowerCase() !== 'null'))) ? `<p><strong>Vehicle:</strong> ${carMake || ''} ${carModel || ''}</p>` : ''}
         <p><strong>${idLabel}:</strong> ${uid}</p>
       </div>
@@ -744,7 +740,6 @@ export class EmailService {
         <p><strong>Phone:</strong> ${customerPhone}</p>
         <p><strong>Product Name:</strong> ${productName}</p>
         <p><strong>Product Type:</strong> ${productType}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || productDetails?.carRegistration || 'N/A'}</p>
         ${(productType !== 'seat-cover' && ((carMake && String(carMake).toLowerCase() !== 'null') || (carModel && String(carModel).toLowerCase() !== 'null'))) ? `<p><strong>Vehicle:</strong> ${carMake || ''} ${carModel || ''}</p>` : ''}
         <p><strong>${idLabel}:</strong> ${uid}</p>
         <p><strong>Installer:</strong> ${manpowerName}</p>
@@ -900,7 +895,6 @@ export class EmailService {
       
       <div class="info-box" style="border-left-color: #FFB400;">
         <p><strong>Customer Name:</strong> ${customerName}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || productDetails?.carRegistration || 'N/A'}</p>
         ${carMake ? `<p><strong>Make:</strong> ${carMake}</p>` : ''}
         ${carModel ? `<p><strong>Model:</strong> ${carModel}</p>` : ''}
         <p><strong>Product:</strong> ${String(productName).replace(/-/g, ' ').toUpperCase()}</p>
@@ -1473,7 +1467,6 @@ export class EmailService {
 
       <div class="info-box">
         <p><strong>Customer Name:</strong> ${customerName}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || 'N/A'}</p>
         ${productType === 'seat-cover' ? `<p><strong>UID:</strong> ${uid}</p>` : ''}
         <p><strong>Product:</strong> ${String(productName).replace(/-/g, ' ').toUpperCase()}</p>
         <p><strong>Resubmission Date:</strong> ${formatDateIST()}</p>
@@ -1519,7 +1512,6 @@ export class EmailService {
       
       <div class="info-box">
         <p><strong>Customer Name:</strong> ${customerName}</p>
-        <p><strong>Vehicle Registration:</strong> ${registrationNumber || 'N/A'}</p>
         <p><strong>Product Type:</strong> ${productType}</p>
         ${productType === 'seat-cover' ? `<p><strong>UID:</strong> ${uid}</p>` : ''}
         <p><strong>Update Date:</strong> ${formatDateIST()}</p>
