@@ -32,6 +32,13 @@ export class WhatsAppService {
     private static readonly API_URL = 'https://api.interakt.ai/v1/public/message/';
     private static readonly API_KEY = process.env.INTERAKT_API_KEY;
 
+    // Image header for the customer warranty templates (submitted, approved,
+    // rejected, rejection reminder). Interakt does not reuse the sample image
+    // uploaded with the template; every send must carry a public URL, or it
+    // fails with "Media Url is missing for header's image".
+    private static readonly WARRANTY_HEADER_IMAGE =
+        process.env.WHATSAPP_WARRANTY_HEADER_IMAGE || 'https://warranty2.autoformindia.co.in/og-image.jpg';
+
     private static activeCampaign: CampaignProgress | null = null;
 
     static getCampaignProgress(campaignId: string): CampaignProgress | null {
@@ -486,7 +493,9 @@ export class WhatsAppService {
             'af_warranty_submitted_3',
             [customerName, productName, uid, productTypeLabel, formattedDate],
             'warranty_submitted',
-            warrantyId
+            warrantyId,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
@@ -535,7 +544,9 @@ export class WhatsAppService {
             'af_warranty_approved_customer',
             [customerName, productName, uid, storeName, status, purchaseDate, warrantyType],
             'warranty_approved_customer',
-            uid
+            uid,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
@@ -861,7 +872,9 @@ export class WhatsAppService {
             'af_cust_warr_rejec_2',
             [customerName, productName, uid, storeName, status, purchaseDate, warrantyType, rejectionReason],
             'warranty_rejected_customer',
-            uid
+            uid,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
@@ -932,7 +945,9 @@ export class WhatsAppService {
             [customerName, productName, uid, storeName, status,
              purchaseDate, warrantyType, rejectionReason, daysSinceRejection],
             contextOverride || 'warranty_reject_reminder_customer',
-            uid
+            uid,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
