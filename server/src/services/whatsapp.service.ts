@@ -781,20 +781,6 @@ export class WhatsAppService {
     }
 
     /**
-     * Tell customer support about a lead nobody else could take — no store, ASM
-     * or distributor near the customer.
-     *
-     * Template: af_support_lead_alert (header "New Support Lead!"),
-     * overridable with SUPPORT_LEAD_TEMPLATE.
-     *   {{1}} Customer phone   {{2}} Location   {{3}} Product
-     *   {{4}} Vehicle          {{5}} Date of enquiry
-     *   {{6}} Lead number — support's nth lead this month
-     * No customer name: the workflow does not reliably have one.
-     *
-     * Returns false if the send fails — including while the template is still
-     * awaiting Meta's approval — so the caller can fall back to the store alert.
-     */
-    /**
      * To an Instagram customer who filled the form but never wrote to us, when
      * several stores are near: thanks, and a "View stores" quick-reply button.
      * Their tap comes back as a button click carrying "choose_store_<lead id>",
@@ -813,33 +799,6 @@ export class WhatsAppService {
             template,
             [String(name || '').trim() || 'there', product || 'car accessories', area],
             'choose_store',
-            leadId
-        );
-    }
-
-    static async sendSupportLead(
-        supportPhone: string,
-        customerPhone: string,
-        location: string,
-        product: string | null,
-        car: string | null,
-        receivedAt: string,
-        leadNumber: number,
-        leadId?: string
-    ): Promise<boolean> {
-        const template = process.env.SUPPORT_LEAD_TEMPLATE || 'af_support_lead_alert';
-        return this.sendTemplateMessage(
-            supportPhone,
-            template,
-            [
-                customerPhone,
-                location || 'Not provided',
-                product || 'Not specified',
-                car || 'Not specified',
-                receivedAt,
-                String(leadNumber),
-            ],
-            'support_lead',
             leadId
         );
     }

@@ -461,23 +461,10 @@ export async function notifyOnce(lead: any, key: string, phone: string | null, n
     const enquired = lead.enquired_at ? new Date(lead.enquired_at) : null;
     const when = receivedAt(enquired && !Number.isNaN(enquired.getTime()) ? enquired : undefined);
 
-    /*
-     * Support has its own template, which adds where the customer is — they
-     * are the ones who must find them somewhere to go. Until Meta approves it
-     * the send fails, and support gets the store alert instead, so no lead
-     * goes unannounced in the meantime.
-     */
-    let ok = false;
-    if (key === 'support') {
-        ok = await WhatsAppService.sendSupportLead(
-            phone, lead.customer_phone, lead.location || '', lead.product, lead.car_model, when, leadNumber, lead.id,
-        ).catch(() => false);
-    }
-    if (!ok) {
-        ok = await WhatsAppService.sendStoreLead(
-            phone, name, lead.customer_phone, lead.product, lead.car_model, when, leadNumber, lead.id,
-        ).catch(() => false);
-    }
+    // Support gets the same alert as a store.
+    const ok = await WhatsAppService.sendStoreLead(
+        phone, name, lead.customer_phone, lead.product, lead.car_model, when, leadNumber, lead.id,
+    ).catch(() => false);
     if (!ok) return 'failed';
 
     await db.execute(
