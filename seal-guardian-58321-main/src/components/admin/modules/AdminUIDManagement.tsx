@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 
 interface UIDRecord {
     uid: string;
@@ -602,7 +603,7 @@ export const AdminUIDManagement = ({ onBack }: UIDManagementProps) => {
                                                 {uid.customer_name ? (
                                                     <div className="flex flex-col">
                                                         <span className="font-semibold text-slate-700 truncate max-w-[120px]">{uid.customer_name}</span>
-                                                        <span className="text-[10px] text-slate-400 uppercase">{uid.registration_number}</span>
+                                                        {vehicleNumberOf(uid.registration_number) && <span className="text-[10px] text-slate-400 uppercase">{vehicleNumberOf(uid.registration_number)}</span>}
                                                     </div>
                                                 ) : (
                                                     <span className="text-slate-300">â€”</span>
@@ -685,7 +686,7 @@ export const AdminUIDManagement = ({ onBack }: UIDManagementProps) => {
                                             {uid.customer_name && (
                                                 <div className="flex flex-col mb-2 p-2 bg-slate-50 rounded-lg">
                                                     <span className="text-xs font-bold text-slate-600 truncate">{uid.customer_name}</span>
-                                                    <span className="text-[9px] text-slate-400 uppercase tracking-tight">{uid.registration_number}</span>
+                                                    {vehicleNumberOf(uid.registration_number) && <span className="text-[9px] text-slate-400 uppercase tracking-tight">{vehicleNumberOf(uid.registration_number)}</span>}
                                                 </div>
                                             )}
 
@@ -1037,10 +1038,12 @@ export const AdminUIDManagement = ({ onBack }: UIDManagementProps) => {
                                             </h4>
                                             <div className="space-y-2 pl-6 border-l-2 border-slate-100">
                                                 <div className="grid grid-cols-2 gap-4">
-                                                    <div>
-                                                        <p className="text-[10px] text-slate-400 font-bold uppercase">Reg. Number</p>
-                                                        <p className="text-sm font-black text-slate-700 uppercase tracking-wider">{selectedUID.registration_number}</p>
-                                                    </div>
+                                                    {vehicleNumberOf(selectedUID.registration_number) && (
+                                                        <div>
+                                                            <p className="text-[10px] text-slate-400 font-bold uppercase">Reg. Number</p>
+                                                            <p className="text-sm font-black text-slate-700 uppercase tracking-wider">{vehicleNumberOf(selectedUID.registration_number)}</p>
+                                                        </div>
+                                                    )}
                                                     <div>
                                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Year</p>
                                                         <p className="text-sm font-semibold text-slate-700">{selectedUID.car_year || 'â€”'}</p>

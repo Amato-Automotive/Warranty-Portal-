@@ -48,6 +48,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { getWarrantyFormComponent, getEditFormProps } from "@/lib/warrantyFormRegistry";
+import { warrantyVehicleNumber } from "@/lib/vehicleNumber";
 
 interface DashboardContext {
     activeModule: FmsModule;
@@ -622,12 +623,12 @@ const FranchiseDashboard = () => {
                     time: formatToIST(w.created_at),
                     action: w.status === 'validated' ? 'Warranty Approved' :
                         w.status === 'rejected' ? 'Needs Correction' : 'New Registration',
-                    sub: `${w.registration_number || 'N/A'} • ${toTitleCase(w.customer_name)}`,
+                    sub: [warrantyVehicleNumber(w), toTitleCase(w.customer_name)].filter(Boolean).join(' • '),
                     status: w.status === 'validated' ? 'success' :
                         w.status === 'rejected' ? 'warning' : 'primary',
                     // The home's recent-warranties table.
                     customer: toTitleCase(w.customer_name) || 'Customer',
-                    registration: w.registration_number || null,
+                    registration: warrantyVehicleNumber(w),
                     car: [w.car_make, w.car_model].filter(Boolean).join(' ') || null,
                     product: w.product_type || null,
                     created_at: w.created_at,

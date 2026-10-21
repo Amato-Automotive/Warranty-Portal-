@@ -29,6 +29,7 @@ import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Pencil, Save, X, Upload } from "lucide-react";
 import { WarrantyRemarks } from "@/components/admin/WarrantyRemarks";
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
     const R = 6371; // Earth's radius in km
@@ -740,18 +741,20 @@ export const QuickReviewPanel = ({
                                 </span>
                                 )}
                             </div>
-                            <div className="flex items-center gap-2 text-sm">
-                                <span className="text-slate-450 font-normal w-24 shrink-0">Reg No:</span>
-                                {isEditing ? (
-                                    <Input
-                                        value={editData.registration_number || ''}
-                                        onChange={e => setEditData({ ...editData, registration_number: e.target.value })}
-                                        className="h-8 text-sm font-mono uppercase bg-white"
-                                    />
-                                ) : (
-                                    <span className="font-mono font-bold text-slate-700 uppercase">{warranty.registration_number || productDetails.carRegistration || 'N/A'}</span>
-                                )}
-                            </div>
+                            {(isEditing || vehicleNumberOf(warranty.registration_number, productDetails.carRegistration)) && (
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="text-slate-450 font-normal w-24 shrink-0">Reg No:</span>
+                                    {isEditing ? (
+                                        <Input
+                                            value={editData.registration_number || ''}
+                                            onChange={e => setEditData({ ...editData, registration_number: e.target.value })}
+                                            className="h-8 text-sm font-mono uppercase bg-white"
+                                        />
+                                    ) : (
+                                        <span className="font-mono font-bold text-slate-700 uppercase">{vehicleNumberOf(warranty.registration_number, productDetails.carRegistration)}</span>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
 

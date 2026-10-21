@@ -14,6 +14,7 @@ import {
     ShieldCheck, PhoneCall, Truck, ShoppingCart, BookOpen, Image as ImageIcon, MessageSquareWarning,
     ArrowRight, CheckCircle2, Gift, Megaphone, ChevronDown, ChevronLeft, ChevronRight, Phone, HelpCircle,
 } from "lucide-react";
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 
 /**
  * The franchise's home (design "A · Workspace", agreed 7 Oct 2026, then made
@@ -402,7 +403,7 @@ export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts 
                         className="w-full flex items-center gap-3 min-h-12 py-2 text-left border-t border-slate-100 first:border-t-0 hover:text-orange-700">
                         <span className="flex-1 min-w-0">
                             <span className="block font-medium text-slate-900 truncate">{w.customer_name || t.customer}</span>
-                            <span className="block text-xs text-slate-500 truncate">{[w.registration_number, [w.car_make, w.car_model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
+                            <span className="block text-xs text-slate-500 truncate">{[vehicleNumberOf(w.registration_number), [w.car_make, w.car_model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
                         </span>
                         <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
                     </button>

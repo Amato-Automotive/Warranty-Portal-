@@ -4,8 +4,6 @@ import api, { getErrorMessage } from "@/lib/api";
 import {
   validateEmail,
   getPhoneError,
-  getVehicleRegError,
-  formatVehicleRegLive
 } from "@/lib/validation";
 import { getISTTodayISO, formatToISTDateISO } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -124,7 +122,6 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
   const uidScannerLastValueRef = useRef("");
   const [showExistingInvoice, setShowExistingInvoice] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
-  const [isBrandNew, setIsBrandNew] = useState(initialData?.registration_number === 'APPLIED-FOR');
   const [formData, setFormData] = useState(initialData ? {
     uid: initialData.product_details?.uid || "",
     customerName: initialData.customer_name || "",
@@ -136,7 +133,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
     purchaseDate: initialData.purchase_date ? formatToISTDateISO(initialData.purchase_date) : getISTTodayISO(),
     storeName: initialData.installer_name || "",
     manpowerId: initialData.manpower_id || "",
-    carReg: initialData.registration_number || "",
+    carReg: initialData.registration_number || "APPLIED-FOR",
     carYear: initialData.car_year || "",
     warrantyType: initialData.warranty_type || "1 Year",
     invoiceFile: null as File | null,
@@ -155,7 +152,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
     purchaseDate: getISTTodayISO(),
     storeName: "",
     manpowerId: "",
-    carReg: "",
+    carReg: "APPLIED-FOR",
     carYear: "",
     warrantyType: "1 Year",
     invoiceFile: null as File | null,
@@ -347,10 +344,6 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
         ...prev,
         storeName: storeDetails.store_name || "",
         storeEmail: storeDetails.store_email || "",
-        // The registration field is hidden on this flow, and the column is
-        // NOT NULL, so carry the same marker 1,601 existing seat cover
-        // warranties already use rather than leaving it blank.
-        carReg: prev.carReg || "APPLIED-FOR",
       }));
       if (installers) {
         setManpowerList(installers.filter((mp: any) => ['seat_cover', 'ppf_spf'].includes(mp.applicator_type)));
@@ -606,18 +599,6 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
         }
       }
 
-      // Standard vehicle registration number validation (Indian formats)
-      const regError = getVehicleRegError(formData.carReg);
-      if (regError) {
-        toast({
-          title: "Invalid Registration Format",
-          description: regError,
-          variant: "destructive",
-        });
-        setLoading(false);
-        return;
-      }
-
 
       // Validate mandatory files for new registration
       if (!warrantyId) {
@@ -862,33 +843,11 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
       // Reset UID validation status when value changes
       setUidStatus('idle');
       setUidMessage('');
-    } else if (name === 'carReg') {
-      processedValue = formatVehicleRegLive(value);
     } else if (name === 'customerEmail') {
       processedValue = value.trim().toLowerCase();
     }
 
     setFormData(prev => ({ ...prev, [name]: processedValue }));
-
-    // Real-time uniqueness check for Mobile number removed per requirements
-    // Real-time uniqueness check for Vehicle Registration
-    if (name === 'carReg' && processedValue.length >= 6 && processedValue !== 'APPLIED-FOR') {
-      // Small delay to let user finish typing
-      if (uidTimerRef.current) clearTimeout(uidTimerRef.current);
-      uidTimerRef.current = setTimeout(() => {
-        api.get(`/public/warranty/check-uniqueness?reg=${processedValue}&type=seat-cover`)
-          .then(res => {
-            if (!res.data.unique) {
-              toast({
-                title: "Vehicle Registered",
-                description: res.data.message,
-                variant: "destructive",
-              });
-            }
-          })
-          .catch(err => console.error("Uniqueness check failed", err));
-      }, 800);
-    }
 
     if (name === 'customerMobile' && processedValue.length === 10) {
       if (mobileTimerRef.current) clearTimeout(mobileTimerRef.current);
@@ -1672,80 +1631,10 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
           </CardContent>
         </Card>
 
-        {/* Hidden on the QR flow: a customer scanning in-store does not have
-            the registration to hand, and the card holds nothing else. The
-            value is set to APPLIED-FOR below — the column is NOT NULL and
-            1,601 existing seat cover warranties already use that. */}
-        {!storeKnown && (<>
-        {/* Section 3: Vehicle Details */}
-        <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm ring-1 ring-slate-100">
-          <div className="bg-gradient-to-r from-emerald-50 to-teal-50/30 px-4 sm:px-6 py-3 sm:py-4 border-b border-emerald-100 flex items-center gap-3 rounded-t-xl">
-            <div className="p-2 bg-white rounded-lg shadow-sm">
-              <Car className="h-5 w-5 text-emerald-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900">Vehicle Details</h3>
-              <p className="text-xs text-muted-foreground">Vehicle registration information</p>
-            </div>
-          </div>
-          <CardContent className="p-4 sm:p-6 md:p-8">
-            <div className="grid gap-4 sm:gap-6">
-              <div className="space-y-3">
-                <Label htmlFor="carReg" className="text-sm font-medium text-slate-700">
-                  Vehicle Registration Number <span className="text-destructive">*</span>
-                </Label>
-                
-                <div className="flex items-center space-x-2 pb-2">
-                  <input
-                    type="checkbox"
-                    id="isBrandNew"
-                    checked={isBrandNew}
-                    onChange={(e) => {
-                      setIsBrandNew(e.target.checked);
-                      if (e.target.checked) {
-                        setFormData(prev => ({ ...prev, carReg: 'APPLIED-FOR' }));
-                      } else {
-                        setFormData(prev => ({ ...prev, carReg: '' }));
-                      }
-                    }}
-                    className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
-                  />
-                  <Label htmlFor="isBrandNew" className="text-sm font-normal text-slate-600 cursor-pointer">
-                    Brand new car (No registration number yet)
-                  </Label>
-                </div>
-
-                {!isBrandNew && (
-                  <Input
-                    id="carReg"
-                    type="text"
-                    placeholder="Format: DL-01-AB-1234 / 26-BH-6045-F"
-                    value={formData.carReg}
-                    onChange={(e) => handleChange("carReg", e.target.value)}
-                    disabled={loading}
-                    required
-                    className={`bg-white ${formData.carReg
-                      ? getVehicleRegError(formData.carReg)
-                        ? 'border-red-400 focus-visible:ring-red-300'
-                        : 'border-green-400 focus-visible:ring-green-300'
-                      : 'border-slate-200'
-                      }`}
-                  />
-                )}
-                {!isBrandNew && formData.carReg && (
-                  <p className={`text-xs flex items-center gap-1 ${getVehicleRegError(formData.carReg) ? 'text-red-500' : 'text-green-600'
-                    }`}>
-                    {getVehicleRegError(formData.carReg)
-                      ? `⚠ ${getVehicleRegError(formData.carReg)}`
-                      : '✓ Valid registration format'
-                    }
-                  </p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        </>)}
+        {/* No vehicle registration on a seat cover warranty, on any route (owner,
+            21 Oct 2026; the QR page dropped it first). The column is NOT NULL,
+            so every new one is filed as APPLIED-FOR, as 1,601 earlier seat
+            cover warranties already were; a correction keeps what it had. */}
 
         {/* Section 4: Product & Warranty */}
         <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm ring-1 ring-slate-100">
@@ -2095,11 +1984,9 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
             ],
           },
           {
-            /* Only what the form asked: the QR page hides the registration
-               (it is filed as APPLIED-FOR), and the year is never asked. */
-            title: storeKnown ? "Purchase" : "Vehicle",
+            /* Only what the form asked: no registration, and the year is never asked. */
+            title: "Purchase",
             rows: [
-              ...(!storeKnown ? [["Registration no.", isBrandNew || formData.carReg === "APPLIED-FOR" ? "Applied for (new car)" : formData.carReg] as [string, string]] : []),
               ["Purchase date", formData.purchaseDate
                 ? new Date(`${formData.purchaseDate}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
                 : ""],

@@ -28,6 +28,7 @@ import {
     RotateCcw
 } from "lucide-react";
 import { WarrantyHistory } from "./WarrantyHistory";
+import { warrantyVehicleNumber } from "@/lib/vehicleNumber";
 
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
     const R = 6371; // Earth's radius in km
@@ -152,9 +153,11 @@ export const AdminWarrantyList = ({
                                         <p className="text-xs font-semibold text-slate-600 mt-1 flex items-center gap-1">
                                             <User className="h-3 w-3 text-slate-400 shrink-0" /> {warranty.customer_name}
                                         </p>
-                                        <p className="text-[10px] text-slate-400 mt-0.5">
-                                            Reg: <span className="font-bold text-slate-600 font-mono">{warranty.registration_number || 'N/A'}</span>
-                                        </p>
+                                        {warrantyVehicleNumber(warranty) && (
+                                            <p className="text-[10px] text-slate-400 mt-0.5">
+                                                Reg: <span className="font-bold text-slate-600 font-mono">{warrantyVehicleNumber(warranty)}</span>
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="flex flex-col items-end gap-1.5 shrink-0">
                                         <Badge variant={

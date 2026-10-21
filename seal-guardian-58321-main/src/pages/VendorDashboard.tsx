@@ -20,6 +20,7 @@ import { WarrantySpecSheet } from "@/components/warranty/WarrantySpecSheet";
 import { ProductCatalog } from "@/components/vendor/ProductCatalog";
 import VendorGrievances from "@/components/fms/VendorGrievances";
 import { displaySerial } from "@/lib/ppfRolls";
+import { vehicleNumberOf, warrantyVehicleNumber } from "@/lib/vehicleNumber";
 
 // WarrantyList Component - Modern card design matching Customer Dashboard
 const WarrantyList = ({ items, showReason = false, user, onEditWarranty, onVerify, onReject, isPendingVerification = false, onSelectWarranty }: {
@@ -92,7 +93,7 @@ const WarrantyList = ({ items, showReason = false, user, onEditWarranty, onVerif
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-0.5">
                                     <h4 className="font-semibold text-base truncate pr-2">
-                                        {warranty.registration_number || (typeof warranty.product_details === 'string' ? JSON.parse(warranty.product_details || '{}').carRegistration : warranty.product_details?.carRegistration) || 'N/A'}
+                                        {warrantyVehicleNumber(warranty) || warranty.customer_name || 'Warranty'}
                                     </h4>
                                 </div>
                                 <p className="text-xs text-slate-500 mt-1 mb-2 flex items-center flex-wrap gap-y-1">
@@ -409,7 +410,7 @@ const VendorDashboard = () => {
                     : (productDetails.serialNumber || 'N/A'),
                 'Vehicle': (w.car_make && String(w.car_make).toLowerCase() !== 'null' || w.car_model && String(w.car_model).toLowerCase() !== 'null') ? `${w.car_make || ''} ${w.car_model || ''} (${w.car_year || ''})`.trim() : 'N/A',
                 'Vehicle Colour': w.car_colour || '',
-                'Registration': w.registration_number || productDetails.carRegistration || w.car_reg || 'N/A',
+                'Registration': vehicleNumberOf(w.registration_number, productDetails.carRegistration, w.car_reg) || '',
                 'Status': w.status.toUpperCase(),
                 'Installer Name': productDetails.storeName || w.installer_name || 'N/A',
                 'Manpower': w.manpower_name || productDetails.manpowerName || 'N/A',

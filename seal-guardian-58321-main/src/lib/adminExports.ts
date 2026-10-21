@@ -1,5 +1,6 @@
 import { downloadCSV, formatToIST, getISTTodayISO } from "@/lib/utils";
 import { API_URL } from "@/lib/api";
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 
 /**
  * Available warranty export fields
@@ -55,7 +56,7 @@ export const formatWarrantyForExport = (w: any, selectedFields?: string[]) => {
         vehicleMake: w.car_make || 'N/A',
         vehicleModel: w.car_model || 'N/A',
         vehicleYear: w.car_year || 'N/A',
-        vehicleReg: w.registration_number || productDetails.carRegistration || 'N/A',
+        vehicleReg: vehicleNumberOf(w.registration_number, productDetails.carRegistration) || '',
         // The store it is filed under, with its city (franchises share names).
         installerStore: w.vendor_store_name
             ? `${w.vendor_store_name}${w.vendor_city ? ` - ${w.vendor_city}` : ''}`

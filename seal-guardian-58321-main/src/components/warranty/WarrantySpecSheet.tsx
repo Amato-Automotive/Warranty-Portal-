@@ -17,6 +17,7 @@ import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { displaySerial } from "@/lib/ppfRolls";
 import { WarrantyRemarks } from "@/components/admin/WarrantyRemarks";
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 
 interface WarrantySpecSheetProps {
     isOpen: boolean;
@@ -261,7 +262,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                                 </div>
                             </div>
                             <SheetTitle className="text-2xl font-bold tracking-tight text-foreground/90">
-                                {warranty.registration_number || productDetails.carRegistration || 'N/A'}
+                                {vehicleNumberOf(warranty.registration_number, productDetails.carRegistration) || warranty.customer_name || 'Warranty'}
                             </SheetTitle>
                             <SheetDescription className="text-muted-foreground font-medium">
                                 {(productName || '').replace(/-/g, ' ')} • {warranty.warranty_type} Warranty
@@ -298,7 +299,9 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                                 Vehicle & Product
                             </h4>
                             <div className="bg-white rounded-xl p-2 border border-orange-100 shadow-sm">
-                                <SpecRow label="Registration Number" value={warranty.registration_number || productDetails.carRegistration || "N/A"} mono editField="registration_number" />
+                                {(isEditing || vehicleNumberOf(warranty.registration_number, productDetails.carRegistration)) && (
+                                    <SpecRow label="Registration Number" value={vehicleNumberOf(warranty.registration_number, productDetails.carRegistration) || ""} mono editField="registration_number" />
+                                )}
                                 {(warranty.car_make && String(warranty.car_make).toLowerCase() !== 'null' || warranty.car_model && String(warranty.car_model).toLowerCase() !== 'null') && (
                                     <>
                                         <SpecRow label="Car Make" value={toTitleCase(warranty.car_make || '')} editField="car_make" />

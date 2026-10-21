@@ -44,6 +44,7 @@ import { cn, formatToIST, getWarrantyExpiration } from "@/lib/utils";
 import { format } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { Pagination } from "./Pagination";
+import { warrantyVehicleNumber } from "@/lib/vehicleNumber";
 
 interface WarrantyManagementProps {
     warranties: any[];
@@ -294,7 +295,7 @@ export const WarrantyManagement = ({
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 mb-0.5">
                                                     <h4 className="font-bold text-sm md:text-base text-slate-800 truncate pr-2 tracking-tight">
-                                                        {warranty.registration_number || (typeof warranty.product_details === 'string' ? JSON.parse(warranty.product_details || '{}').carRegistration : warranty.product_details?.carRegistration) || 'N/A'}
+                                                        {warrantyVehicleNumber(warranty) || toTitleCase(warranty.customer_name) || 'Warranty'}
                                                     </h4>
                                                 </div>
                                                 <div className="flex flex-col gap-1">
@@ -423,7 +424,7 @@ export const WarrantyManagement = ({
                                 <div className="relative flex items-start justify-between mb-6">
                                     <div className="flex-1 min-w-0 pr-4">
                                         <h4 className="font-bold text-lg text-slate-900 truncate leading-tight">
-                                            {warranty.registration_number || (typeof warranty.product_details === 'string' ? JSON.parse(warranty.product_details || '{}').carRegistration : warranty.product_details?.carRegistration) || 'N/A'}
+                                            {warrantyVehicleNumber(warranty) || toTitleCase(warranty.customer_name) || 'Warranty'}
                                         </h4>
 
                                         <div className="flex items-center gap-2 mt-2">

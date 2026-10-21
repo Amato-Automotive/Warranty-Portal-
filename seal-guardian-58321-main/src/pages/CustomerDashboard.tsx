@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/pagination";
 import { WarrantySpecSheet } from "@/components/warranty/WarrantySpecSheet";
 import { displaySerial } from "@/lib/ppfRolls";
+import { warrantyVehicleNumber } from "@/lib/vehicleNumber";
 
 const CustomerDashboard = () => {
     const { user, loading } = useAuth();
@@ -243,7 +244,7 @@ const CustomerDashboard = () => {
                                 <div className="relative flex items-start justify-between mb-5">
                                     <div className="flex-1 min-w-0 pr-4">
                                         <h4 className="font-bold text-lg text-slate-900 truncate leading-tight">
-                                            {warranty.registration_number || (typeof warranty.product_details === 'string' ? JSON.parse(warranty.product_details || '{}').carRegistration : warranty.product_details?.carRegistration) || 'N/A'}
+                                            {warrantyVehicleNumber(warranty) || (warranty.product_type === 'seat-cover' ? 'Seat Cover' : 'Paint Protection Film')}
                                         </h4>
                                         {warranty.product_type !== 'seat-cover' && (warranty.car_make || warranty.car_model) && (
                                             <p className="text-xs font-semibold text-slate-500 mt-1 uppercase tracking-wider">
@@ -370,7 +371,7 @@ const CustomerDashboard = () => {
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 mb-0.5">
                                         <h4 className="font-semibold text-base text-slate-800 truncate pr-2">
-                                            {warranty.registration_number || (typeof warranty.product_details === 'string' ? JSON.parse(warranty.product_details || '{}').carRegistration : warranty.product_details?.carRegistration) || 'N/A'}
+                                            {warrantyVehicleNumber(warranty) || (warranty.product_type === 'seat-cover' ? 'Seat Cover' : 'Paint Protection Film')}
                                         </h4>
                                         {warranty.status === 'validated' && (
                                             <Badge variant="outline" className={cn(
