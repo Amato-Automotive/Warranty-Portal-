@@ -586,8 +586,9 @@ class POSMController {
                 return res.status(403).json({ success: false, error: 'Access denied.' });
             }
 
+            // Without head office's internal notes, which the list used to carry.
             const requests = await posmRepository.getFranchiseRequests(vendor.id);
-            return res.json({ success: true, data: requests });
+            return res.json({ success: true, data: requests.map(({ internal_notes, ...r }) => r) });
 
         } catch (error: any) {
             console.error('Get franchise requests error:', error);
@@ -619,12 +620,12 @@ class POSMController {
                 }));
             }
 
-            // Head office's internal notes are theirs alone (agreed for ASMs, 8 Oct 2026).
+            // Head office's internal notes are theirs alone: never to the store or its ASM.
             const { internal_notes, ...visible } = access.request as any;
             return res.json({
                 success: true,
                 data: {
-                    ...(req.user?.role === 'asm' ? visible : access.request),
+                    ...(req.user?.role === 'admin' ? access.request : visible),
                     messages,
                     ...(limits ? { limits } : {}),
                     ...(req.user?.role === 'admin' ? { actions: actionsFor(access.request.status) } : {}),
