@@ -7,7 +7,7 @@ import { signalAdminAttentionOnSuccess as signalAttention } from '../services/ad
 
 const router = Router();
 
-const handleUpload = (req: Request, res: Response, next: NextFunction) => {
+export const handleUpload = (req: Request, res: Response, next: NextFunction) => {
     grievanceUpload.array('attachments', 3)(req, res, (err: any) => {
         if (err) {
             console.error('Grievance upload error:', err);

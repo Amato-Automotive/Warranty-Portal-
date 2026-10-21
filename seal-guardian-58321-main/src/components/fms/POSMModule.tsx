@@ -17,7 +17,7 @@ interface POSMRequest {
     id: number;
     ticket_id: string;
     requirement: string;
-    created_by_role?: 'franchise' | 'admin';
+    created_by_role?: 'franchise' | 'admin' | 'asm';
     created_by_name?: string | null;
     status: string;
     created_at: string;
@@ -31,7 +31,9 @@ interface POSMRequest {
 
 interface Message {
     id: number;
-    sender_role: 'admin' | 'franchise';
+    sender_role: 'admin' | 'franchise' | 'asm';
+    /** Who wrote it; shown for an ASM's message. */
+    sender_name?: string | null;
     message: string | null;
     attachments: string[] | null;
     created_at: string;
@@ -176,7 +178,7 @@ const POSMModule: React.FC = () => {
     const feed = useMemo(() => {
         if (!selected) return [];
         const steps = (selected.history?.length ? selected.history
-            : [{ action: 'sent', status: 'open', at: selected.created_at, by_role: selected.created_by_role === 'admin' ? 'admin' : 'franchise' } as HistoryEntry])
+            : [{ action: 'sent', status: 'open', at: selected.created_at, by_role: selected.created_by_role ?? 'franchise' } as HistoryEntry])
             .map(h => ({ at: h.at, h, m: null as Message | null }));
         return [...steps, ...messages.map(m => ({ at: m.created_at, h: null as HistoryEntry | null, m }))]
             .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
@@ -248,7 +250,7 @@ const POSMModule: React.FC = () => {
                                         <p className="text-[11px] text-gray-400">
                                             Sent {formatToIST(r.created_at)}
                                             {r.status === 'dispatched' && r.dispatch?.courier ? ` · ${r.dispatch.courier}${r.dispatch.tracking ? ` ${r.dispatch.tracking}` : ''}` : ''}
-                                            {r.created_by_role === 'admin' ? ' · added by Autoform' : ''}
+                                            {r.created_by_role === 'admin' ? ' · added by Autoform' : r.created_by_role === 'asm' ? ` · raised by ${r.created_by_name || 'your ASM'} (your ASM)` : ''}
                                         </p>
                                     </button>
                                 ))}
@@ -271,6 +273,9 @@ const POSMModule: React.FC = () => {
                                         </h2>
                                         {selected.created_by_role === 'admin' && (
                                             <p className="text-[11px] font-medium text-purple-600">Raised on your behalf by {selected.created_by_name || 'the Autoform team'}</p>
+                                        )}
+                                        {selected.created_by_role === 'asm' && (
+                                            <p className="text-[11px] font-medium text-sky-700">Raised for you by {selected.created_by_name || 'your ASM'} (your ASM)</p>
                                         )}
                                     </div>
                                 </div>
@@ -327,14 +332,16 @@ const POSMModule: React.FC = () => {
                                     ) : feed.map((f, k) => f.h ? (
                                         <p key={`s${k}`} className="text-center text-[11px] font-semibold text-gray-400">
                                             {formatToIST(f.h.at)} · {f.h.action === 'sent'
-                                                ? (f.h.by_role === 'admin' ? 'Raised for you by Autoform' : 'You sent the request')
+                                                ? (f.h.by_role === 'admin' ? 'Raised for you by Autoform'
+                                                    : f.h.by_role === 'asm' ? `Raised for you by ${f.h.by_name || 'your ASM'} (your ASM)` : 'You sent the request')
                                                 : f.h.action === 'received' ? 'You confirmed it arrived' : HISTORY_TEXT[f.h.action] ?? f.h.action}
                                             {f.h.note && f.h.action !== 'sent' && f.h.action !== 'reject' ? ` · ${f.h.note}` : ''}
                                         </p>
                                     ) : f.m && ((msg: Message) => (
                                         <div key={msg.id} className={cn("flex flex-col max-w-[85%]", msg.sender_role === 'franchise' ? "ml-auto items-end" : "mr-auto items-start")}>
                                             <div className={cn("px-3 py-2 rounded-2xl text-sm",
-                                                msg.sender_role === 'franchise' ? "bg-brand-orange text-white rounded-br-md" : "bg-gray-100 text-gray-800 rounded-bl-md")}>
+                                                msg.sender_role === 'franchise' ? "bg-brand-orange text-white rounded-br-md"
+                                                    : msg.sender_role === 'asm' ? "bg-sky-50 text-gray-800 rounded-bl-md" : "bg-gray-100 text-gray-800 rounded-bl-md")}>
                                                 {msg.message && <p className="whitespace-pre-wrap">{msg.message}</p>}
                                                 {msg.attachments?.length ? (
                                                     <div className="flex flex-wrap gap-1.5 mt-1.5">
@@ -348,7 +355,7 @@ const POSMModule: React.FC = () => {
                                                     </div>
                                                 ) : null}
                                             </div>
-                                            <span className="text-[10px] text-gray-400 mt-0.5">{msg.sender_role === 'franchise' ? 'You' : 'Autoform team'} · {formatToIST(msg.created_at)}</span>
+                                            <span className="text-[10px] text-gray-400 mt-0.5">{msg.sender_role === 'franchise' ? 'You' : msg.sender_role === 'asm' ? `${msg.sender_name || 'Your ASM'} (your ASM)` : 'Autoform team'} · {formatToIST(msg.created_at)}</span>
                                         </div>
                                     ))(f.m))}
                                 </div>

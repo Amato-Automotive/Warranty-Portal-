@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { AsmAvatar } from "@/components/asm/AsmProfile";
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
@@ -32,6 +34,8 @@ interface Asm {
     email: string | null;
     is_active: number;
     profile_id: string | null;
+    /** Set by the ASM from their own profile. */
+    photo_url: string | null;
     area_count: number;
     lead_count: number;
     store_count: number;
@@ -329,6 +333,8 @@ export const AdminAsmManagement = () => {
                         <Card key={asm.id} className="rounded-2xl border-orange-100 shadow-sm">
                             <CardContent className="p-5">
                                 <div className="flex flex-wrap items-start justify-between gap-4">
+                                    <div className="min-w-0 flex items-start gap-3">
+                                    <AsmAvatar name={asm.name} photoUrl={asm.photo_url} className={cn("h-11 w-11 shrink-0 rounded-xl text-sm", !asm.is_active && "opacity-50 grayscale")} />
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <p className="font-black text-slate-800">{asm.name}</p>
@@ -355,6 +361,7 @@ export const AdminAsmManagement = () => {
                                             <span>·</span>
                                             <span className="tabular-nums">{asm.area_count} area{Number(asm.area_count) === 1 ? "" : "s"}</span>
                                         </div>
+                                    </div>
                                     </div>
 
                                     <div className="flex items-center gap-1.5 shrink-0">

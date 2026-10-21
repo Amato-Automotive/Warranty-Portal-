@@ -3,6 +3,7 @@ import db, { getISTTimestamp } from '../config/database.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { EmailService } from '../services/email.service.js';
 import { NotificationService } from '../services/notification.service.js';
+import { asmStore, asmOfProfile } from '../services/asmStores.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { resolveCategoryAssignee } from './grievanceCategory.controller.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -106,6 +107,15 @@ class GrievanceController {
             return grievance.customer_id === user.id
                 ? { authorized: true, grievance }
                 : { authorized: false, reason: 'forbidden' };
+        }
+
+        // An ASM reaches both kinds of grievance of the stores under them:
+        // customers' complaints about the store and the ones the store raised.
+        // Anything else reads as missing.
+        if (user.role === 'asm') {
+            const ofStore = (await asmStore(user.id, grievance.franchise_id ?? ''))
+                || (grievance.source_type === 'franchise' && await asmStore(user.id, grievance.customer_id ?? ''));
+            return ofStore ? { authorized: true, grievance } : { authorized: false, reason: 'not_found' };
         }
 
         if (user.role === 'vendor') {
@@ -356,14 +366,21 @@ class GrievanceController {
 
             const { department, departmentDetails, category, subject, description, franchiseId } = req.body;
 
-            // Only an admin may name a different store; a vendor session is
-            // always scoped to its own, so it can never target another one.
+            // Only an admin or the store's ASM may name a store; a vendor
+            // session is always scoped to its own, so it can never target
+            // another one. An ASM is held to their own stores below.
             const actingAsAdmin = req.user?.role === 'admin';
-            if (franchiseId && !actingAsAdmin) {
+            const actingAsAsm = req.user?.role === 'asm';
+            const onBehalf = actingAsAdmin || actingAsAsm;
+            if (franchiseId && !onBehalf) {
                 return res.status(403).json({ success: false, error: 'Access denied.' });
             }
-            if (actingAsAdmin && !franchiseId) {
+            if (onBehalf && !franchiseId) {
                 return res.status(400).json({ success: false, error: 'Choose the franchise this grievance is for' });
+            }
+            const asmOwn = actingAsAsm ? await asmStore(userId, String(franchiseId)) : null;
+            if (actingAsAsm && !asmOwn) {
+                return res.status(404).json({ success: false, error: 'Store not found' });
             }
 
             // Get uploaded files from multer (Cloudinary)
@@ -389,10 +406,10 @@ class GrievanceController {
             // Get franchise details. For an admin the store is named explicitly,
             // and either id space is accepted since the admin vendor list returns
             // profiles.id while vendor_details has its own id.
-            const [vendorRows]: any = actingAsAdmin
+            const [vendorRows]: any = onBehalf
                 ? await db.execute(
                     'SELECT id, store_name, store_email as email, user_id FROM vendor_details WHERE id = ? OR user_id = ? LIMIT 1',
-                    [franchiseId, franchiseId]
+                    [asmOwn ? asmOwn.id : franchiseId, asmOwn ? asmOwn.id : franchiseId]
                 )
                 : await db.execute(
                     'SELECT id, store_name, store_email as email, user_id FROM vendor_details WHERE user_id = ?',
@@ -421,8 +438,8 @@ class GrievanceController {
                 VALUES (?, ?, 'franchise', ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?)`,
                 [
                     ticketId,
-                    actingAsAdmin ? (vendor.user_id || userId) : userId,
-                    actingAsAdmin ? 'admin' : 'franchise',
+                    onBehalf ? (vendor.user_id || userId) : userId,
+                    actingAsAdmin ? 'admin' : actingAsAsm ? 'asm' : 'franchise',
                     userId,
                     department ? department.toLowerCase() : null,
                     departmentDetails || null,
@@ -504,11 +521,24 @@ class GrievanceController {
             // failed into the catch below, so no admin was ever told about a
             // franchise grievance. It also bypassed the socket. 'warranty' is
             // what the customer-grievance path uses.
+            if (actingAsAsm && vendor.user_id) {
+                try {
+                    await NotificationService.notify(vendor.user_id, {
+                        title: `Grievance ${ticketId} raised for you`,
+                        message: `${asmOwn!.asm_name} (your ASM) raised it: ${String(subject).slice(0, 140)}`,
+                        type: 'warranty',
+                    });
+                } catch (notifError) {
+                    console.error('Failed to tell the store about its ASM grievance:', notifError);
+                }
+            }
             if (!actingAsAdmin) {
                 try {
                     await NotificationService.broadcast({
                         title: `🏪 Franchise Grievance: ${ticketId}`,
-                        message: `Franchise "${vendor.store_name}" submitted a grievance to ${department}. Subject: ${subject}`,
+                        message: actingAsAsm
+                            ? `${asmOwn!.asm_name} (ASM) raised a grievance for "${vendor.store_name}". Subject: ${subject}`
+                            : `Franchise "${vendor.store_name}" submitted a grievance to ${department}. Subject: ${subject}`,
                         type: 'warranty',
                         link: `/admin/grievances/${ticketId}`,
                         targetRole: 'admin'
@@ -535,9 +565,18 @@ class GrievanceController {
                 console.error('Failed to send franchise grievance confirmation email:', emailError);
             }
 
+            if (actingAsAsm) {
+                await ActivityLogService.log({
+                    adminId: userId, adminName: asmOwn!.asm_name, adminEmail: req.user?.email,
+                    actionType: 'CREATE_GRIEVANCE_BY_ASM', targetType: 'GRIEVANCE', targetId: String(newGrievanceId),
+                    targetName: vendor.store_name, details: { ticketId, franchiseId: vendor.id, category },
+                    ipAddress: req.ip || req.socket?.remoteAddress,
+                });
+            }
+
             return res.status(201).json({
                 success: true,
-                message: 'Grievance submitted successfully',
+                message: onBehalf ? `Grievance raised for ${vendor.store_name}` : 'Grievance submitted successfully',
                 data: { ticketId }
             });
 
@@ -581,8 +620,10 @@ class GrievanceController {
                         WHEN g.department = 'distributor' THEN CONCAT('Distributor: ', COALESCE(g.department_details, 'N/A'))
                         WHEN g.department = 'asm' THEN CONCAT('ASM: ', COALESCE(g.department_details, 'N/A'))
                         ELSE g.department
-                    END as department_display
+                    END as department_display,
+                    creator.name as created_by_name
                 FROM grievances g
+                LEFT JOIN profiles creator ON creator.id = g.created_by
                 WHERE g.customer_id = ? AND g.source_type = 'franchise'
                 ORDER BY g.created_at DESC
                 LIMIT ? OFFSET ?`,
@@ -773,10 +814,12 @@ class GrievanceController {
                 p.phone_number as customer_phone,
                 vd.store_name as franchise_name,
                 vd.address as franchise_address,
-                vd.city as franchise_city
+                vd.city as franchise_city,
+                creator.name as created_by_name
          FROM grievances g
          LEFT JOIN profiles p ON g.customer_id = p.id
          LEFT JOIN vendor_details vd ON g.franchise_id = vd.id
+         LEFT JOIN profiles creator ON creator.id = g.created_by
          WHERE g.id = ?`,
                 [id]
             );
@@ -977,6 +1020,10 @@ class GrievanceController {
                 });
             }
 
+            if (userRole === 'asm') {
+                return this.addAsmRemark(req, res, access.grievance, String(remarks));
+            }
+
             let field: string;
             if (userRole === 'admin') {
                 field = 'admin_remarks';
@@ -1055,6 +1102,41 @@ class GrievanceController {
                 error: 'Failed to add remarks'
             });
         }
+    }
+
+    /**
+     * An ASM's reply on a grievance their store raised. Kept in the remarks
+     * history under the ASM's own name; the store's and head office's latest
+     * remarks (franchise_remarks / admin_remarks) are theirs and stay as they
+     * are. Not on a customer's complaint: that reply would reach the customer
+     * as if from the store, so the store answers its own customers.
+     */
+    private async addAsmRemark(req: AuthRequest, res: Response, grievance: any, remark: string) {
+        if (grievance.source_type !== 'franchise') {
+            return res.status(403).json({ success: false, error: "Only the store can reply on a customer's complaint" });
+        }
+        const text = remark.trim().slice(0, 2000);
+        if (!text) return res.status(400).json({ success: false, error: 'Remarks are required' });
+        const asm = await asmOfProfile(req.user!.id);
+        if (!asm) return res.status(403).json({ success: false, error: 'Your ASM account was not found' });
+
+        await db.execute(
+            `INSERT INTO grievance_remarks (grievance_id, added_by, added_by_name, added_by_id, remark)
+             VALUES (?, 'asm', ?, ?, ?)`,
+            [grievance.id, asm.name, req.user!.id, text]
+        );
+        try {
+            // customer_id on a store-raised grievance is the store's own login.
+            await NotificationService.notify(grievance.customer_id, {
+                title: `Update on Grievance: ${grievance.ticket_id}`,
+                message: `${asm.name} (your ASM) added a remark to your ticket.`,
+                type: 'warranty',
+                link: `/grievance/view/${grievance.id}`
+            });
+        } catch (notifError) {
+            console.error('Failed to notify the store of the ASM remark:', notifError);
+        }
+        return res.json({ success: true, message: 'Remark added' });
     }
 
     /**

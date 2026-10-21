@@ -6,7 +6,7 @@ export interface POSMRequest {
     ticket_id: string;
     franchise_id: string;
     requirement: string;
-    created_by_role?: 'franchise' | 'admin';
+    created_by_role?: 'franchise' | 'admin' | 'asm';
     created_by?: string | null;
     status: 'open' | 'under_review' | 'approved' | 'in_production' | 'pending' | 'dispatched' | 'delivered' | 'closed' | 'rejected';
     internal_notes?: string | null;
@@ -26,7 +26,7 @@ export interface POSMMessage {
     id: number;
     request_id: number;
     sender_id: string;
-    sender_role: 'admin' | 'franchise';
+    sender_role: 'admin' | 'franchise' | 'asm';
     message: string | null;
     attachments: any | null; // JSON string or parsed object
     created_at?: Date;
@@ -101,7 +101,10 @@ export class POSMRepository extends BaseRepository<POSMRequest> {
      */
     async getMessages(requestId: number, connection?: PoolConnection): Promise<POSMMessage[]> {
         const rows = await this.query<RowDataPacket[]>(
-            `SELECT * FROM posm_messages WHERE request_id = ? ORDER BY created_at ASC`,
+            // sender_name labels an ASM's message with who wrote it.
+            `SELECT m.*, sender.name AS sender_name FROM posm_messages m
+             LEFT JOIN profiles sender ON sender.id = m.sender_id
+             WHERE m.request_id = ? ORDER BY m.created_at ASC`,
             [requestId],
             connection
         );

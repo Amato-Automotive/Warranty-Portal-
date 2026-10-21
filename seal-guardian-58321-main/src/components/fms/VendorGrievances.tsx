@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import api, { getErrorMessage } from "@/lib/api";
 import { formatToIST, cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { GrievanceForm, grievancePayload, type GrievanceDraft } from "@/components/grievance/GrievanceForm";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,8 +10,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, RefreshCw, MessageSquare, AlertCircle, CheckCircle, Clock, Users, Building2, Package, Receipt, Store, Wrench, ShieldCheck, HelpCircle, Paperclip, Plus, X, Upload, Factory, Truck, UserCheck, Eye, Box, Monitor } from "lucide-react";
-import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
-import { compressVideo, isCompressibleVideo } from "@/lib/videoCompression";
 import { Pagination } from "./Pagination";
 import { WarrantySpecSheet } from "@/components/warranty/WarrantySpecSheet";
 
@@ -28,6 +27,8 @@ interface Grievance {
     status: string;
     franchise_remarks: string | null;
     admin_remarks: string | null;
+    created_by_role?: string;
+    created_by_name?: string | null;
     customer_rating: number | null;
     created_at: string;
     resolved_at: string | null;
@@ -41,7 +42,7 @@ interface Grievance {
 interface GrievanceRemark {
     id: number;
     grievance_id: number;
-    added_by: 'franchise' | 'admin';
+    added_by: 'franchise' | 'admin' | 'asm' | 'assignee';
     added_by_name: string;
     added_by_id: string;
     remark: string;
@@ -72,14 +73,6 @@ const STATUS_CONFIG: Record<string, { color: string; icon: any; label: string }>
     rejected: { color: "bg-red-500", icon: AlertCircle, label: "Action Required" },
 };
 
-/** Matches the server's grievanceUpload limit; a larger file is rejected there. */
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-
-const formatFileSize = (bytes: number) =>
-    bytes >= 1024 * 1024
-        ? `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-        : `${Math.round(bytes / 1024)}KB`;
-
 /**
  * Fallback only. Categories are managed by an admin and fetched below; this
  * list keeps the form usable if that request fails, rather than showing a store
@@ -109,7 +102,6 @@ const VendorGrievances = () => {
     const [myGrievances, setMyGrievances] = useState<any[]>([]);
     const [loadingMyGrievances, setLoadingMyGrievances] = useState(false);
     const [showNewGrievanceForm, setShowNewGrievanceForm] = useState(false);
-    const [submitting, setSubmitting] = useState(false);
 
     // Warranty View State
     const [viewingWarranty, setViewingWarranty] = useState<any>(null);
@@ -122,10 +114,7 @@ const VendorGrievances = () => {
     const [customerPagination, setCustomerPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, limit: 15 });
     const [myGrievancePagination, setMyGrievancePagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, limit: 15 });
 
-    // Form state
-    const [department, setDepartment] = useState("");
-    const [departmentDetails, setDepartmentDetails] = useState("");
-    const [category, setCategory] = useState("");
+    // Category labels for the list; the form loads its own.
     const [categories, setCategories] = useState(FALLBACK_CATEGORIES);
 
     // Only the active ones — a retired category stays on old grievances but
@@ -139,12 +128,6 @@ const VendorGrievances = () => {
             })
             .catch(() => { /* keep the fallback */ });
     }, []);
-    const [subject, setSubject] = useState("");
-    const [description, setDescription] = useState("");
-    const [attachment1, setAttachment1] = useState<File | null>(null);
-    const [attachment2, setAttachment2] = useState<File | null>(null);
-    const [attachment3, setAttachment3] = useState<File | null>(null);
-    const [compressing, setCompressing] = useState(false);
 
     const fetchGrievances = async (page = 1, currentLimit = customerLimit) => {
         setLoading(true);
@@ -205,124 +188,18 @@ const VendorGrievances = () => {
         fetchMyGrievances();
     }, []);
 
-    const handleAttachmentChange = async (
-        e: React.ChangeEvent<HTMLInputElement>,
-        setter: React.Dispatch<React.SetStateAction<File | null>>
-    ) => {
-        if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0];
-
-            if (isCompressibleImage(file)) {
-                setCompressing(true);
-                try {
-                    const compressed = await compressImage(file);
-                    setter(compressed);
-                    toast({ title: "Image Compressed", description: "Image optimized for upload." });
-                } catch (error) {
-                    console.error("Compression failed", error);
-                    setter(file); // Fallback
-                } finally {
-                    setCompressing(false);
-                }
-                return;
-            }
-
-            if (isCompressibleVideo(file)) {
-                setCompressing(true);
-                try {
-                    const compressed = await compressVideo(file);
-                    // Re-encoding runs the clip through in real time, so a video
-                    // already small enough comes back untouched — say so rather
-                    // than claiming a compression that did not happen.
-                    if (compressed.size < file.size) {
-                        const saved = Math.round((1 - compressed.size / file.size) * 100);
-                        toast({
-                            title: "Video compressed",
-                            description: `${formatFileSize(file.size)} → ${formatFileSize(compressed.size)} (${saved}% smaller)`,
-                        });
-                    }
-                    if (compressed.size > MAX_ATTACHMENT_BYTES) {
-                        toast({
-                            title: "Video too large",
-                            description: `Still ${formatFileSize(compressed.size)} after compressing. The limit is ${formatFileSize(MAX_ATTACHMENT_BYTES)} — please trim the clip.`,
-                            variant: "destructive",
-                        });
-                        e.target.value = "";
-                        return;
-                    }
-                    setter(compressed);
-                } catch (error) {
-                    console.error("Video compression failed", error);
-                    setter(file);
-                } finally {
-                    setCompressing(false);
-                }
-                return;
-            }
-
-            // Anything else (a PDF, say) goes straight through, size permitting.
-            if (file.size > MAX_ATTACHMENT_BYTES) {
-                toast({
-                    title: "File too large",
-                    description: `${formatFileSize(file.size)} exceeds the ${formatFileSize(MAX_ATTACHMENT_BYTES)} limit.`,
-                    variant: "destructive",
-                });
-                e.target.value = "";
-                return;
-            }
-            setter(file);
-        }
-    };
-
-    const handleSubmitGrievance = async () => {
-        if (!category || !subject.trim() || !description.trim()) {
-            toast({
-                title: "Missing Fields",
-                description: "Please fill in all required fields",
-                variant: "destructive"
-            });
-            return;
-        }
-
-        setSubmitting(true);
+    const handleSubmitGrievance = async (draft: GrievanceDraft) => {
         try {
-            const hasFiles = attachment1 || attachment2 || attachment3;
-            let response;
-
-            if (hasFiles) {
-                // Use FormData only when files are attached
-                const formData = new FormData();
-                formData.append('category', category);
-                formData.append('subject', subject);
-                formData.append('description', description);
-                if (attachment1) formData.append('attachments', attachment1);
-                if (attachment2) formData.append('attachments', attachment2);
-                if (attachment3) formData.append('attachments', attachment3);
-                response = await api.post('/grievance/franchise', formData);
-            } else {
-                // Send as JSON when no files — avoids all multipart/Content-Type issues
-                response = await api.post('/grievance/franchise', { category, subject, description });
-            }
-
-            if (response.data.success) {
-                toast({
-                    title: "Grievance Submitted",
-                    description: "Your grievance has been submitted successfully.",
-                    className: "bg-green-500 text-white"
-                });
-                setShowNewGrievanceForm(false);
-                // Reset form
-                setDepartment("");
-                setDepartmentDetails("");
-                setCategory("");
-                setSubject("");
-                setDescription("");
-                setAttachment1(null);
-                setAttachment2(null);
-                setAttachment3(null);
-                // Refresh list
-                fetchMyGrievances();
-            }
+            const response = await api.post('/grievance/franchise', grievancePayload(draft));
+            if (!response.data.success) return false;
+            toast({
+                title: "Grievance Submitted",
+                description: "Your grievance has been submitted successfully.",
+                className: "bg-green-500 text-white"
+            });
+            setShowNewGrievanceForm(false);
+            fetchMyGrievances();
+            return true;
         } catch (error: any) {
             console.error("Submit grievance error:", error);
             toast({
@@ -330,8 +207,7 @@ const VendorGrievances = () => {
                 description: getErrorMessage(error, "Failed to submit grievance"),
                 variant: "destructive"
             });
-        } finally {
-            setSubmitting(false);
+            return false;
         }
     };
 
@@ -454,6 +330,11 @@ const VendorGrievances = () => {
                                             <Badge variant="outline" className={`${STATUS_CONFIG[g.status]?.color?.replace('bg-', 'text-')} border-0 bg-transparent font-black tracking-widest text-[8px] md:text-[10px] uppercase pl-0`}>
                                                 • {STATUS_CONFIG[g.status]?.label}
                                             </Badge>
+                                            {g.created_by_role === 'asm' && (
+                                                <span className="text-[8px] md:text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded-md">
+                                                    Raised by {g.created_by_name || 'your ASM'} (your ASM)
+                                                </span>
+                                            )}
 
 
                                         </div>
@@ -497,133 +378,11 @@ const VendorGrievances = () => {
                             </DialogDescription>
                         </DialogHeader>
 
-                        <div className="space-y-5 p-6">
-                            {/* Category */}
-                            <div>
-                                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 block">Category <span className="text-red-500">*</span></label>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                    {categories.map((cat) => (
-                                        <div
-                                            key={cat.value}
-                                            onClick={() => setCategory(cat.value)}
-                                            className={cn(
-                                                "cursor-pointer rounded-xl border-2 px-3 py-3 text-xs md:text-sm text-center font-bold transition-all hover:shadow-sm",
-                                                category === cat.value
-                                                    ? "border-orange-500 bg-orange-50 text-orange-600 ring-1 ring-orange-500/20"
-                                                    : "text-slate-600 border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
-                                            )}
-                                        >
-                                            {cat.label}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Subject */}
-                            <div>
-                                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">Subject <span className="text-red-500">*</span></label>
-                                <input
-                                    type="text"
-                                    className="flex h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-4 py-2 text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 transition-all"
-                                    placeholder="Brief title of the issue"
-                                    value={subject}
-                                    onChange={(e) => setSubject(e.target.value)}
-                                />
-                            </div>
-
-                            {/* Description */}
-                            <div>
-                                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">Description <span className="text-red-500">*</span></label>
-                                <Textarea
-                                    value={description}
-                                    onChange={(e: any) => setDescription(e.target.value)}
-                                    placeholder="Detailed description of the issue..."
-                                    rows={4}
-                                    className="rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-4 py-3 text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 transition-all resize-none"
-                                />
-                            </div>
-
-                            {/* Attachments */}
-                            <div>
-                                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 block flex items-center gap-2">
-                                    <Paperclip className="h-4 w-4" />
-                                    Attachments (Optional - Max 3, images or video)
-                                </label>
-                                <div className="grid grid-cols-3 gap-3">
-                                    {[
-                                        { file: attachment1, setter: setAttachment1, id: 1 },
-                                        { file: attachment2, setter: setAttachment2, id: 2 },
-                                        { file: attachment3, setter: setAttachment3, id: 3 }
-                                    ].map((slot) => (
-                                        <div key={slot.id} className="relative">
-                                            <input
-                                                type="file"
-                                                id={`attachment-${slot.id}`}
-                                                className="hidden"
-                                                accept="image/*,video/*"
-                                                onChange={(e) => handleAttachmentChange(e, slot.setter)}
-                                            />
-                                            <label
-                                                htmlFor={`attachment-${slot.id}`}
-                                                className={cn(
-                                                    "flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-4 h-28 cursor-pointer transition-all",
-                                                    slot.file
-                                                        ? "border-orange-400 bg-orange-50"
-                                                        : "border-slate-200 hover:border-orange-300 hover:bg-orange-50/30"
-                                                )}
-                                            >
-                                                {slot.file ? (
-                                                    <>
-                                                        <CheckCircle className="h-7 w-7 text-orange-500 mb-1" />
-                                                        <span className="text-[10px] text-orange-600 font-bold truncate max-w-full px-1 text-center">
-                                                            {slot.file.name.length > 12 ? slot.file.name.substring(0, 12) + '...' : slot.file.name}
-                                                        </span>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Upload className="h-6 w-6 text-slate-400 mb-1" />
-                                                        <span className="text-[10px] text-slate-400 font-medium">Upload</span>
-                                                    </>
-                                                )}
-                                            </label>
-                                            {slot.file && (
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.preventDefault();
-                                                        slot.setter(null);
-                                                    }}
-                                                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg hover:bg-red-600 transition-colors"
-                                                >
-                                                    <X className="h-3 w-3" />
-                                                </button>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                                <p className="text-[10px] text-slate-400 mt-2 text-center">
-                                    Supported: JPG, PNG, JPEG
-                                </p>
-                            </div>
-
-                            <div className="pt-2">
-                                <Button
-                                    onClick={handleSubmitGrievance}
-                                    disabled={submitting || compressing}
-                                    className="w-full h-12 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black uppercase tracking-widest shadow-xl shadow-slate-900/20 transition-all hover:translate-y-[-1px] active:translate-y-[0px]"
-                                >
-                                    {submitting || compressing ? (
-                                        <>
-                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                            {compressing ? "Compressing..." : "Submitting..."}
-                                        </>
-                                    ) : (
-                                        "Submit Grievance"
-                                    )}
-                                </Button>
-                                <p className="text-[10px] text-center text-slate-400 mt-3">
-                                    Your grievance will be sent to the selected department and tracked by admin.
-                                </p>
-                            </div>
+                        <div className="p-6">
+                            <GrievanceForm
+                                onSubmit={handleSubmitGrievance}
+                                footnote="Your grievance will be sent to the selected department and tracked by admin."
+                            />
                         </div>
                     </DialogContent>
                 </Dialog>
@@ -877,14 +636,17 @@ const VendorGrievances = () => {
                                                     "p-4 rounded-2xl border transition-all",
                                                     remark.added_by === 'admin'
                                                         ? "bg-blue-50/30 border-blue-100 ml-0 mr-8"
-                                                        : "bg-orange-50/30 border-orange-100 ml-8 mr-0"
+                                                        : remark.added_by === 'asm'
+                                                            ? "bg-sky-50/40 border-sky-100 ml-0 mr-8"
+                                                            : "bg-orange-50/30 border-orange-100 ml-8 mr-0"
                                                 )}>
                                                     <div className="flex items-center justify-between mb-2">
                                                         <span className={cn(
                                                             "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
-                                                            remark.added_by === 'admin' ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"
+                                                            remark.added_by === 'admin' ? "bg-blue-100 text-blue-700"
+                                                                : remark.added_by === 'asm' ? "bg-sky-100 text-sky-700" : "bg-orange-100 text-orange-700"
                                                         )}>
-                                                            {remark.added_by_name} ({remark.added_by})
+                                                            {remark.added_by_name} ({remark.added_by === 'asm' ? 'your ASM' : remark.added_by})
                                                         </span>
                                                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
                                                             {formatToIST(remark.created_at)}

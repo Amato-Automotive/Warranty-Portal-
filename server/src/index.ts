@@ -248,6 +248,37 @@ async function runMigrations() {
       console.log('✅ Migration: Added profile_id to asms.');
     }
 
+    // An ASM raises POSM requests and franchise grievances for their stores and
+    // replies on them, recorded as 'asm'. These four columns are ENUMs in
+    // production; the value is appended to the live definition, as above.
+    for (const [table, column] of [
+      ['posm_requests', 'created_by_role'],
+      ['posm_messages', 'sender_role'],
+      ['grievances', 'created_by_role'],
+      ['grievance_remarks', 'added_by'],
+    ]) {
+      const [col]: any = await pool.query(
+        `SELECT COLUMN_TYPE AS type, IS_NULLABLE AS nullable, COLUMN_DEFAULT AS def FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [table, column]
+      );
+      const type: string = col[0]?.type || '';
+      if (type.startsWith('enum(') && !type.includes("'asm'")) {
+        const def = col[0].def != null ? ` DEFAULT ${pool.escape(col[0].def)}` : '';
+        await pool.query(
+          `ALTER TABLE ${table} MODIFY ${column} ${type.slice(0, -1)},'asm') ${col[0].nullable === 'YES' ? 'NULL' : 'NOT NULL'}${def}`
+        );
+        console.log(`✅ Migration: ${table}.${column} now accepts 'asm'.`);
+      }
+    }
+
+    // The photo an ASM puts on their own profile. NULL shows initials.
+    const [asmPhotoCol]: any = await pool.query("SHOW COLUMNS FROM asms LIKE 'photo_url'");
+    if (asmPhotoCol.length === 0) {
+      await pool.query('ALTER TABLE asms ADD COLUMN photo_url VARCHAR(500) NULL');
+      console.log('✅ Migration: Added photo_url to asms.');
+    }
+
     // The ASM a franchise or distributor reports to. Set by an admin from the
     // franchise's screen; NULL until then. Typed and collated exactly like
     // asms.id, read from the live column, since vendor_details is on the older

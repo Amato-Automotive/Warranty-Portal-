@@ -53,6 +53,22 @@ export class GrievanceCategoryController {
         }
     }
 
+    /**
+     * The active categories as a store's form shows them, for the ASM portal.
+     * Names only: who each desk routes to is head office's business.
+     */
+    static async listForForm(_req: AuthRequest, res: Response) {
+        try {
+            const [rows]: any = await db.execute(
+                `SELECT value, label FROM grievance_categories WHERE is_active = 1 ORDER BY sort_order ASC, label ASC`
+            );
+            res.json({ success: true, categories: rows });
+        } catch (error: any) {
+            console.error('List grievance categories for form error:', error);
+            res.status(500).json({ error: 'Failed to load categories' });
+        }
+    }
+
     static async create(req: AuthRequest, res: Response) {
         try {
             const b = req.body || {};

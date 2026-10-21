@@ -10,11 +10,16 @@ import {
     type PosmLine, type PosmCatalog, type Usage,
 } from '../services/posmCatalog.js';
 import { nextStatus, actionsFor, ACTION_TEXT, type HistoryEntry, type PosmAction } from '../services/posmFlow.js';
+import { asmStore } from '../services/asmStores.js';
+
+/** Who the signed-in user is on a ticket: the store, head office or the store's ASM. */
+const roleOf = (req: AuthRequest): 'admin' | 'asm' | 'franchise' =>
+    req.user?.role === 'admin' ? 'admin' : req.user?.role === 'asm' ? 'asm' : 'franchise';
 
 /** A step for the timeline, by whoever is signed in. */
 const step = (req: AuthRequest, e: Omit<HistoryEntry, 'at' | 'by_role' | 'by' | 'by_name'>): HistoryEntry => ({
     ...e, at: new Date().toISOString(),
-    by_role: req.user?.role === 'admin' ? 'admin' : 'franchise',
+    by_role: roleOf(req),
     by: req.user?.id ?? null, by_name: (req.user as any)?.name ?? null,
 });
 
@@ -64,6 +69,14 @@ class POSMController {
         const userId = req.user?.id;
         if (!userId) {
             return { error: { status: 401, body: { success: false, error: 'Unauthorized' } } };
+        }
+
+        // An ASM reaches the tickets of the stores under them, and no others.
+        // Another ASM's ticket reads as missing, as their stores do.
+        if (req.user?.role === 'asm') {
+            return (await asmStore(userId, String(request.franchise_id)))
+                ? { requestId, request }
+                : { error: { status: 404, body: { success: false, error: 'Ticket not found' } } };
         }
 
         const vendor = await vendorRepository.findByUserId(userId);
@@ -349,7 +362,9 @@ class POSMController {
      * set aside the item limits.
      */
     private async createItemRequest(req: AuthRequest, res: Response, opts: {
-        franchiseId: string; byRole: 'franchise' | 'admin'; ignoreLimits?: boolean;
+        franchiseId: string; byRole: 'franchise' | 'admin' | 'asm'; ignoreLimits?: boolean;
+        /** For an ASM: their name, for the store's notification and the timeline. */
+        asmName?: string;
     }) {
         const userId = req.user!.id;
         let raw: unknown;
@@ -385,7 +400,15 @@ class POSMController {
         const requestId = await posmRepository.createPOSMRequest({
             ticket_id: ticketId, franchise_id: opts.franchiseId, requirement: summary.slice(0, 2000),
             created_by_role: opts.byRole, created_by: userId, status: 'open', items: lines,
-            history: [step(req, { action: 'sent', status: 'open', note: opts.byRole === 'admin' ? "Raised on the store's behalf" : null })],
+            history: [{
+                ...step(req, {
+                    action: 'sent', status: 'open',
+                    note: opts.byRole === 'admin' ? "Raised on the store's behalf"
+                        : opts.byRole === 'asm' ? `Raised by ${opts.asmName || 'the ASM'} (ASM) for the store` : null,
+                }),
+                // The session holds the name at login; an ASM may have corrected it since.
+                ...(opts.byRole === 'asm' && opts.asmName ? { by_name: opts.asmName } : {}),
+            }],
         });
         if (note || noteFiles.length) {
             await posmRepository.createMessage({
@@ -395,7 +418,8 @@ class POSMController {
         }
         await ActivityLogService.log({
             adminId: userId, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
-            actionType: opts.byRole === 'admin' ? 'CREATE_POSM_REQUEST_ON_BEHALF' : 'CREATE_POSM_REQUEST',
+            actionType: opts.byRole === 'admin' ? 'CREATE_POSM_REQUEST_ON_BEHALF'
+                : opts.byRole === 'asm' ? 'CREATE_POSM_REQUEST_BY_ASM' : 'CREATE_POSM_REQUEST',
             targetType: 'POSM_REQUEST', targetId: String(requestId), targetName: store.store_name,
             details: { ticketId, requestId, items: lines.length, franchiseId: opts.franchiseId, ignoreLimits: !!opts.ignoreLimits },
             ipAddress: req.ip || req.socket?.remoteAddress,
@@ -404,6 +428,18 @@ class POSMController {
             if (opts.byRole === 'admin') {
                 if (store.user_id) await NotificationService.notify(store.user_id, {
                     title: `POSM ${ticketId} raised for you`, message: `The Autoform team added: ${summary.slice(0, 140)}`, type: 'posm',
+                });
+            } else if (opts.byRole === 'asm') {
+                // The store is told it was raised for it; head office gets it
+                // like any new request, since it now needs their decision.
+                if (store.user_id) await NotificationService.notify(store.user_id, {
+                    title: `POSM ${ticketId} raised for you`,
+                    message: `${opts.asmName || 'Your ASM'} (your ASM) asked for: ${summary.slice(0, 140)}`, type: 'posm',
+                });
+                await NotificationService.broadcast({
+                    title: `New POSM Request: ${ticketId}`,
+                    message: `${opts.asmName || 'An ASM'} (ASM) asked for ${store.store_name || 'a store'}: ${summary.slice(0, 140)}`,
+                    type: 'posm', targetRole: 'admin',
                 });
             } else {
                 await NotificationService.broadcast({
@@ -416,7 +452,7 @@ class POSMController {
             console.error('Failed to send the POSM request notification:', notifError);
         }
         return res.status(201).json({
-            success: true, message: opts.byRole === 'admin' ? `POSM request raised for ${store.store_name}` : 'POSM request sent',
+            success: true, message: opts.byRole === 'franchise' ? 'POSM request sent' : `POSM request raised for ${store.store_name}`,
             data: { ticketId, requestId },
         });
     }
@@ -455,6 +491,44 @@ class POSMController {
             });
         } catch (error: any) {
             console.error('Submit POSM items on behalf error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to raise the POSM request' });
+        }
+    }
+
+    /**
+     * The item lists for one of the ASM's stores: what that store may order,
+     * with its brands and what it has already had against the limits.
+     * GET /api/asm-portal/stores/:id/posm-catalog
+     */
+    getCatalogForAsm = async (req: AuthRequest, res: Response) => {
+        try {
+            const store = await asmStore(req.user!.id, String(req.params.id));
+            if (!store) return res.status(404).json({ success: false, error: 'Store not found' });
+            const catalog = await loadCatalog();
+            const [[row]]: any = await db.execute('SELECT allowed_brands FROM vendor_details WHERE id = ?', [store.id]);
+            return res.json({ success: true, data: {
+                catalog: { items: catalog.items.filter(it => it.enabled) },
+                brands: storeBrands(row?.allowed_brands),
+                usage: await storeUsage(store.id),
+            } });
+        } catch (error: any) {
+            console.error('Get POSM catalog for ASM error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to load the POSM items' });
+        }
+    }
+
+    /**
+     * An ASM raises a request for one of their stores, from the same items and
+     * within the same limits the store itself would have.
+     * POST /api/asm-portal/stores/:id/posm — as /posm/items.
+     */
+    submitItemsByAsm = async (req: AuthRequest, res: Response) => {
+        try {
+            const store = await asmStore(req.user!.id, String(req.params.id));
+            if (!store) return res.status(404).json({ success: false, error: 'Store not found' });
+            return await this.createItemRequest(req, res, { franchiseId: String(store.id), byRole: 'asm', asmName: store.asm_name });
+        } catch (error: any) {
+            console.error('Submit POSM items by ASM error:', error);
             return res.status(500).json({ success: false, error: 'Failed to raise the POSM request' });
         }
     }
@@ -545,10 +619,12 @@ class POSMController {
                 }));
             }
 
+            // Head office's internal notes are theirs alone (agreed for ASMs, 8 Oct 2026).
+            const { internal_notes, ...visible } = access.request as any;
             return res.json({
                 success: true,
                 data: {
-                    ...access.request,
+                    ...(req.user?.role === 'asm' ? visible : access.request),
                     messages,
                     ...(limits ? { limits } : {}),
                     ...(req.user?.role === 'admin' ? { actions: actionsFor(access.request.status) } : {}),
@@ -590,7 +666,7 @@ class POSMController {
             await posmRepository.createMessage({
                 request_id: access.requestId,
                 sender_id: userId,
-                sender_role: req.user?.role === 'admin' ? 'admin' : 'franchise',
+                sender_role: roleOf(req),
                 message: message || null,
                 attachments: attachmentUrls.length > 0 ? attachmentUrls : null
             });

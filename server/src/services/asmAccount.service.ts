@@ -28,6 +28,17 @@ export const normalizeAsmEmail = (raw: unknown): string | null => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
 };
 
+/**
+ * A person's name as they would write it, or null: 2–60 characters of
+ * letters (any script), spaces, dots, apostrophes and hyphens, with runs of
+ * spaces collapsed. Case is kept — the point is to let them fix the spelling.
+ */
+export const cleanAsmName = (raw: unknown): string | null => {
+    const n = String(raw ?? '').normalize('NFC').replace(/\s+/g, ' ').trim();
+    if (n.length < 2 || n.length > 60) return null;
+    return /^\p{L}[\p{L}\p{M} .'-]*$/u.test(n) ? n : null;
+};
+
 /** Refused with a message meant for the admin. */
 export class AsmAccountError extends Error {}
 

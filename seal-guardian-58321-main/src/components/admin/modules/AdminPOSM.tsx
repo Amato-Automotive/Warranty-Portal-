@@ -31,7 +31,7 @@ interface POSMRequest {
     contact_name: string;
     contact_email: string;
     requirement: string;
-    created_by_role?: 'franchise' | 'admin';
+    created_by_role?: 'franchise' | 'admin' | 'asm';
     created_by_name?: string | null;
     status: string;
     internal_notes: string | null;
@@ -47,7 +47,8 @@ interface POSMRequest {
 interface Message {
     id: number;
     sender_id: string;
-    sender_role: 'admin' | 'franchise';
+    sender_role: 'admin' | 'franchise' | 'asm';
+    sender_name?: string | null;
     message: string | null;
     attachments: string[] | null;
     created_at: string;
@@ -176,7 +177,7 @@ export const AdminPOSM = () => {
         if (q && ![r.ticket_id, r.store_name, r.store_code, r.store_city, r.contact_name, r.requirement].some(v => (v || "").toLowerCase().includes(q))) return false;
         if (itemFilter !== "all" && !(r.items || []).some(l => l.item_id === itemFilter)) return false;
         if (stateFilter !== "all" && (r.store_state || "").trim() !== stateFilter) return false;
-        if (originFilter !== "all" && (originFilter === "admin") !== (r.created_by_role === "admin")) return false;
+        if (originFilter !== "all" && originFilter !== (r.created_by_role ?? "franchise")) return false;
         return true;
     };
     const filtered = requests.filter(matches);
@@ -280,7 +281,7 @@ export const AdminPOSM = () => {
     const feed = useMemo(() => {
         if (!ticket) return [];
         const steps = (ticket.history?.length ? ticket.history
-            : [{ action: "sent", status: "open", at: ticket.created_at, by_role: ticket.created_by_role === "admin" ? "admin" : "franchise" } as HistoryEntry])
+            : [{ action: "sent", status: "open", at: ticket.created_at, by_role: ticket.created_by_role ?? "franchise" } as HistoryEntry])
             .map(h => ({ at: h.at, kind: "step" as const, h }));
         const msgs = messages.map(m => ({ at: m.created_at, kind: "msg" as const, m }));
         return [...steps, ...msgs].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
@@ -298,7 +299,7 @@ export const AdminPOSM = () => {
         const csv = [headers.join(","), ...filtered.map(r => [
             cell(formatToIST(r.created_at)), cell(r.ticket_id), cell(r.store_name), cell(r.store_code), cell(r.store_address), cell(r.store_city),
             cell(r.store_state), cell(r.store_pincode), cell(r.contact_name), cell(r.contact_email), cell(r.requirement), cell(statusText(r.status)),
-            cell(r.created_by_role === 'admin' ? 'Admin (on behalf)' : 'Franchise'), cell(r.created_by_name),
+            cell(r.created_by_role === 'admin' ? 'Admin (on behalf)' : r.created_by_role === 'asm' ? 'ASM (on behalf)' : 'Franchise'), cell(r.created_by_name),
             cell((r.items || []).map(l => `${l.item_name} ${l.qty}/${l.line_status === 'rejected' ? 0 : (l.approved_qty ?? '-')}`).join('; ')),
             cell(r.dispatch?.courier ? [r.dispatch.courier, r.dispatch.tracking, r.dispatch.date].filter(Boolean).join(' ') : ''),
             cell(formatToIST(r.updated_at)),
@@ -430,7 +431,7 @@ export const AdminPOSM = () => {
                 </Select>
                 <Select value={originFilter} onValueChange={setOriginFilter}>
                     <SelectTrigger className="w-[160px] h-10 rounded-xl bg-white"><SelectValue placeholder="Raised by" /></SelectTrigger>
-                    <SelectContent><SelectItem value="all">Raised by anyone</SelectItem><SelectItem value="franchise">By the store</SelectItem><SelectItem value="admin">By admin</SelectItem></SelectContent>
+                    <SelectContent><SelectItem value="all">Raised by anyone</SelectItem><SelectItem value="franchise">By the store</SelectItem><SelectItem value="asm">By ASM</SelectItem><SelectItem value="admin">By admin</SelectItem></SelectContent>
                 </Select>
             </div>
 
@@ -453,6 +454,7 @@ export const AdminPOSM = () => {
                                     <p className="text-[11px] text-slate-400">
                                         {[r.store_city, r.store_state].filter(Boolean).join(" · ")} · <span className="font-mono">{r.ticket_id}</span>
                                         {r.created_by_role === 'admin' && <span className="ml-1 text-purple-600 font-semibold">· by admin</span>}
+                                        {r.created_by_role === 'asm' && <span className="ml-1 text-sky-700 font-semibold">· by ASM</span>}
                                     </p>
                                     <p className="text-sm text-slate-600 line-clamp-2">{itemsText(r)}</p>
                                     {stage === "done" && <StatusPill status={r.status} />}
@@ -480,6 +482,7 @@ export const AdminPOSM = () => {
                                     <p className="text-xs text-slate-500">
                                         {[ticket.store_city, ticket.store_state].filter(Boolean).join(", ")} · {brandsText(ticket.allowed_brands)}
                                         {ticket.created_by_role === 'admin' && <span className="text-purple-600"> · raised by {ticket.created_by_name || "an admin"}</span>}
+                                        {ticket.created_by_role === 'asm' && <span className="text-sky-700"> · raised by {ticket.created_by_name || "the ASM"} (ASM)</span>}
                                     </p>
                                 </div>
                             </div>
@@ -597,11 +600,11 @@ export const AdminPOSM = () => {
                                     <p key={`s${i}`} className="text-center text-[11px] font-semibold text-slate-400">
                                         {formatToIST(f.h.at)} · {HISTORY_TEXT[f.h.action] ?? f.h.action}
                                         {f.h.note ? ` · ${f.h.note}` : ""}
-                                        {f.h.by_role === "admin" && f.h.by_name ? ` · ${f.h.by_name}` : f.h.by_role === "franchise" ? " · by the store" : ""}
+                                        {f.h.by_role === "admin" && f.h.by_name ? ` · ${f.h.by_name}` : f.h.by_role === "asm" ? ` · ${f.h.by_name || "ASM"} (ASM)` : f.h.by_role === "franchise" ? " · by the store" : ""}
                                     </p>
                                 ) : (
                                     <div key={`m${f.m.id}`} className={cn("flex flex-col max-w-[85%]", f.m.sender_role === "admin" ? "ml-auto items-end" : "mr-auto items-start")}>
-                                        <div className={cn("px-3 py-2 rounded-2xl text-sm", f.m.sender_role === "admin" ? "bg-slate-900 text-white rounded-br-md" : "bg-slate-100 text-slate-800 rounded-bl-md")}>
+                                        <div className={cn("px-3 py-2 rounded-2xl text-sm", f.m.sender_role === "admin" ? "bg-slate-900 text-white rounded-br-md" : f.m.sender_role === "asm" ? "bg-sky-50 text-slate-800 rounded-bl-md" : "bg-slate-100 text-slate-800 rounded-bl-md")}>
                                             {f.m.message && <p className="whitespace-pre-wrap">{f.m.message}</p>}
                                             {f.m.attachments?.length ? (
                                                 <div className="flex flex-wrap gap-1.5 mt-1.5">
@@ -614,7 +617,7 @@ export const AdminPOSM = () => {
                                                 </div>
                                             ) : null}
                                         </div>
-                                        <span className="text-[10px] text-slate-400 mt-0.5">{f.m.sender_role === "admin" ? "Autoform team" : ticket.store_name} · {formatToIST(f.m.created_at)}</span>
+                                        <span className="text-[10px] text-slate-400 mt-0.5">{f.m.sender_role === "admin" ? "Autoform team" : f.m.sender_role === "asm" ? `${f.m.sender_name || "ASM"} (ASM)` : ticket.store_name} · {formatToIST(f.m.created_at)}</span>
                                     </div>
                                 ))}
                             </div>

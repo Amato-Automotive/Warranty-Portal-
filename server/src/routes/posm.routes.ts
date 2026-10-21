@@ -6,7 +6,7 @@ import { signalAdminAttentionOnSuccess as signalAttention } from '../services/ad
 
 const router = Router();
 
-const handleUpload = (req: Request, res: Response, next: NextFunction) => {
+export const handleUpload = (req: Request, res: Response, next: NextFunction) => {
     posmUpload.array('attachments', 5)(req, res, (err: any) => {
         if (err) {
             console.error('POSM upload error:', err);
@@ -20,7 +20,7 @@ const handleUpload = (req: Request, res: Response, next: NextFunction) => {
 };
 
 /* A request built from items: a file per item line (line_<n>) and the note's own. */
-const handleItemUpload = (req: Request, res: Response, next: NextFunction) => {
+export const handleItemUpload = (req: Request, res: Response, next: NextFunction) => {
     posmItemUpload.any()(req, res, (err: any) => {
         if (err) {
             console.error('POSM item upload error:', err);

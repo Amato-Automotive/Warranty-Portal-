@@ -21,7 +21,7 @@ export interface HistoryEntry {
     action: PosmAction | 'sent' | 'received' | 'update';
     status: PosmStatus;
     at: string;
-    by_role: 'admin' | 'franchise';
+    by_role: 'admin' | 'franchise' | 'asm';
     by?: string | null;
     by_name?: string | null;
     note?: string | null;

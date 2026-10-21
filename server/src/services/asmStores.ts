@@ -12,6 +12,37 @@ import db from '../config/database.js';
  * and not head office's internal notes.
  */
 
+/** A JSON column as mysql2 hands it back: parsed already, a string, or null. */
+const parseJson = (v: unknown) => {
+    if (v == null || typeof v !== 'string') return v ?? null;
+    try { return JSON.parse(v); } catch { return null; }
+};
+
+/** The signed-in ASM's own record, from their login profile; null if none. */
+export async function asmOfProfile(profileId: string): Promise<{ id: string; name: string } | null> {
+    const [rows]: any = await db.execute('SELECT id, name FROM asms WHERE profile_id = ?', [profileId]);
+    return rows[0] ?? null;
+}
+
+/**
+ * The one check behind everything an ASM does for a store: the store, if it
+ * is theirs, else null. Accepts either id a store goes by (vendor_details.id
+ * or the owner's profile id), and returns both.
+ */
+export async function asmStore(profileId: string, storeId: string): Promise<{
+    id: string; user_id: string; store_name: string; asm_id: string; asm_name: string;
+} | null> {
+    const [rows]: any = await db.execute(
+        `SELECT vd.id, vd.user_id, vd.store_name, a.id AS asm_id, a.name AS asm_name
+           FROM vendor_details vd
+           JOIN asms a ON a.id = vd.asm_id
+          WHERE a.profile_id = ? AND (vd.id = ? OR vd.user_id = ?)
+          LIMIT 1`,
+        [profileId, storeId, storeId]
+    );
+    return rows[0] ?? null;
+}
+
 // POSM and grievance states that still need someone to act.
 const POSM_DONE = "('delivered', 'closed', 'rejected')";
 const GRIEVANCE_DONE = "('resolved', 'rejected')";
@@ -137,17 +168,22 @@ export async function storeDetailForAsm(asmId: string, vendorDetailsId: string) 
 
     // POSM: everything but head office's internal notes.
     const [posm]: any = await db.execute(
-        `SELECT id, ticket_id, requirement, status, created_by_role, created_at, updated_at
-           FROM posm_requests WHERE franchise_id = ?
-          ORDER BY created_at DESC`,
+        `SELECT r.id, r.ticket_id, r.requirement, r.status, r.created_by_role, r.created_at, r.updated_at,
+                r.items, r.dispatch, r.delivery, r.history, creator.name AS created_by_name
+           FROM posm_requests r
+           LEFT JOIN profiles creator ON creator.id = r.created_by
+          WHERE r.franchise_id = ?
+          ORDER BY r.created_at DESC`,
         [vendorDetailsId]
     );
     const posmIds = posm.map((r: any) => r.id);
     const [posmMessages]: any = posmIds.length
         ? await db.execute(
-            `SELECT request_id, sender_role, message, attachments, created_at
-               FROM posm_messages WHERE request_id IN (?)
-              ORDER BY created_at ASC`,
+            `SELECT m.request_id, m.sender_role, sender.name AS sender_name, m.message, m.attachments, m.created_at
+               FROM posm_messages m
+               LEFT JOIN profiles sender ON sender.id = m.sender_id
+              WHERE m.request_id IN (?)
+              ORDER BY m.created_at ASC`,
             [posmIds]
         )
         : [[]];
@@ -157,11 +193,13 @@ export async function storeDetailForAsm(asmId: string, vendorDetailsId: string) 
         `SELECT g.id, g.ticket_id, g.source_type, g.category, g.sub_category, g.subject, g.description,
                 g.attachments, g.status, g.priority, g.warranty_uid, g.department, g.department_details,
                 g.franchise_remarks, g.admin_remarks, g.assigned_to, g.customer_rating, g.customer_feedback,
-                g.created_at, g.updated_at, g.resolved_at,
+                g.created_at, g.updated_at, g.resolved_at, g.created_by_role,
                 CASE WHEN g.source_type = 'customer' THEN c.name END AS customer_name,
-                CASE WHEN g.source_type = 'customer' THEN c.phone_number END AS customer_phone
+                CASE WHEN g.source_type = 'customer' THEN c.phone_number END AS customer_phone,
+                creator.name AS created_by_name
            FROM grievances g
            LEFT JOIN profiles c ON c.id = g.customer_id
+           LEFT JOIN profiles creator ON creator.id = g.created_by
           -- STORE_GRIEVANCE as two lookups: the OR form scans the table.
           WHERE g.id IN (
                 SELECT id FROM grievances WHERE franchise_id = ?
@@ -184,6 +222,7 @@ export async function storeDetailForAsm(asmId: string, vendorDetailsId: string) 
         store,
         posm: posm.map((r: any) => ({
             ...r,
+            items: parseJson(r.items), dispatch: parseJson(r.dispatch), delivery: parseJson(r.delivery), history: parseJson(r.history),
             messages: posmMessages
                 .filter((m: any) => m.request_id === r.id)
                 .map(({ request_id, attachments, ...m }: any) => ({ ...m, attachments: parseList(attachments) })),

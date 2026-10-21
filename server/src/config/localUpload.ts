@@ -343,6 +343,27 @@ export const grievanceUpload = multer({
  * Photos or PDFs only. The bills are served from the API origin, so an
  * .html or .svg must never land here.
  */
+/** An ASM's profile photo: one image, compressed in the browser first. */
+export const asmPhotoUpload = multer({
+    storage: multer.diskStorage({
+        destination: createDestination('asm-photos'),
+        filename: genericFileName,
+    }),
+    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, cb) => {
+        const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+        // No HEIC: genericFileName would keep the .heic name on bytes that
+        // attachPublicUrls turns into JPEG. Phones hand image/* pickers a JPEG.
+        const okExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
+        const okMime = /^image\/(jpeg|jpg|png|webp)$/.test(file.mimetype);
+        if (okExt && okMime) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only a photo can be used (JPG, PNG or WebP)'));
+        }
+    },
+});
+
 export const asmExpenseUpload = multer({
     storage: multer.diskStorage({
         destination: createDestination('asm-expenses'),

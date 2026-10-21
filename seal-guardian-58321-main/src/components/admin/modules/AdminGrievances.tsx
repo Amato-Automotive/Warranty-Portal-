@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, RefreshCw, MessageSquare, Search, Paperclip, Store, Users, Mail, Send, Clock, Eye, Filter, ShieldCheck, Download, Package, Box, Wrench, Monitor, HelpCircle, Plus, X, Upload, CheckCircle, Zap, Video, Image as ImageIcon, Settings2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { GrievanceCategoryManager } from "./GrievanceCategoryManager";
+import { GrievanceForm, grievancePayload, type GrievanceDraft } from "@/components/grievance/GrievanceForm";
 import { compressVideo, isCompressibleVideo } from "@/lib/videoCompression";
 import { WarrantySpecSheet } from "@/components/warranty/WarrantySpecSheet";
 import {
@@ -50,7 +51,7 @@ interface Grievance {
     franchise_address?: string;
     franchise_city?: string;
     source_type?: 'customer' | 'franchise';
-    created_by_role?: 'customer' | 'franchise' | 'admin';
+    created_by_role?: 'customer' | 'franchise' | 'admin' | 'asm';
     created_by_name?: string | null;
     department?: string;
     department_details?: string;
@@ -231,9 +232,9 @@ export const AdminGrievances = () => {
         // Who filed it
         if (originFilter !== "all") {
             result = result.filter(g =>
-                originFilter === "admin"
-                    ? g.created_by_role === "admin"
-                    : g.created_by_role !== "admin"
+                originFilter === "franchise"
+                    ? g.created_by_role !== "admin" && g.created_by_role !== "asm"
+                    : g.created_by_role === originFilter
             );
         }
 
@@ -265,8 +266,19 @@ export const AdminGrievances = () => {
         }
     };
 
+    // The ASM's replies on a store's grievance. They are kept only in the
+    // remark history (franchise_remarks / admin_remarks are the store's and
+    // head office's own), so they are read from there.
+    const [asmRemarks, setAsmRemarks] = useState<{ id: number; added_by_name: string | null; remark: string; created_at: string }[]>([]);
+
     const handleOpenDetail = async (g: Grievance) => {
         setSelectedGrievance(g);
+        setAsmRemarks([]);
+        if (g.source_type === "franchise") {
+            api.get(`/grievance/${g.id}/remarks`)
+                .then(res => setAsmRemarks((res.data?.data || []).filter((r: { added_by: string }) => r.added_by === "asm")))
+                .catch(() => { /* the panel just stays empty */ });
+        }
         setAdminRemarks(g.admin_remarks || "");
         setAdminNotes(g.admin_notes || "");
         setAssigneeName(g.assigned_to || "");
@@ -348,19 +360,10 @@ export const AdminGrievances = () => {
     const [franchises, setFranchises] = useState<{ id: string; store_name: string; store_code?: string | null; city?: string | null }[]>([]);
     const [franchiseSearch, setFranchiseSearch] = useState("");
     const [obFranchiseId, setObFranchiseId] = useState<string | null>(null);
-    const [obCategory, setObCategory] = useState("");
-    const [obSubject, setObSubject] = useState("");
-    const [obDescription, setObDescription] = useState("");
-    const [obFiles, setObFiles] = useState<File[]>([]);
-    const [creating, setCreating] = useState(false);
 
     const openOnBehalf = async () => {
         setOnBehalfOpen(true);
         setObFranchiseId(null);
-        setObCategory("");
-        setObSubject("");
-        setObDescription("");
-        setObFiles([]);
         setFranchiseSearch("");
         if (franchises.length > 0) return;
         try {
@@ -385,35 +388,24 @@ export const AdminGrievances = () => {
         }
     };
 
-    const handleCreateOnBehalf = async () => {
-        if (!obFranchiseId || !obCategory || !obSubject.trim() || !obDescription.trim()) return;
-        setCreating(true);
+    const handleCreateOnBehalf = async (draft: GrievanceDraft) => {
+        if (!obFranchiseId) return false;
         try {
-            const formData = new FormData();
-            formData.append("franchiseId", obFranchiseId);
-            formData.append("category", obCategory);
-            formData.append("subject", obSubject);
-            formData.append("description", obDescription);
-            obFiles.forEach(file => formData.append("attachments", file));
-
-            const response = await api.post("/grievance/franchise", formData, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
-
+            const response = await api.post("/grievance/franchise", grievancePayload(draft, { franchiseId: obFranchiseId }));
             toast({
                 title: "Grievance filed",
                 description: response.data?.message || "It is now in the queue and assigned.",
             });
             setOnBehalfOpen(false);
             fetchGrievances();
+            return true;
         } catch (error: any) {
             toast({
                 title: "Could not file the grievance",
                 description: getErrorMessage(error, "Failed to submit"),
                 variant: "destructive",
             });
-        } finally {
-            setCreating(false);
+            return false;
         }
     };
 
@@ -453,7 +445,7 @@ export const AdminGrievances = () => {
                 `"${catLabel(g.category)}"`,
                 `"${g.subject.replace(/"/g, '""')}"`,
                 `"${g.status.replace("_", " ")}"`,
-                `"${g.created_by_role === 'admin' ? 'Admin (on behalf)' : 'Franchise'}"`,
+                `"${g.created_by_role === 'admin' ? 'Admin (on behalf)' : g.created_by_role === 'asm' ? 'ASM (on behalf)' : 'Franchise'}"`,
                 `"${(g.created_by_name || "").replace(/"/g, '""')}"`,
                 `"${g.assigned_to || 'Unassigned'}"`,
                 `"${g.updated_at ? formatToIST(g.updated_at) : (g.status_updated_at ? formatToIST(g.status_updated_at) : formatToIST(g.created_at))}"`
@@ -600,6 +592,7 @@ export const AdminGrievances = () => {
                                         <SelectContent className="rounded-2xl">
                                             <SelectItem value="all">Anyone</SelectItem>
                                             <SelectItem value="franchise">By franchise</SelectItem>
+                                            <SelectItem value="asm">By ASM</SelectItem>
                                             <SelectItem value="admin">By admin</SelectItem>
                                         </SelectContent>
                                     </Select>
@@ -670,6 +663,11 @@ export const AdminGrievances = () => {
                                                 {g.created_by_role === 'admin' && (
                                                     <span className="mt-1 w-max text-[9px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 border border-purple-100 px-1.5 py-0.5 rounded">
                                                         By admin
+                                                    </span>
+                                                )}
+                                                {g.created_by_role === 'asm' && (
+                                                    <span className="mt-1 w-max text-[9px] font-black uppercase tracking-wider text-sky-700 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded">
+                                                        By ASM
                                                     </span>
                                                 )}
                                             </div>
@@ -758,6 +756,13 @@ export const AdminGrievances = () => {
                                                                 className="text-[9px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 border border-purple-100 px-1.5 py-0.5 rounded"
                                                             >
                                                                 By admin
+                                                            </span>
+                                                        ) : g.created_by_role === 'asm' ? (
+                                                            <span
+                                                                title={g.created_by_name ? `Filed by ${g.created_by_name} (ASM)` : undefined}
+                                                                className="text-[9px] font-black uppercase tracking-wider text-sky-700 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded"
+                                                            >
+                                                                By ASM
                                                             </span>
                                                         ) : (
                                                             <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
@@ -886,6 +891,10 @@ export const AdminGrievances = () => {
                                         {selectedGrievance.created_by_role === 'admin' ? (
                                             <span className="text-purple-600">
                                                 {selectedGrievance.created_by_name || "an admin"} (admin, on the store's behalf)
+                                            </span>
+                                        ) : selectedGrievance.created_by_role === 'asm' ? (
+                                            <span className="text-sky-700">
+                                                {selectedGrievance.created_by_name || "the ASM"} (ASM, on the store's behalf)
                                             </span>
                                         ) : (
                                             <span className="text-slate-700">
@@ -1104,6 +1113,18 @@ export const AdminGrievances = () => {
                                         <div className="p-4 bg-amber-50 rounded-lg border border-amber-100">
                                             <h4 className="font-semibold mb-1 text-amber-900">Franchise Remarks</h4>
                                             <p className="text-sm text-amber-800">{selectedGrievance.franchise_remarks}</p>
+                                        </div>
+                                    )}
+
+                                    {asmRemarks.length > 0 && (
+                                        <div className="p-4 bg-sky-50 rounded-lg border border-sky-100 space-y-2">
+                                            <h4 className="font-semibold text-sky-900">ASM Remarks</h4>
+                                            {asmRemarks.map(r => (
+                                                <div key={r.id}>
+                                                    <p className="text-[11px] text-sky-700">{r.added_by_name || "ASM"} · {formatToIST(r.created_at)}</p>
+                                                    <p className="text-sm text-sky-900 whitespace-pre-wrap">{r.remark}</p>
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
 
@@ -1338,7 +1359,7 @@ export const AdminGrievances = () => {
             />
 
             {/* File a grievance on a franchise's behalf */}
-            <Dialog open={onBehalfOpen} onOpenChange={(v) => { if (!v && !creating) setOnBehalfOpen(false); }}>
+            <Dialog open={onBehalfOpen} onOpenChange={(v) => { if (!v) setOnBehalfOpen(false); }}>
                 <DialogContent className="max-w-xl max-h-[90vh] flex flex-col p-0 gap-0">
                     <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
                         <DialogTitle className="text-base flex items-center gap-2">
@@ -1399,163 +1420,12 @@ export const AdminGrievances = () => {
                             )}
                         </div>
 
+                        {/* The franchise's own form, so every route asks identically. */}
                         {selectedFranchise && (
-                            <>
-                                {/* Category — the same tile grid the franchise sees,
-                                    not a dropdown, so both forms ask identically. */}
-                                <div>
-                                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 block">
-                                        Category <span className="text-red-500">*</span>
-                                    </label>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                        {Object.entries(CATEGORIES).map(([value, label]) => (
-                                            <div
-                                                key={value}
-                                                onClick={() => setObCategory(value)}
-                                                className={cn(
-                                                    "cursor-pointer rounded-xl border-2 px-3 py-3 text-xs md:text-sm text-center font-bold transition-all hover:shadow-sm",
-                                                    obCategory === value
-                                                        ? "border-orange-500 bg-orange-50 text-orange-600 ring-1 ring-orange-500/20"
-                                                        : "text-slate-600 border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
-                                                )}
-                                            >
-                                                {label}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Subject */}
-                                <div>
-                                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">
-                                        Subject <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        className="flex h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-4 py-2 text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 transition-all"
-                                        placeholder="Brief title of the issue"
-                                        value={obSubject}
-                                        onChange={(e) => setObSubject(e.target.value)}
-                                    />
-                                </div>
-
-                                {/* Description */}
-                                <div>
-                                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">
-                                        Description <span className="text-red-500">*</span>
-                                    </label>
-                                    <Textarea
-                                        value={obDescription}
-                                        onChange={(e: any) => setObDescription(e.target.value)}
-                                        placeholder="Detailed description of the issue..."
-                                        rows={4}
-                                        className="rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-4 py-3 text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 transition-all resize-none"
-                                    />
-                                </div>
-
-                                {/* Attachments — three slots, as on the franchise form */}
-                                <div>
-                                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 block flex items-center gap-2">
-                                        <Paperclip className="h-4 w-4" />
-                                        Attachments (Optional - Max 3, images or video)
-                                    </label>
-                                    <div className="grid grid-cols-3 gap-3">
-                                        {[0, 1, 2].map((idx) => {
-                                            const file = obFiles[idx];
-                                            return (
-                                                <div key={idx} className="relative">
-                                                    <input
-                                                        type="file"
-                                                        id={`ob-attachment-${idx}`}
-                                                        className="hidden"
-                                                        accept="image/*,video/*"
-                                                        onChange={async (e) => {
-                                                            const picked = e.target.files?.[0];
-                                                            if (!picked) return;
-                                                            let file = picked;
-                                                            // A phone clip is far past the 20MB limit, so
-                                                            // shrink it here rather than let the upload fail.
-                                                            if (isCompressibleVideo(picked)) {
-                                                                file = await compressVideo(picked);
-                                                                if (file.size > 20 * 1024 * 1024) {
-                                                                    toast({
-                                                                        title: "Video too large",
-                                                                        description: "Still over 20MB after compressing — please trim the clip.",
-                                                                        variant: "destructive",
-                                                                    });
-                                                                    e.target.value = "";
-                                                                    return;
-                                                                }
-                                                            }
-                                                            setObFiles(prev => {
-                                                                const next = [...prev];
-                                                                next[idx] = file;
-                                                                return next;
-                                                            });
-                                                        }}
-                                                    />
-                                                    <label
-                                                        htmlFor={`ob-attachment-${idx}`}
-                                                        className={cn(
-                                                            "flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-4 h-28 cursor-pointer transition-all",
-                                                            file
-                                                                ? "border-orange-400 bg-orange-50"
-                                                                : "border-slate-200 hover:border-orange-300 hover:bg-orange-50/30"
-                                                        )}
-                                                    >
-                                                        {file ? (
-                                                            <>
-                                                                <CheckCircle className="h-7 w-7 text-orange-500 mb-1" />
-                                                                <span className="text-[10px] text-orange-600 font-bold truncate max-w-full px-1 text-center">
-                                                                    {file.name.length > 12 ? file.name.substring(0, 12) + '...' : file.name}
-                                                                </span>
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <Upload className="h-6 w-6 text-slate-400 mb-1" />
-                                                                <span className="text-[10px] text-slate-400 font-medium">Upload</span>
-                                                            </>
-                                                        )}
-                                                    </label>
-                                                    {file && (
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.preventDefault();
-                                                                setObFiles(prev => {
-                                                                    const next = [...prev];
-                                                                    next.splice(idx, 1);
-                                                                    return next;
-                                                                });
-                                                            }}
-                                                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg hover:bg-red-600 transition-colors"
-                                                        >
-                                                            <X className="h-3 w-3" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            </>
+                            <GrievanceForm onSubmit={handleCreateOnBehalf} submitLabel="File grievance" />
                         )}
                     </div>
 
-                    <div className="px-6 py-4 border-t border-slate-100 shrink-0 flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setOnBehalfOpen(false)} disabled={creating} className="border-slate-200">
-                            Cancel
-                        </Button>
-                        <Button
-                            onClick={handleCreateOnBehalf}
-                            disabled={!obFranchiseId || !obCategory || !obSubject.trim() || !obDescription.trim() || creating}
-                            className="bg-orange-600 hover:bg-orange-700"
-                        >
-                            {creating
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                                : <Send className="h-3.5 w-3.5 mr-1.5" />}
-                            File grievance
-                        </Button>
-                    </div>
                 </DialogContent>
             </Dialog>
         </div>

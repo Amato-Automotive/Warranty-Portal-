@@ -11,10 +11,11 @@ import { AsmExpenses } from "@/components/asm/AsmExpenses";
 import { AsmLeads } from "@/components/asm/AsmLeads";
 import { AsmAreas } from "@/components/asm/AsmAreas";
 import { AsmStores } from "@/components/asm/AsmStores";
+import { AsmProfile, AsmAvatar, type AsmProfileData } from "@/components/asm/AsmProfile";
 import api from "@/lib/api";
 import { rupees } from "@/lib/asmExpenses";
 import {
-    Loader2, LogOut, Phone, Mail, Home, Receipt, User, ChevronLeft, ChevronRight, BriefcaseBusiness,
+    Loader2, LogOut, Home, Receipt, User, ChevronLeft, ChevronRight, BriefcaseBusiness,
     Inbox, MapPinned, CalendarDays, ArrowUpRight, Store
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -58,6 +59,7 @@ const AsmHome = () => {
     const [collapsed, setCollapsed] = useState(false);
     const [mobileOpen, setMobileOpen] = useState(false);
     const [summary, setSummary] = useState<Summary | null>(null);
+    const [profile, setProfile] = useState<AsmProfileData | null>(null);
 
     const loadSummary = useCallback(() => {
         api.get("/asm-portal/summary").then(res => setSummary(res.data)).catch(() => {});
@@ -66,6 +68,10 @@ const AsmHome = () => {
     useEffect(() => {
         if (user?.role === "asm") loadSummary();
     }, [user?.role, loadSummary, active]);
+
+    useEffect(() => {
+        if (user?.role === "asm") api.get("/asm-portal/profile").then(res => setProfile(res.data.profile)).catch(() => {});
+    }, [user?.role]);
 
     useEffect(() => {
         if (!loading && user?.role !== "asm") navigate("/asm/login", { replace: true });
@@ -97,6 +103,14 @@ const AsmHome = () => {
     const signOut = async () => {
         await logout();
         navigate("/asm/login", { replace: true });
+    };
+
+    // The saved name wins over the session's copy until the session catches up.
+    const displayName = profile?.name ?? user.name;
+
+    const profileChanged = (p: AsmProfileData) => {
+        setProfile(p);
+        if (p.name !== user.name) refreshUser();
     };
 
     const go = (id: AsmModule) => {
@@ -143,11 +157,9 @@ const AsmHome = () => {
             className="flex items-center rounded-2xl bg-slate-50/80 border border-slate-100 transition-all duration-300 hover:border-orange-200 hover:bg-orange-50/50 cursor-pointer p-3 gap-3"
             onClick={() => go("profile")}
         >
-            <div className="w-10 h-10 shrink-0 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-600 border border-orange-500/20">
-                <User className="h-5 w-5" />
-            </div>
+            <AsmAvatar name={displayName} photoUrl={profile?.photo_url} className="w-10 h-10 shrink-0 rounded-xl text-sm" />
             <div className="flex-1 min-w-0">
-                <p className="text-xs font-black text-slate-800 truncate uppercase mt-0.5">{user.name}</p>
+                <p className="text-xs font-black text-slate-800 truncate uppercase mt-0.5">{displayName}</p>
                 <p className="text-[10px] font-bold text-orange-500 tracking-tighter truncate uppercase leading-none">ASM Portal</p>
             </div>
         </div>
@@ -205,10 +217,10 @@ const AsmHome = () => {
                             <Tooltip delayDuration={0}>
                                 <TooltipTrigger asChild>
                                     <button
-                                        className="w-12 h-12 mx-auto flex items-center justify-center text-orange-600 rounded-full hover:bg-orange-50 transition-all"
+                                        className="w-12 h-12 mx-auto flex items-center justify-center rounded-full hover:bg-orange-50 transition-all"
                                         onClick={() => go("profile")}
                                     >
-                                        <User className="h-6 w-6" />
+                                        <AsmAvatar name={displayName} photoUrl={profile?.photo_url} className="h-9 w-9 rounded-full text-xs" />
                                     </button>
                                 </TooltipTrigger>
                                 <TooltipContent side="right" sideOffset={15}>My Profile</TooltipContent>
@@ -238,20 +250,20 @@ const AsmHome = () => {
             <div className="flex-1 flex flex-col overflow-hidden relative">
                 <ModuleLayout
                     title={TITLES[active]}
-                    description={active === "home" ? `Welcome back, ${user.name}` : undefined}
+                    description={active === "home" ? `Welcome back, ${displayName}` : undefined}
                     roleLabel="ASM"
                     onNavigate={(m: AsmModule) => go(m)}
                     onMenuToggle={() => setMobileOpen(true)}
                 >
                     {/* Room for the bottom tab bar on phones */}
                     <div className="pb-28 md:pb-0">
-                        {active === "home" && <AsmHomeModule name={user.name} summary={summary} onOpen={go} />}
+                        {active === "home" && <AsmHomeModule name={displayName} summary={summary} onOpen={go} />}
                         {active === "leads" && <AsmLeads />}
                         {active === "stores" && <AsmStores />}
                         {active === "areas" && <AsmAreas />}
                         {active === "expenses" && <AsmExpenses />}
                         {active === "profile" && (
-                            <AsmProfileModule name={user.name} phone={user.phoneNumber} email={user.email} onSignOut={signOut} />
+                            <AsmProfile profile={profile} onChange={profileChanged} onSignOut={signOut} />
                         )}
                     </div>
                 </ModuleLayout>
@@ -363,43 +375,5 @@ const AsmHomeModule = ({ name, summary, onOpen }: { name: string; summary: Summa
         </div>
     );
 };
-
-const AsmProfileModule = ({ name, phone, email, onSignOut }: { name: string; phone: string; email: string; onSignOut: () => void }) => (
-    <div className="max-w-2xl rounded-[32px] border border-orange-100 bg-white p-6 md:p-8 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-600 border border-orange-500/20">
-                <User className="h-7 w-7" />
-            </div>
-            <div>
-                <p className="text-lg font-black text-slate-900 uppercase tracking-tight">{name}</p>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">Area Sales Manager</p>
-            </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-            {[
-                { label: "WhatsApp number", value: phone, icon: Phone },
-                { label: "Email", value: email, icon: Mail },
-            ].map(f => (
-                <div key={f.label} className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-1.5">
-                        <f.icon className="h-3 w-3" /> {f.label}
-                    </p>
-                    <p className="text-sm font-bold text-slate-800 mt-1 break-all">{f.value || "—"}</p>
-                </div>
-            ))}
-        </div>
-        <p className="text-xs text-slate-500">
-            To change these details, contact the head office — your login code is sent to this number.
-        </p>
-        {/* On phones the sidebar is hidden, so signing out lives here too. */}
-        <Button
-            variant="outline"
-            onClick={onSignOut}
-            className="md:hidden w-full h-12 rounded-2xl border-rose-200 text-rose-600 hover:bg-rose-50 font-bold"
-        >
-            <LogOut className="h-4 w-4 mr-2" /> Sign out
-        </Button>
-    </div>
-);
 
 export default AsmHome;

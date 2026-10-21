@@ -152,6 +152,11 @@ export const VendorEngagementTabs = ({ vendorDetailsId, userId, kind }: Props) =
                                     By admin
                                 </span>
                             )}
+                            {r.created_by_role === "asm" && (
+                                <span className="text-[9px] font-black uppercase tracking-wider text-sky-700 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded">
+                                    By ASM
+                                </span>
+                            )}
                             <span className="ml-auto text-[11px] text-slate-400">{formatToIST(r.created_at)}</span>
                         </div>
                         <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{r.requirement}</p>
@@ -176,6 +181,11 @@ export const VendorEngagementTabs = ({ vendorDetailsId, userId, kind }: Props) =
                             {g.created_by_role === "admin" && (
                                 <span className="text-[9px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 border border-purple-100 px-1.5 py-0.5 rounded">
                                     By admin
+                                </span>
+                            )}
+                            {g.created_by_role === "asm" && (
+                                <span className="text-[9px] font-black uppercase tracking-wider text-sky-700 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded">
+                                    By ASM
                                 </span>
                             )}
                             <span className="ml-auto text-[11px] text-slate-400">{formatToIST(g.created_at)}</span>

@@ -1,17 +1,28 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { POSMLines } from "@/components/posm/POSMLines";
+import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
+import type { PosmLine } from "@/lib/posm";
 import { cn } from "@/lib/utils";
 import {
     type AsmStoreSummary, REASON_DOT, callReasons, daysSinceWarranty, displayName, isLive, monthName, statusNote,
     storeAvatar, storeInitials,
 } from "@/lib/asmStores";
 import { StorePulse } from "./StorePulse";
-import { ArrowLeft, ChevronDown, FileText, Loader2, Mail, MessageCircle, Phone } from "lucide-react";
+import { AsmRaisePosm } from "./AsmRaisePosm";
+import { AsmRaiseGrievance } from "./AsmRaiseGrievance";
+import { ArrowLeft, ChevronDown, FileText, Loader2, Mail, MessageCircle, Paperclip, Phone, Plus, Send, X } from "lucide-react";
 
 /**
  * One of the ASM's stores. Read top to bottom: who to ring, how the store is
  * doing (warranty numbers only, never the warranties), what is waiting on
- * someone right now, then everything that has been closed. Read-only.
+ * someone right now, then everything that has been closed.
+ *
+ * The ASM can raise a POSM request or a grievance for the store, and reply on
+ * its tickets — every POSM request, and the grievances the store raised (a
+ * customer's complaint is the store's to answer).
  */
 
 interface PosmRequest {
@@ -20,9 +31,12 @@ interface PosmRequest {
     requirement: string;
     status: string | null;
     created_by_role: string;
+    created_by_name: string | null;
     created_at: string;
     updated_at: string | null;
-    messages: { sender_role: string; message: string; attachments: string[]; created_at: string }[];
+    /** Item lines on requests from the item flow; null on the older free-text ones. */
+    items: PosmLine[] | null;
+    messages: { sender_role: string; sender_name: string | null; message: string; attachments: string[]; created_at: string }[];
 }
 
 interface Grievance {
@@ -46,6 +60,8 @@ interface Grievance {
     customer_feedback: string | null;
     customer_name: string | null;
     customer_phone: string | null;
+    created_by_role: string;
+    created_by_name: string | null;
     created_at: string;
     resolved_at: string | null;
     remarks: { added_by: string; added_by_name: string | null; remark: string; created_at: string }[];
@@ -67,6 +83,10 @@ const formatDay = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "";
 const formatWhen = (iso: string | null) =>
     iso ? new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
+/** Who raised a ticket on the store's behalf, as a trailing phrase; empty when the store did. */
+const raisedBy = (role: string, name: string | null) =>
+    role === "admin" ? " by head office" : role === "asm" ? ` by ${name || "the ASM"} (ASM)` : "";
+
 const ageOf = (iso: string) => {
     const d = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
     return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`;
@@ -98,11 +118,11 @@ const Attachments = ({ urls }: { urls: string[] }) =>
         </div>
     ) : null;
 
-type Message = { who: string; fromStore: boolean; text: string; when: string; attachments?: string[] };
+type Message = { who: string; fromStore: boolean; text: string; when: string; attachments?: string[]; asm?: boolean };
 
 const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** Head office on the left, the store on the right. A message sent twice in a row by the same person shows once. */
+/** Head office on the left, the store (and its ASM) on the right. A message sent twice in a row by the same person shows once. */
 const Thread = ({ items }: { items: Message[] }) => {
     const shown = items.filter((m, i) => {
         const prev = items[i - 1];
@@ -114,7 +134,7 @@ const Thread = ({ items }: { items: Message[] }) => {
                 <div key={i} className={cn("flex", m.fromStore ? "justify-end" : "justify-start")}>
                     <div className={cn(
                         "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm",
-                        m.fromStore ? "bg-orange-50 rounded-br-sm" : "bg-slate-100 rounded-bl-sm"
+                        m.asm ? "bg-sky-50 rounded-br-sm" : m.fromStore ? "bg-orange-50 rounded-br-sm" : "bg-slate-100 rounded-bl-sm"
                     )}>
                         <p className="text-xs text-slate-500"><span className="font-semibold text-slate-700">{m.who}</span>, {formatWhen(m.when)}</p>
                         <p className="text-slate-800 whitespace-pre-wrap break-words mt-0.5">{m.text}</p>
@@ -124,6 +144,53 @@ const Thread = ({ items }: { items: Message[] }) => {
             ))}
         </div>
     ) : null;
+};
+
+/**
+ * The ASM's reply on a ticket. POSM replies can carry photos; grievance
+ * remarks are text, as everyone else's are.
+ */
+const ReplyBox = ({ withFiles, onSend }: { withFiles?: boolean; onSend: (text: string, files: File[]) => Promise<boolean> }) => {
+    const [text, setText] = useState("");
+    const [files, setFiles] = useState<File[]>([]);
+    const [sending, setSending] = useState(false);
+    const send = async () => {
+        if (!text.trim() && !files.length) return;
+        setSending(true);
+        if (await onSend(text.trim(), files)) { setText(""); setFiles([]); }
+        setSending(false);
+    };
+    return (
+        <div className="rounded-2xl border border-slate-200 bg-white p-2">
+            <Textarea value={text} onChange={e => setText(e.target.value)} rows={2} maxLength={2000}
+                placeholder="Write a reply…" aria-label="Reply"
+                className="border-0 shadow-none focus-visible:ring-0 resize-none text-sm" />
+            {files.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+                    {files.map((f, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 pl-2 pr-1 py-0.5 text-xs text-slate-600 max-w-[200px]">
+                            <span className="truncate">{f.name}</span>
+                            <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`}
+                                className="h-5 w-5 rounded flex items-center justify-center hover:bg-slate-200"><X className="h-3 w-3" /></button>
+                        </span>
+                    ))}
+                </div>
+            )}
+            <div className="flex items-center justify-between gap-2 px-1">
+                {withFiles ? (
+                    <label className="inline-flex items-center gap-1.5 h-8 px-2 rounded-lg text-xs font-medium text-slate-500 hover:text-orange-700 hover:bg-orange-50 cursor-pointer">
+                        <Paperclip className="h-3.5 w-3.5" /> Photo
+                        <input type="file" accept="image/*,application/pdf" multiple className="hidden"
+                            onChange={e => { const add = Array.from(e.target.files ?? []); setFiles(f => [...f, ...add].slice(0, 5)); e.target.value = ""; }} />
+                    </label>
+                ) : <span />}
+                <Button size="sm" onClick={send} disabled={sending || (!text.trim() && !files.length)} className="h-8 rounded-lg bg-orange-500 hover:bg-orange-600">
+                    {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1.5" />}
+                    {!sending && "Send"}
+                </Button>
+            </div>
+        </div>
+    );
 };
 
 /** One grievance or POSM request: a line you can open to read all of it. */
@@ -147,12 +214,12 @@ const Row = ({ kind, title, status, statusClass, sub, children }: {
     );
 };
 
-const GrievanceRow = ({ g }: { g: Grievance }) => (
+const GrievanceRow = ({ g, onReply }: { g: Grievance; onReply: (g: Grievance, text: string) => Promise<boolean> }) => (
     <Row
         kind="Grievance"
         sub={g.ticket_id}
         title={g.subject || sentence(g.category || "Grievance")}
-        status={`${sentence(g.status)}, raised ${GRIEVANCE_DONE.includes(g.status) ? formatDay(g.created_at) : ageOf(g.created_at)}${g.source_type === "franchise" ? " by the store" : " by a customer"}`}
+        status={`${sentence(g.status)}, raised ${GRIEVANCE_DONE.includes(g.status) ? formatDay(g.created_at) : ageOf(g.created_at)}${g.source_type === "franchise" ? (raisedBy(g.created_by_role, g.created_by_name) || " by the store") : " by a customer"}`}
         statusClass={statusTone(g.status, GRIEVANCE_DONE)}
     >
         {g.description && <p className="text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">{g.description}</p>}
@@ -170,8 +237,11 @@ const GrievanceRow = ({ g }: { g: Grievance }) => (
         {g.franchise_remarks && <Field label="Store's remarks">{g.franchise_remarks}</Field>}
         {g.admin_remarks && <Field label="Head office remarks">{g.admin_remarks}</Field>}
         <Thread items={g.remarks.map(r => ({
-            who: r.added_by_name || sentence(r.added_by), fromStore: r.added_by === "franchise", text: r.remark, when: r.created_at,
+            who: r.added_by === "asm" ? `${r.added_by_name || "ASM"} (ASM)` : r.added_by_name || sentence(r.added_by),
+            fromStore: r.added_by === "franchise" || r.added_by === "asm", asm: r.added_by === "asm",
+            text: r.remark, when: r.created_at,
         }))} />
+        {g.source_type === "franchise" && !GRIEVANCE_DONE.includes(g.status) && <ReplyBox onSend={text => onReply(g, text)} />}
         {(g.customer_rating || g.customer_feedback) && (
             <Field label="Customer's rating">
                 {g.customer_rating ? `${g.customer_rating} out of 5` : ""}{g.customer_rating && g.customer_feedback ? ": " : ""}{g.customer_feedback}
@@ -180,21 +250,25 @@ const GrievanceRow = ({ g }: { g: Grievance }) => (
     </Row>
 );
 
-const PosmRow = ({ r }: { r: PosmRequest }) => {
+const PosmRow = ({ r, onReply }: { r: PosmRequest; onReply: (r: PosmRequest, text: string, files: File[]) => Promise<boolean> }) => {
     const status = r.status || "open";
     return (
         <Row
             kind="POSM"
             sub={r.ticket_id}
             title={r.requirement}
-            status={`${sentence(status)}, asked ${POSM_DONE.includes(status) ? formatDay(r.created_at) : ageOf(r.created_at)}${r.created_by_role === "admin" ? " by head office" : ""}`}
+            status={`${sentence(status)}, asked ${POSM_DONE.includes(status) ? formatDay(r.created_at) : ageOf(r.created_at)}${raisedBy(r.created_by_role, r.created_by_name)}`}
             statusClass={statusTone(status, POSM_DONE)}
         >
-            <p className="text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">{r.requirement}</p>
+            {r.items?.length
+                ? <POSMLines lines={r.items} />
+                : <p className="text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">{r.requirement}</p>}
             <Thread items={r.messages.map(m => ({
-                who: m.sender_role === "admin" ? "Head office" : "Store", fromStore: m.sender_role !== "admin",
+                who: m.sender_role === "admin" ? "Head office" : m.sender_role === "asm" ? `${m.sender_name || "ASM"} (ASM)` : "Store",
+                fromStore: m.sender_role !== "admin", asm: m.sender_role === "asm",
                 text: m.message, when: m.created_at, attachments: m.attachments,
             }))} />
+            {!POSM_DONE.includes(status) && <ReplyBox withFiles onSend={(text, files) => onReply(r, text, files)} />}
             <p className="text-xs text-slate-400">Last updated {formatWhen(r.updated_at || r.created_at)}</p>
         </Row>
     );
@@ -205,24 +279,54 @@ const List = ({ children }: { children: React.ReactNode }) => (
 );
 
 export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: () => void }) => {
+    const { toast } = useToast();
     const [store, setStore] = useState<AsmStoreSummary | null>(null);
     const [posm, setPosm] = useState<PosmRequest[]>([]);
     const [grievances, setGrievances] = useState<Grievance[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [history, setHistory] = useState<"grievances" | "posm">("grievances");
+    const [raising, setRaising] = useState<"posm" | "grievance" | null>(null);
 
-    useEffect(() => {
-        setLoading(true);
-        api.get(`/asm-portal/stores/${storeId}`)
+    // After a raise or a reply the page reloads quietly, keeping what is open.
+    const load = useCallback((quiet = false) => {
+        if (!quiet) setLoading(true);
+        return api.get(`/asm-portal/stores/${storeId}`)
             .then(res => {
                 setStore(res.data.store);
                 setGrievances(res.data.grievances || []);
                 setPosm(res.data.posm || []);
             })
-            .catch(e => setError(getErrorMessage(e, "Could not load this store")))
+            .catch(e => { if (!quiet) setError(getErrorMessage(e, "Could not load this store")); })
             .finally(() => setLoading(false));
     }, [storeId]);
+
+    useEffect(() => { load(); }, [load]);
+
+    const replyPosm = async (r: PosmRequest, text: string, files: File[]) => {
+        try {
+            const fd = new FormData();
+            if (text) fd.append("message", text);
+            files.forEach(f => fd.append("attachments", f));
+            await api.post(`/asm-portal/posm/${r.id}/messages`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+            await load(true);
+            return true;
+        } catch (e) {
+            toast({ title: "Could not send", description: getErrorMessage(e, "Please try again."), variant: "destructive" });
+            return false;
+        }
+    };
+
+    const replyGrievance = async (g: Grievance, text: string) => {
+        try {
+            await api.post(`/asm-portal/grievances/${g.id}/remarks`, { remarks: text });
+            await load(true);
+            return true;
+        } catch (e) {
+            toast({ title: "Could not send", description: getErrorMessage(e, "Please try again."), variant: "destructive" });
+            return false;
+        }
+    };
 
     const back = (
         <button onClick={onBack} className="inline-flex items-center gap-1.5 h-9 pr-3 rounded-lg text-sm font-medium text-slate-500 hover:text-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400">
@@ -264,8 +368,8 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
     const closedP = posm.filter(r => POSM_DONE.includes(r.status || "open"));
     // Open work, oldest first: that is the order it should be chased in.
     const waiting = [
-        ...openG.map(g => ({ at: g.created_at, el: <GrievanceRow key={`g${g.id}`} g={g} /> })),
-        ...openP.map(r => ({ at: r.created_at, el: <PosmRow key={`p${r.id}`} r={r} /> })),
+        ...openG.map(g => ({ at: g.created_at, el: <GrievanceRow key={`g${g.id}`} g={g} onReply={replyGrievance} /> })),
+        ...openP.map(r => ({ at: r.created_at, el: <PosmRow key={`p${r.id}`} r={r} onReply={replyPosm} /> })),
     ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
     return (
@@ -369,9 +473,22 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                 <div className="space-y-9">
                     {/* What is waiting */}
                     <section>
-                        <h3 className="text-base font-semibold text-slate-900 flex items-baseline gap-2">
-                            Open now {waiting.length > 0 && <span className="text-sm font-normal text-slate-400 tabular-nums">{waiting.length}</span>}
-                        </h3>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-base font-semibold text-slate-900 flex items-baseline gap-2">
+                                Open now {waiting.length > 0 && <span className="text-sm font-normal text-slate-400 tabular-nums">{waiting.length}</span>}
+                            </h3>
+                            {/* Raising for a store is for live stores only. */}
+                            {isLive(store) && (
+                                <div className="flex gap-2">
+                                    <Button size="sm" variant="outline" onClick={() => setRaising("posm")} className="h-9 rounded-xl border-orange-200 text-orange-700 hover:bg-orange-50">
+                                        <Plus className="h-4 w-4 mr-1" /> Raise POSM
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => setRaising("grievance")} className="h-9 rounded-xl border-orange-200 text-orange-700 hover:bg-orange-50">
+                                        <Plus className="h-4 w-4 mr-1" /> Raise grievance
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
                         {waiting.length === 0
                             ? <p className="mt-2 text-sm text-slate-500">No open grievances or POSM requests.</p>
                             : <div className="mt-3"><List>{waiting.map(w => w.el)}</List></div>}
@@ -393,13 +510,18 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                             </div>
                             <div className="mt-3">
                                 {history === "grievances"
-                                    ? closedG.length ? <List>{closedG.map(g => <GrievanceRow key={g.id} g={g} />)}</List> : <p className="text-sm text-slate-500">No closed grievances.</p>
-                                    : closedP.length ? <List>{closedP.map(r => <PosmRow key={r.id} r={r} />)}</List> : <p className="text-sm text-slate-500">No closed POSM requests.</p>}
+                                    ? closedG.length ? <List>{closedG.map(g => <GrievanceRow key={g.id} g={g} onReply={replyGrievance} />)}</List> : <p className="text-sm text-slate-500">No closed grievances.</p>
+                                    : closedP.length ? <List>{closedP.map(r => <PosmRow key={r.id} r={r} onReply={replyPosm} />)}</List> : <p className="text-sm text-slate-500">No closed POSM requests.</p>}
                             </div>
                         </section>
                     )}
                 </div>
             </div>
+
+            <AsmRaisePosm storeId={store.vendor_details_id} storeName={displayName(store.store_name)}
+                open={raising === "posm"} onOpenChange={o => setRaising(o ? "posm" : null)} onRaised={() => load(true)} />
+            <AsmRaiseGrievance storeId={store.vendor_details_id} storeName={displayName(store.store_name)}
+                open={raising === "grievance"} onOpenChange={o => setRaising(o ? "grievance" : null)} onRaised={() => load(true)} />
         </div>
     );
 };

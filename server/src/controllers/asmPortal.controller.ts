@@ -4,6 +4,19 @@ import { AuthRequest } from '../middleware/auth.js';
 import { leadPincode } from '../services/leadRouting.js';
 import { coverageOf } from '../services/asmTerritoryQuery.js';
 import { storesOfAsm, storeDetailForAsm } from '../services/asmStores.js';
+import { cleanAsmName } from '../services/asmAccount.service.js';
+import { ActivityLogService } from '../services/activity-log.service.js';
+import { fieldChanges } from '../services/profileChanges.js';
+import { urlToDiskPath, UPLOADS_BASE_DIR } from '../config/localUpload.js';
+import fs from 'fs';
+import path from 'path';
+
+/** Deletes an old profile photo. Only ever inside uploads/asm-photos; best effort. */
+function removeUpload(url: string) {
+    const file = path.resolve(urlToDiskPath(url));
+    if (!file.startsWith(path.resolve(UPLOADS_BASE_DIR, 'asm-photos') + path.sep)) return;
+    fs.promises.unlink(file).catch(() => {});
+}
 
 /**
  * The ASM's own view of their work: the leads routed to them, the areas they
@@ -123,6 +136,107 @@ export class AsmPortalController {
         } catch (error) {
             console.error('[ASM portal] store detail failed:', error);
             res.status(500).json({ error: 'Could not load this store' });
+        }
+    }
+
+    /** GET /api/asm-portal/profile — the ASM's own details for the Profile tab. */
+    static async profile(req: AuthRequest, res: Response) {
+        try {
+            const [rows]: any = await db.execute(
+                'SELECT id, name, phone_number, email, photo_url FROM asms WHERE profile_id = ?',
+                [req.user!.id]
+            );
+            if (!rows.length) return res.status(403).json({ error: 'Your ASM account was not found' });
+            res.json({ success: true, profile: rows[0] });
+        } catch (error) {
+            console.error('[ASM portal] profile failed:', error);
+            res.status(500).json({ error: 'Could not load your profile' });
+        }
+    }
+
+    /**
+     * PUT /api/asm-portal/profile — the ASM corrects the spelling of their name.
+     * Only the name: the number is their login and the email belongs to head
+     * office, so neither is read from the body. Nothing is keyed on the name
+     * (stores, leads and claims all hang off asms.id), so a rename is safe.
+     */
+    static async updateName(req: AuthRequest, res: Response) {
+        const name = cleanAsmName(req.body?.name);
+        if (!name) {
+            return res.status(400).json({ error: 'Enter your name as 2 to 60 letters (spaces, dots, apostrophes and hyphens are fine)' });
+        }
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+            const [rows]: any = await conn.execute(
+                'SELECT id, name FROM asms WHERE profile_id = ? FOR UPDATE',
+                [req.user!.id]
+            );
+            if (!rows.length) {
+                await conn.rollback();
+                return res.status(403).json({ error: 'Your ASM account was not found' });
+            }
+            const before = rows[0];
+            if (before.name === name) {
+                await conn.rollback();
+                return res.json({ success: true, name });
+            }
+            // Both copies: asms is what head office sees, profiles is the login.
+            await conn.execute('UPDATE asms SET name = ? WHERE id = ?', [name, before.id]);
+            await conn.execute('UPDATE profiles SET name = ? WHERE id = ?', [name, req.user!.id]);
+            await conn.commit();
+
+            await ActivityLogService.log({
+                adminId: req.user!.id,
+                adminName: name,
+                adminEmail: req.user!.email,
+                actionType: 'ASM_NAME_CHANGED',
+                targetType: 'ASM',
+                targetId: before.id,
+                targetName: name,
+                details: { by: 'asm', changes: fieldChanges({ name: before.name }, { name }) },
+                ipAddress: req.ip || req.socket?.remoteAddress,
+            });
+            res.json({ success: true, name });
+        } catch (error) {
+            await conn.rollback().catch(() => {});
+            console.error('[ASM portal] name change failed:', error);
+            res.status(500).json({ error: 'Could not save your name' });
+        } finally {
+            conn.release();
+        }
+    }
+
+    /** POST /api/asm-portal/profile/photo — set or replace the ASM's photo (field "photo"). */
+    static async setPhoto(req: AuthRequest, res: Response) {
+        const file = (req as any).file as Express.Multer.File | undefined;
+        if (!file?.path) return res.status(400).json({ error: 'Choose a photo to upload' });
+        try {
+            const [rows]: any = await db.execute('SELECT id, photo_url FROM asms WHERE profile_id = ?', [req.user!.id]);
+            if (!rows.length) {
+                removeUpload(file.path);
+                return res.status(403).json({ error: 'Your ASM account was not found' });
+            }
+            await db.execute('UPDATE asms SET photo_url = ? WHERE id = ?', [file.path, rows[0].id]);
+            if (rows[0].photo_url) removeUpload(rows[0].photo_url);
+            res.json({ success: true, photo_url: file.path });
+        } catch (error) {
+            console.error('[ASM portal] photo upload failed:', error);
+            res.status(500).json({ error: 'Could not save your photo' });
+        }
+    }
+
+    /** DELETE /api/asm-portal/profile/photo — back to initials. */
+    static async removePhoto(req: AuthRequest, res: Response) {
+        try {
+            const [rows]: any = await db.execute('SELECT id, photo_url FROM asms WHERE profile_id = ?', [req.user!.id]);
+            if (!rows.length) return res.status(403).json({ error: 'Your ASM account was not found' });
+            await db.execute('UPDATE asms SET photo_url = NULL WHERE id = ?', [rows[0].id]);
+            if (rows[0].photo_url) removeUpload(rows[0].photo_url);
+            res.json({ success: true });
+        } catch (error) {
+            console.error('[ASM portal] photo removal failed:', error);
+            res.status(500).json({ error: 'Could not remove your photo' });
         }
     }
 
