@@ -119,7 +119,7 @@ const GrievancePage = () => {
         } catch (error: any) {
             toast({
                 title: "Error",
-                description: "Failed to fetch grievances",
+                description: "Failed to fetch complaints",
                 variant: "destructive",
             });
         } finally {
@@ -181,7 +181,7 @@ const GrievancePage = () => {
         if (!selectedDealer) {
             toast({
                 title: "Dealer Required",
-                description: "Please select the dealer/store related to your grievance",
+                description: "Please select the dealer/store related to your complaint",
                 variant: "destructive",
             });
             return;
@@ -246,7 +246,7 @@ const GrievancePage = () => {
 
             if (response.data.success) {
                 toast({
-                    title: "Grievance Submitted",
+                    title: "Complaint Submitted",
                     description: `Ticket ID: ${response.data.data.ticketId}`,
                 });
                 // Reset form
@@ -264,7 +264,7 @@ const GrievancePage = () => {
         } catch (error: any) {
             toast({
                 title: "Submission Failed",
-                description: getErrorMessage(error, "Failed to submit grievance"),
+                description: getErrorMessage(error, "Failed to submit complaint"),
                 variant: "destructive",
             });
         } finally {
@@ -474,7 +474,7 @@ const GrievancePage = () => {
                                     <MessageSquare className="h-16 w-16 text-slate-600 mx-auto mb-4 opacity-50" />
                                     <p className="text-slate-400 text-lg">No active tickets found</p>
                                     <Button className="mt-4" onClick={() => setActiveTab("new")}>
-                                        Submit Your First Grievance
+                                        Submit Your First Complaint
                                     </Button>
                                 </CardContent>
                             </Card>
@@ -636,7 +636,7 @@ const GrievancePage = () => {
                                         <HelpCircle className="h-6 w-6 text-orange-600 dark:text-orange-400" />
                                     </div>
                                     <div>
-                                        <CardTitle className="text-xl font-black text-slate-800">Submit a Grievance</CardTitle>
+                                        <CardTitle className="text-xl font-black text-slate-800">Submit a Complaint</CardTitle>
                                         <CardDescription className="text-slate-500">
                                             Tell us about your issue and we'll help resolve it
                                         </CardDescription>
@@ -731,7 +731,7 @@ const GrievancePage = () => {
                                                         <p className="text-xs text-amber-700 flex items-start gap-2">
                                                             <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
                                                             <span>
-                                                                <strong>No active warranties found.</strong> If you recently registered a warranty, it may still be <strong>pending approval</strong> by the store or admin. You can still submit a grievance by providing your product details in the description below.
+                                                                <strong>No active warranties found.</strong> If you recently registered a warranty, it may still be <strong>pending approval</strong> by the store or admin. You can still submit a complaint by providing your product details in the description below.
                                                             </span>
                                                         </p>
                                                     </div>
@@ -917,7 +917,7 @@ const GrievancePage = () => {
                                         ) : (
                                             <>
                                                 <Send className="h-4 w-4 mr-2" />
-                                                Submit Grievance
+                                                Submit Complaint
                                             </>
                                         )}
                                     </Button>

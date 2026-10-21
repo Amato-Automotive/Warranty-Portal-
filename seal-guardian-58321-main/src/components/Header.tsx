@@ -109,7 +109,7 @@ const Header = ({ className }: { className?: string }) => {
                               isActive("/admin/grievances") ? "bg-orange-50 text-orange-600" : "text-slate-600 hover:bg-slate-50"
                             )}>
                               <MessageSquareWarning className={cn("h-5 w-5", isActive("/admin/grievances") ? "text-orange-500" : "text-slate-400")} />
-                              <span className="font-medium text-sm">Grievances</span>
+                              <span className="font-medium text-sm">Complaints</span>
                             </div>
                           </Link>
                         </>
@@ -227,7 +227,7 @@ const Header = ({ className }: { className?: string }) => {
                       className="flex items-center gap-1"
                     >
                       <MessageSquareWarning className="h-4 w-4" />
-                      Grievances
+                      Complaints
                     </Button>
                   </Link>
                 </>

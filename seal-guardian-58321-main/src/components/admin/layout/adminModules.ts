@@ -8,7 +8,7 @@ import {
     ClipboardCheck,
     FileText,
     Flag,
-    Gift,
+    Gift, MessageSquareHeart,
     HardHat,
     History,
     Layers,
@@ -49,6 +49,7 @@ export type AdminModule =
     | 'announcements'
     | 'notification-settings'
     | 'posm'
+    | 'feedback'
     | 'schemes'
     | 'uid-management'
     | 'ppf-rolls'
@@ -79,6 +80,7 @@ const moduleToPermKey: Record<string, string> = {
     'notification-settings': 'announcements',
     'grievances': 'grievances',
     'posm': 'posm',
+    'feedback': 'feedback',
     'schemes': 'schemes',
     'ecatalogue': 'ecatalogue',
     'terms': 'terms',
@@ -143,7 +145,8 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
             { id: 'audits', label: "Store Audits", icon: ClipboardCheck, keywords: ['audit & compliance', 'compliance'] },
             { id: 'posm', label: "POSM Requests", icon: Flag, keywords: ['posm requirements', 'marketing material', 'branding'] },
             { id: 'schemes', label: "Offers & Schemes", icon: Gift, keywords: ['schemes', 'offers', 'incentives', 'leaderboard', 'contest', 'rewards'] },
-            { id: 'grievances', label: "Grievances", icon: MessageSquareWarning, keywords: ['complaints', 'tickets'] },
+            { id: 'feedback', label: "Review & Feedback", icon: MessageSquareHeart, keywords: ['feedback', 'review', 'survey', 'monthly questions', 'rating'] },
+            { id: 'grievances', label: "Complaints", icon: MessageSquareWarning, keywords: ['complaints', 'tickets'] },
         ]
     },
     {

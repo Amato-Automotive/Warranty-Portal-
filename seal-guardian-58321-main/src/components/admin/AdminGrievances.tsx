@@ -113,7 +113,7 @@ const AdminGrievances = () => {
         } catch (error: any) {
             toast({
                 title: "Error",
-                description: "Failed to fetch grievances",
+                description: "Failed to fetch complaints",
                 variant: "destructive",
             });
         } finally {
@@ -212,7 +212,7 @@ const AdminGrievances = () => {
                 admin_notes: adminNotes
             });
 
-            toast({ title: "Saved", description: "Grievance status and remarks updated" });
+            toast({ title: "Saved", description: "Complaint status and remarks updated" });
 
             // If they just updated or added remarks, refresh the history instead of closing
             if (adminRemarks.trim()) {
@@ -267,7 +267,7 @@ const AdminGrievances = () => {
             if (current && current.assigned_to === assignedTo) return;
 
             await api.put(`/grievance/${id}/assign`, { assignedTo });
-            toast({ title: "Assigned", description: "Grievance assigned successfully" });
+            toast({ title: "Assigned", description: "Complaint assigned successfully" });
 
             // Update local state
             setGrievances(prev => prev.map(g => g.id === id ? { ...g, assigned_to: assignedTo } : g));
@@ -304,8 +304,8 @@ const AdminGrievances = () => {
         <div className="space-y-6 p-6">
             <div className="flex justify-between items-center">
                 <div>
-                    <h2 className="text-2xl font-bold">Grievance Management</h2>
-                    <p className="text-muted-foreground">Monitor and manage all customer grievances</p>
+                    <h2 className="text-2xl font-bold">Complaint Management</h2>
+                    <p className="text-muted-foreground">Monitor and manage all customer complaints</p>
                 </div>
                 <Button variant="outline" onClick={fetchGrievances}>
                     <RefreshCw className="h-4 w-4 mr-2" />
@@ -318,7 +318,7 @@ const AdminGrievances = () => {
                 <Card>
                     <CardContent className="pt-6">
                         <p className="text-3xl font-bold">{stats.total}</p>
-                        <p className="text-sm text-muted-foreground">Total Grievances</p>
+                        <p className="text-sm text-muted-foreground">Total Complaints</p>
                     </CardContent>
                 </Card>
                 <Card>
@@ -367,7 +367,7 @@ const AdminGrievances = () => {
                 <Card>
                     <CardContent className="py-12 text-center">
                         <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                        <p className="text-muted-foreground">No grievances found</p>
+                        <p className="text-muted-foreground">No complaints found</p>
                     </CardContent>
                 </Card>
             ) : (
@@ -468,7 +468,7 @@ const AdminGrievances = () => {
                                                 </div>
                                                 {selectedGrievance.franchise_name && (
                                                     <div>
-                                                        <p className="text-muted-foreground text-xs mb-1">Grievance For (Department)</p>
+                                                        <p className="text-muted-foreground text-xs mb-1">Complaint For (Department)</p>
                                                         <p className="font-medium text-primary">{selectedGrievance.franchise_name}</p>
                                                     </div>
                                                 )}

@@ -143,7 +143,7 @@ export const GeographicSection = ({
                             {[
                                 { id: 'warranty', label: 'Warranty', icon: ShieldCheck, color: 'text-emerald-600', bg: 'bg-emerald-50' },
                                 { id: 'product', label: 'Products', icon: Box, color: 'text-blue-600', bg: 'bg-blue-50' },
-                                { id: 'grievance', label: 'Grievance', icon: MessageSquare, color: 'text-rose-600', bg: 'bg-rose-50' },
+                                { id: 'grievance', label: 'Complaint', icon: MessageSquare, color: 'text-rose-600', bg: 'bg-rose-50' },
                                 { id: 'posm', label: 'POSM', icon: Package, color: 'text-amber-600', bg: 'bg-amber-50' }
                             ].map((m) => (
                                 <button
@@ -354,7 +354,7 @@ export const GeographicSection = ({
                                                         {val}
                                                     </span>
                                                     <span className="text-[8px] font-black uppercase text-slate-300 tracking-tighter">
-                                                        {geoMetric === 'warranty' ? 'Warranties' : geoMetric === 'product' ? 'Total Sales' : geoMetric === 'grievance' ? 'Grievances' : 'POSM Requests'}
+                                                        {geoMetric === 'warranty' ? 'Warranties' : geoMetric === 'product' ? 'Total Sales' : geoMetric === 'grievance' ? 'Complaints' : 'POSM Requests'}
                                                     </span>
                                                 </div>
 

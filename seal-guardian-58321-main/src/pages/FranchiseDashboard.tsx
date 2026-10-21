@@ -24,6 +24,8 @@ import { FranchiseLeads, type LeadsView } from "@/components/fms/FranchiseLeads"
 import { FranchiseSchemes } from "@/components/fms/FranchiseSchemes";
 import VendorGrievances from "@/components/fms/VendorGrievances";
 import POSMModule from "@/components/fms/POSMModule";
+import FeedbackModule from "@/components/fms/FeedbackModule";
+import { FeedbackReminder } from "@/components/fms/FeedbackReminder";
 import ECatalogue from "@/components/fms/ECatalogue";
 import B2BOrderManagement from "@/components/fms/B2BOrderManagement";
 import Profile from "./Profile";
@@ -74,7 +76,7 @@ const FranchiseDashboard = () => {
     const filteredMenuGroups = menuGroups.map(group => {
         if (isDistributor && !isFranchise) {
             const filteredItems = group.items.filter(item => {
-                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets'];
+                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets', 'feedback'];
                 return !franchiseOnly.includes(item.id);
             });
             return { ...group, items: filteredItems };
@@ -871,6 +873,8 @@ const FranchiseDashboard = () => {
                         <POSMModule />
                     </div>
                 );
+            case 'feedback':
+                return <FeedbackModule />;
             case 'ecatalogue':
                 return (
                     <div className="-mt-8 md:-mt-14">
@@ -901,13 +905,14 @@ const FranchiseDashboard = () => {
             ecatalogue: "E-Catalogue",
             news: "News & Alerts",
             orders: "Order Management",
-            grievances: "Grievance Redressal",
+            grievances: "Complaint Redressal",
             terms: "Terms & Conditions",
             "claim-process": "Claim Process",
             offers: "Offers & Schemes",
             audit: "Audit & Compliance",
             targets: "Targets & Achievements",
             posm: "POSM Requirements",
+            feedback: "Review & Feedback",
             profile: "My Profile"
         };
         return titles[activeModule] || "Dashboard";
@@ -980,6 +985,8 @@ const FranchiseDashboard = () => {
         <div className="flex h-screen bg-[#fffaf5]">
             {/* One-time-per-login notice pointing franchises at the new Claim Process */}
             <ClaimProcessAnnouncement onView={() => setActiveModule('claim-process')} />
+            {/* The monthly feedback reminder, when the admin has it on and this store has not filled it. */}
+            {isFranchise && <FeedbackReminder onFill={() => setActiveModule('feedback')} />}
 
             <DashboardSidebar
                 activeModule={activeModule}

@@ -23,6 +23,8 @@ export const HI: Record<string, string> = {
     "Audit & Compliance": "ऑडिट",
     "News & Alerts": "समाचार और अलर्ट",
     "Grievance Redressal": "शिकायत",
+    "Complaint Redressal": "शिकायत",
+    "Complaints": "शिकायतें",
     "Terms & Conditions": "नियम और शर्तें",
     "Claim Process": "क्लेम प्रक्रिया",
     "Manpower Control": "स्टाफ़",

@@ -176,7 +176,7 @@ export const GrievanceCategoryManager = ({ open, onClose, onChanged }: Props) =>
         <Dialog open={open} onOpenChange={v => { if (!v && !saving) onClose(); }}>
             <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
                 <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
-                    <DialogTitle className="text-base">Grievance categories</DialogTitle>
+                    <DialogTitle className="text-base">Complaint categories</DialogTitle>
                     <DialogDescription className="text-xs">
                         What a store can pick, and who each one goes to. Changes take effect
                         immediately — no deploy needed.
@@ -294,7 +294,7 @@ const Editor = ({ form, setForm, onSave, onCancel, saving, valueSlug }: any) => 
                 onChange={e => setForm({ ...form, assignee_email: e.target.value })}
                 placeholder="name@autoformindia.com" className="h-9 text-sm mt-1" />
             <p className="text-[10px] text-slate-400 mt-1">
-                Every grievance in this category is auto-assigned and emailed here.
+                Every complaint in this category is auto-assigned and emailed here.
             </p>
         </div>
 

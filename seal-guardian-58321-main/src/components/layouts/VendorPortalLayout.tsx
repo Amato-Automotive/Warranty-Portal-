@@ -60,7 +60,7 @@ const VendorPortalLayout = () => {
             manpower: "Manpower Control",
             catalogue: "Product Catalogue",
             news: "News & Alerts",
-            grievances: "Grievance Redressal",
+            grievances: "Complaint Redressal",
             profile: "My Profile"
         };
         return titles[activeModule] || "Dashboard";
