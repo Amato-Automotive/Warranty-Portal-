@@ -1,5 +1,5 @@
 import express from 'express';
-import { getSetting, updateSetting } from '../controllers/settings.controller.js';
+import { getMyECatalogues, getSetting, updateSetting } from '../controllers/settings.controller.js';
 import { authenticateToken, requireAnyPermission, requirePermission, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -35,6 +35,8 @@ const SETTING_WRITERS: Record<string, express.RequestHandler> = {
 
     ecatalogue_flipbook_url: requirePermission('ecatalogue', 'write'),
     ecatalogue_download_url: requirePermission('ecatalogue', 'write'),
+    ecatalogue_ac_flipbook_url: requirePermission('ecatalogue', 'write'),
+    ecatalogue_ac_download_url: requirePermission('ecatalogue', 'write'),
 };
 
 const isPublicSettingKey = (key: string) =>
@@ -49,6 +51,9 @@ const requireKnownSetting: express.RequestHandler = (req, res, next) => {
 
 const requireSettingPermission: express.RequestHandler = (req, res, next) =>
     SETTING_WRITERS[req.params.key](req, res, next);
+
+// The signed-in franchise's own e-catalogues, by its brand.
+router.get('/ecatalogue/mine', authenticateToken, getMyECatalogues);
 
 // Public route to get settings (like terms)
 router.get('/public/:key', requireKnownSetting, getSetting);
