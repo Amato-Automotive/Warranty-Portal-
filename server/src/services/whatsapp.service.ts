@@ -32,6 +32,13 @@ export class WhatsAppService {
     private static readonly API_URL = 'https://api.interakt.ai/v1/public/message/';
     private static readonly API_KEY = process.env.INTERAKT_API_KEY;
 
+    // Image header for the customer warranty templates (submitted, approved,
+    // rejected, rejection reminder). Interakt does not reuse the sample image
+    // uploaded with the template; every send must carry a public URL, or it
+    // fails with "Media Url is missing for header's image".
+    private static readonly WARRANTY_HEADER_IMAGE =
+        process.env.WHATSAPP_WARRANTY_HEADER_IMAGE || 'https://warranty2.autoformindia.co.in/og-image.jpg';
+
     private static activeCampaign: CampaignProgress | null = null;
 
     static getCampaignProgress(campaignId: string): CampaignProgress | null {
@@ -452,20 +459,18 @@ export class WhatsAppService {
 
     /**
      * Send Warranty Submitted Confirmation
-     * Template: af_warranty_submitted_2
+     * Template: af_warranty_submitted_3
      * Variables:
      *   {{1}} = Customer Name
      *   {{2}} = Product Name (e.g. "AquaShield Premium Seat Cover")
-     *   {{3}} = Vehicle Registration Number
-     *   {{4}} = UID / Serial Number
-     *   {{5}} = Product Type (e.g. "Seat Cover", "Paint Protection Film")
-     *   {{6}} = Registration Date (DD-MMM-YYYY)
+     *   {{3}} = UID / Serial Number
+     *   {{4}} = Product Type (e.g. "Seat Cover", "Paint Protection Film")
+     *   {{5}} = Registration Date (DD-MMM-YYYY)
      */
     static async sendWarrantySubmitted(
         phone: string,
         customerName: string,
         productName: string,
-        registrationNumber: string,
         uid: string,
         productType: string,
         purchaseDate: string,
@@ -485,10 +490,12 @@ export class WhatsAppService {
 
         return this.sendTemplateMessage(
             phone,
-            'af_warranty_submitted_2',
-            [customerName, productName, registrationNumber, uid, productTypeLabel, formattedDate],
+            'af_warranty_submitted_3',
+            [customerName, productName, uid, productTypeLabel, formattedDate],
             'warranty_submitted',
-            warrantyId
+            warrantyId,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
@@ -516,18 +523,16 @@ export class WhatsAppService {
      * Template: af_warranty_approved_customer
      *   {{1}} = Customer Name
      *   {{2}} = Product Name
-     *   {{3}} = Registration Number
-     *   {{4}} = UID
-     *   {{5}} = Store Name
-     *   {{6}} = Status (e.g. "Approved")
-     *   {{7}} = Purchase Date
-     *   {{8}} = Warranty Type
+     *   {{3}} = UID
+     *   {{4}} = Store Name
+     *   {{5}} = Status (e.g. "Approved")
+     *   {{6}} = Purchase Date
+     *   {{7}} = Warranty Type
      */
     static async sendWarrantyApprovedCustomer(
         phone: string,
         customerName: string,
         productName: string,
-        registrationNumber: string,
         uid: string,
         storeName: string,
         status: string,
@@ -537,9 +542,11 @@ export class WhatsAppService {
         return this.sendTemplateMessage(
             phone,
             'af_warranty_approved_customer',
-            [customerName, productName, registrationNumber, uid, storeName, status, purchaseDate, warrantyType],
+            [customerName, productName, uid, storeName, status, purchaseDate, warrantyType],
             'warranty_approved_customer',
-            uid
+            uid,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
@@ -599,19 +606,6 @@ export class WhatsAppService {
         );
     }
 
-    /**
-     * Notify customer their warranty has been rejected by admin.
-     * Template: af_cust_warr_rejec_2
-     *   {{1}} = Customer Name
-     *   {{2}} = Product Name
-     *   {{3}} = Registration Number
-     *   {{4}} = UID
-     *   {{5}} = Store Name
-     *   {{6}} = Status (e.g. "Rejected")
-     *   {{7}} = Purchase Date
-     *   {{8}} = Warranty Type
-     *   {{9}} = Rejection Reason
-     */
     /**
      * Tell an ASM what head office did with their expense claim: decided it,
      * changed the decision, or paid it.
@@ -807,51 +801,44 @@ export class WhatsAppService {
     }
 
     /**
-     * Tell customer support about a lead nobody else could take — no store, ASM
-     * or distributor near the customer.
-     *
-     * Template: af_support_lead_alert (header "New Support Lead!"),
-     * overridable with SUPPORT_LEAD_TEMPLATE.
-     *   {{1}} Customer phone   {{2}} Location   {{3}} Product
-     *   {{4}} Vehicle          {{5}} Date of enquiry
-     *   {{6}} Lead number — support's nth lead this month
-     * No customer name: the workflow does not reliably have one.
-     *
-     * Returns false if the send fails — including while the template is still
-     * awaiting Meta's approval — so the caller can fall back to the store alert.
+     * To an Instagram customer who filled the form but never wrote to us, when
+     * several stores are near: thanks, and a "View stores" quick-reply button.
+     * Their tap comes back as a button click carrying "choose_store_<lead id>",
+     * and opens the 24-hour window in which the store list can be sent.
      */
-    static async sendSupportLead(
-        supportPhone: string,
+    static async sendChooseStore(
         customerPhone: string,
-        location: string,
+        name: string | null,
         product: string | null,
-        car: string | null,
-        receivedAt: string,
-        leadNumber: number,
-        leadId?: string
+        area: string,
+        leadId: string
     ): Promise<boolean> {
-        const template = process.env.SUPPORT_LEAD_TEMPLATE || 'af_support_lead_alert';
+        const template = process.env.CHOOSE_STORE_TEMPLATE || 'af_choose_store_sheet';
         return this.sendTemplateMessage(
-            supportPhone,
+            customerPhone,
             template,
-            [
-                customerPhone,
-                location || 'Not provided',
-                product || 'Not specified',
-                car || 'Not specified',
-                receivedAt,
-                String(leadNumber),
-            ],
-            'support_lead',
+            [String(name || '').trim() || 'there', product || 'car accessories', area],
+            'choose_store',
             leadId
         );
     }
 
+    /**
+     * Notify customer their warranty has been rejected by admin.
+     * Template: af_cust_warr_rejec_2
+     *   {{1}} = Customer Name
+     *   {{2}} = Product Name
+     *   {{3}} = UID
+     *   {{4}} = Store Name
+     *   {{5}} = Status (e.g. "Rejected")
+     *   {{6}} = Purchase Date
+     *   {{7}} = Warranty Type
+     *   {{8}} = Rejection Reason
+     */
     static async sendWarrantyRejectedCustomer(
         phone: string,
         customerName: string,
         productName: string,
-        registrationNumber: string,
         uid: string,
         storeName: string,
         status: string,
@@ -862,9 +849,11 @@ export class WhatsAppService {
         return this.sendTemplateMessage(
             phone,
             'af_cust_warr_rejec_2',
-            [customerName, productName, registrationNumber, uid, storeName, status, purchaseDate, warrantyType, rejectionReason],
+            [customerName, productName, uid, storeName, status, purchaseDate, warrantyType, rejectionReason],
             'warranty_rejected_customer',
-            uid
+            uid,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
@@ -873,18 +862,16 @@ export class WhatsAppService {
      * Template: af_vendor_warr_rejected
      *   {{1}} = Store Name
      *   {{2}} = Product Name
-     *   {{3}} = Registration Number
-     *   {{4}} = UID
-     *   {{5}} = Status (e.g. "Not Approved")
-     *   {{6}} = Purchase Date
-     *   {{7}} = Warranty Type
-     *   {{8}} = Rejection Reason
+     *   {{3}} = UID
+     *   {{4}} = Status (e.g. "Not Approved")
+     *   {{5}} = Purchase Date
+     *   {{6}} = Warranty Type
+     *   {{7}} = Rejection Reason
      */
     static async sendVendorRejected(
         phone: string,
         storeName: string,
         productName: string,
-        registrationNumber: string,
         uid: string,
         status: string,
         purchaseDate: string,
@@ -894,7 +881,7 @@ export class WhatsAppService {
         return this.sendTemplateMessage(
             phone,
             'af_vendor_warr_rejected',
-            [storeName, productName, registrationNumber, uid, status, purchaseDate, warrantyType, rejectionReason],
+            [storeName, productName, uid, status, purchaseDate, warrantyType, rejectionReason],
             'vendor_rejected',
             uid
         );
@@ -908,17 +895,16 @@ export class WhatsAppService {
      * Deliberately the same variable order as af_cust_warr_rejec_2 (the
      * original rejection notice) with one addition, so the template can be
      * duplicated in Interakt and reworded rather than built from scratch:
-     *   {{1}} Customer Name      {{6}} Status
-     *   {{2}} Product Name       {{7}} Purchase Date
-     *   {{3}} Registration No.   {{8}} Warranty Type
-     *   {{4}} UID                {{9}} Rejection Reason
-     *   {{5}} Store Name        {{10}} Days since rejection   <-- new
+     *   {{1}} Customer Name      {{6}} Purchase Date
+     *   {{2}} Product Name       {{7}} Warranty Type
+     *   {{3}} UID                {{8}} Rejection Reason
+     *   {{4}} Store Name         {{9}} Days since rejection   <-- new
+     *   {{5}} Status
      */
     static async sendWarrantyRejectReminderCustomer(
         phone: string,
         customerName: string,
         productName: string,
-        registrationNumber: string,
         uid: string,
         storeName: string,
         status: string,
@@ -935,10 +921,12 @@ export class WhatsAppService {
         return this.sendTemplateMessage(
             phone,
             'af_war_rej_reminder_cust',
-            [customerName, productName, registrationNumber, uid, storeName, status,
+            [customerName, productName, uid, storeName, status,
              purchaseDate, warrantyType, rejectionReason, daysSinceRejection],
             contextOverride || 'warranty_reject_reminder_customer',
-            uid
+            uid,
+            undefined,
+            [this.WARRANTY_HEADER_IMAGE]
         );
     }
 
@@ -947,17 +935,15 @@ export class WhatsAppService {
      *
      * Template: af_war_rej_reminder_fran
      * Mirrors af_vendor_warr_rejected, plus the days count:
-     *   {{1}} Store Name         {{5}} Status
-     *   {{2}} Product Name       {{6}} Purchase Date
-     *   {{3}} Registration No.   {{7}} Warranty Type
-     *   {{4}} UID                {{8}} Rejection Reason
-     *                            {{9}} Days since rejection   <-- new
+     *   {{1}} Store Name         {{5}} Purchase Date
+     *   {{2}} Product Name       {{6}} Warranty Type
+     *   {{3}} UID                {{7}} Rejection Reason
+     *   {{4}} Status             {{8}} Days since rejection   <-- new
      */
     static async sendWarrantyRejectReminderStore(
         phone: string,
         storeName: string,
         productName: string,
-        registrationNumber: string,
         uid: string,
         status: string,
         purchaseDate: string,
@@ -969,7 +955,7 @@ export class WhatsAppService {
         return this.sendTemplateMessage(
             phone,
             'af_war_rej_reminder_fran',
-            [storeName, productName, registrationNumber, uid, status,
+            [storeName, productName, uid, status,
              purchaseDate, warrantyType, rejectionReason, daysSinceRejection],
             contextOverride || 'warranty_reject_reminder_store',
             uid
@@ -978,14 +964,13 @@ export class WhatsAppService {
 
     /**
      * Send Franchise Verification Request
-     * Template: franchise_verify_action
+     * Template: franchise_verify_action2
      * Variables:
      *   {{1}} = Franchise Store Name
      *   {{2}} = Customer Name
      *   {{3}} = Customer Phone
-     *   {{4}} = Vehicle Registration Number
-     *   {{5}} = Product Name
-     *   {{6}} = UID
+     *   {{4}} = Product Name
+     *   {{5}} = UID
      * Buttons: Quick Replies — "Approve Installation" / "Reject Installation" (static)
      */
     static async sendFranchiseVerifyAction(
@@ -993,15 +978,14 @@ export class WhatsAppService {
         franchiseName: string,
         customerName: string,
         customerPhone: string,
-        registrationNumber: string,
         productName: string,
         uid: string,
         warrantyId: string
     ): Promise<boolean> {
         return this.sendTemplateMessage(
             phone,
-            'franchise_verify_action',
-            [franchiseName, customerName, customerPhone, registrationNumber, productName, uid],
+            'franchise_verify_action2',
+            [franchiseName, customerName, customerPhone, productName, uid],
             'franchise_verify',
             warrantyId
         );

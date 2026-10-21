@@ -7,7 +7,7 @@ import { B2BOrderSpecSheet } from './B2BOrderSpecSheet';
 import {
   ShoppingBag, Package, ClipboardList, RefreshCw, Minus, Plus, Trash2,
   Download, XCircle, Search, Building2, MapPin, Phone, Mail,
-  CheckCircle2, Clock, Truck, AlertCircle, Ban, ChevronDown, ChevronUp,
+  CheckCircle2, Clock, Truck, AlertCircle, Ban, ChevronDown, ChevronUp, ChevronRight,
   ShoppingCart, FileText, Warehouse, TrendingUp, BarChart3, Info,
   Car, Settings, LayoutList, Lightbulb, Volume2, Wind, Eye, Send, ArrowLeft, Pencil, Upload, MessageSquare,
   Loader2
@@ -51,6 +51,8 @@ interface Order {
   decline_reason?: string | null;
   declined_at?: string | null;
   order_group_id?: string | null;
+  // How many distributor orders one checkout was split into.
+  group_size?: number;
   items: {
     id: string;
     product_name: string;
@@ -62,7 +64,9 @@ interface Order {
 
 // â"€â"€â"€ Status Badge â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
-const StatusBadge = ({ status, isIncoming = false }: { status: Order['status']; isIncoming?: boolean }) => {
+/* "On the way": the distributor has shared a docket but the order isn't
+   received yet. Nothing in the app sets "shipped", so the docket is the sign. */
+const StatusBadge = ({ status, isIncoming = false, docket }: { status: Order['status']; isIncoming?: boolean; docket?: string | null }) => {
   const config: Record<string, { label: string; icon: any; className: string }> = {
     pending:    isIncoming
       ? { label: 'On Hold',   icon: Clock,        className: 'bg-amber-50 text-amber-700 border-amber-200' }
@@ -72,7 +76,10 @@ const StatusBadge = ({ status, isIncoming = false }: { status: Order['status']; 
     delivered:  { label: 'Completed',  icon: CheckCircle2,  className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
     cancelled:  { label: 'Declined',   icon: Ban,           className: 'bg-rose-50 text-rose-700 border-rose-200' },
   };
-  const c = config[status] || config.pending;
+  const onTheWay = status === 'processing' && Boolean(docket);
+  const c = onTheWay
+    ? { label: 'On the way', icon: Truck, className: 'bg-indigo-50 text-indigo-700 border-indigo-200' }
+    : config[status] || config.pending;
   const Icon = c.icon;
   return (
     <span className={cn('inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border', c.className)}>
@@ -737,31 +744,6 @@ const B2BOrderManagement: React.FC = () => {
     ? orders.find(o => o.id === selectedOrderId)
     : incomingOrders.find(o => o.id === selectedOrderId);
 
-  // Auto-select first order when changing tabs or filters
-  useEffect(() => {
-    if (activeTab === 'orders') {
-      const filtered = orders.filter(order => {
-        if (orderFilter === 'active') return order.status === 'processing' || order.status === 'shipped';
-        if (orderFilter === 'onhold') return order.status === 'pending';
-        if (orderFilter === 'completed') return order.status === 'delivered' || order.status === 'received';
-        if (orderFilter === 'declined') return order.status === 'cancelled';
-        return true;
-      });
-      if (filtered.length > 0) {
-        setSelectedOrderId(filtered[0].id);
-      } else {
-        setSelectedOrderId(null);
-      }
-    } else if (activeTab === 'incoming') {
-      if (filteredIncomingOrders.length > 0) {
-        setSelectedOrderId(filteredIncomingOrders[0].id);
-      } else {
-        setSelectedOrderId(null);
-      }
-    } else {
-      setSelectedOrderId(null);
-    }
-  }, [activeTab, orders, incomingOrders, orderFilter, incomingFilter, selectedFranchiseVendorId]);
 
   // Load data on mount
   useEffect(() => {
@@ -1200,7 +1182,7 @@ const B2BOrderManagement: React.FC = () => {
         setIncomingOrders(prev => prev.map(order =>
           order.id === orderId ? { ...order, status: res.data.status || 'processing' } : order
         ));
-        setIncomingFilter('confirmed');
+        setIncomingFilter('active');
         setSelectedOrderId(orderId);
         await fetchIncomingOrders();
         refreshStock();
@@ -1409,6 +1391,37 @@ const B2BOrderManagement: React.FC = () => {
 
   const replenishKey = (productId: string, variationId: string | null) => `${productId}::${variationId ?? ''}`;
 
+  /* The product steppers change the cart directly — no separate "Add to cart"
+     step, and nothing is lost on leaving the page (the cart is saved). */
+  const cartQtyOf = (productId: string, variationId: string | null) =>
+    cartItems.find(i => i.productId === productId && i.variationId === (variationId ?? null))?.quantity ?? 0;
+  const setCartQty = (v: any, qty: number) => {
+    const variationId = v.variation_id ?? null;
+    if (cartItems.some(i => i.productId === v.product_id && i.variationId === variationId)) {
+      updateQuantity(v.product_id, variationId, qty, true);
+      return;
+    }
+    if (qty <= 0) return;
+    addToCart({
+      productId: v.product_id,
+      variationId,
+      productName: v.product_name,
+      variationName: v.variation_name,
+      price: v.price || 0,
+      stockQuantity: v.stock_quantity,
+      sku: v.sku,
+      needsCustomization: false,
+      customizationRemarks: '',
+      distributorId: v.distributor_id,
+      distributorName: v.distributor_name,
+    }, qty, true);
+  };
+  /* Live stock for a cart line, from the distributor it was picked from (the
+     saved cart's own stock figure is a placeholder). */
+  const liveStockOf = (item: CartItem): number | undefined =>
+    distributorStock.find((s: any) => s.product_id === item.productId && (s.variation_id ?? null) === item.variationId
+      && (!item.distributorId || s.distributor_id === item.distributorId))?.stock_quantity;
+
   const getCategoryDescendants = (catId: string, allCats: Category[]): string[] => {
     const directChildren = allCats.filter(c => c.parentId === catId);
     const childIds = directChildren.map(c => c.id);
@@ -1457,6 +1470,9 @@ const B2BOrderManagement: React.FC = () => {
     acc[item.product_id].variations.push(item);
     return acc;
   }, {} as Record<string, { product_id: string; product_name: string; product_description?: string; additional_info?: string[]; category_id?: string; variations: any[] }>);
+  /* Products with something in stock first; out-of-stock ones at the end. */
+  const groupedEntries = Object.entries(grouped).sort(([, a]: [string, any], [, b]: [string, any]) =>
+    Number(b.variations.some((v: any) => v.stock_quantity > 0)) - Number(a.variations.some((v: any) => v.stock_quantity > 0)));
 
   const addReplenishToCart = () => {
     const itemsToCustomize = [];
@@ -1729,7 +1745,10 @@ const B2BOrderManagement: React.FC = () => {
   const isUserFranchise = franchiseProfile?.is_franchise === undefined ? true : Boolean(franchiseProfile?.is_franchise);
 
   const cartQty = cartItems.reduce((s, i) => s + i.quantity, 0);
-  const pendingOrders = orders.filter(o => o.status === 'pending').length;
+  /* Open orders: placed and not yet received or declined. The same number in
+     the header, the Orders tab badge and on each distributor chip. */
+  const isOpenOrder = (o: { status: string }) => o.status === 'processing' || o.status === 'shipped' || o.status === 'pending';
+  const pendingOrders = orders.filter(isOpenOrder).length;
   const selectedFranchise = mappedFranchises.find((franchise: any) => String(franchise.vendor_id) === String(selectedFranchiseVendorId)) || null;
   const filteredMappedFranchises = mappedFranchises.filter((franchise: any) => {
     if (!franchiseSearchQuery.trim()) return true;
@@ -1774,6 +1793,28 @@ const B2BOrderManagement: React.FC = () => {
       return true;
     })
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  /* Which order the details panel shows. On a wide screen, the first one in
+     the list the store is looking at (search, dates, distributor and status
+     all applied), kept across refreshes while it is still in that list. On a
+     phone, none: the list and the details share the screen, so the store
+     sees its list first and taps an order to open it. */
+  const visibleOrderIds = (activeTab === 'orders' ? filteredOrders : activeTab === 'incoming' ? filteredIncomingOrders : [])
+    .map((o: any) => o.id).join(',');
+  useEffect(() => {
+    if (activeTab !== 'orders' && activeTab !== 'incoming') { setSelectedOrderId(null); return; }
+    const ids = visibleOrderIds ? visibleOrderIds.split(',') : [];
+    const wide = typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches;
+    setSelectedOrderId(prev => (prev && ids.includes(prev)) ? prev : (wide ? ids[0] ?? null : null));
+  }, [activeTab, visibleOrderIds]);
+
+  /* A store with a single distributor has nothing to choose: open on it. */
+  const onlyDistributorId = myDistributors.length === 1 ? myDistributors[0]?.id
+    : myDistributors.length === 0 && distributor?.id ? distributor.id : null;
+  useEffect(() => {
+    if (onlyDistributorId && !focusedDistId) setFocusedDistId(onlyDistributorId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlyDistributorId]);
 
   // Groups a filtered order list by order_group_id for the left-panel list.
   // Singletons (null group id, or only one visible member) are returned as
@@ -1871,7 +1912,7 @@ const B2BOrderManagement: React.FC = () => {
                 <div className="flex items-center gap-2.5 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-2.5">
                   <Clock className="w-4 h-4 text-amber-500 shrink-0" />
                   <div>
-                    <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest leading-none">Pending</p>
+                    <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest leading-none">Open</p>
                     <p className="text-xl font-black text-slate-800 leading-none mt-0.5">{pendingOrders} <span className="text-xs font-bold text-slate-400">orders</span></p>
                   </div>
                 </div>
@@ -1885,7 +1926,7 @@ const B2BOrderManagement: React.FC = () => {
 
               const pendingByDist: Record<string, number> = {};
               orders.forEach((o: any) => {
-                if (o.status === 'processing' || o.status === 'pending')
+                if (isOpenOrder(o))
                   pendingByDist[o.distributor_id] = (pendingByDist[o.distributor_id] || 0) + 1;
               });
 
@@ -2015,7 +2056,7 @@ const B2BOrderManagement: React.FC = () => {
                             )}
                             {pendingByDist[focused.id] > 0 && (
                               <span className="flex items-center gap-1 bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full">
-                                <Clock className="w-2.5 h-2.5" />{pendingByDist[focused.id]} pending
+                                <Clock className="w-2.5 h-2.5" />{pendingByDist[focused.id]} open
                               </span>
                             )}
                           </div>
@@ -2046,7 +2087,8 @@ const B2BOrderManagement: React.FC = () => {
               <div ref={franchiseTabDropdownRef} className="relative sm:hidden">
                 {(() => {
                   const tabs = [
-                    { value: 'replenish', label: 'Products', icon: Package,       badge: totalReplenishItems },
+                    { value: 'replenish', label: 'Products', icon: Package,       badge: 0 },
+                    { value: 'cart',      label: 'Cart',     icon: ShoppingCart,  badge: cartQty },
                     { value: 'orders',    label: 'Orders',   icon: ClipboardList, badge: pendingOrders },
                   ];
                   const current = tabs.find(t => t.value === activeTab) || tabs[0];
@@ -2108,7 +2150,7 @@ const B2BOrderManagement: React.FC = () => {
               </div>
               {/* Desktop pill strip */}
               <div className="hidden sm:flex items-center gap-2 bg-slate-50 rounded-3xl p-1.5 w-fit border border-slate-100">
-                <TabButton active={activeTab === 'replenish'} onClick={() => setActiveTab('replenish')} icon={Package} label="Products" badge={totalReplenishItems} />
+                <TabButton active={activeTab === 'replenish'} onClick={() => setActiveTab('replenish')} icon={Package} label="Products" />
                 <TabButton active={activeTab === 'cart'} onClick={() => setActiveTab('cart')} icon={ShoppingCart} label="Cart" badge={cartQty} />
                 <TabButton active={activeTab === 'orders'} onClick={() => { setActiveTab('orders'); setOrderSearch(''); setOrderDateFrom(''); setOrderDateTo(''); setOrderDistributorId(''); }} icon={ClipboardList} label="Orders" badge={pendingOrders} />
               </div>
@@ -2794,13 +2836,13 @@ const B2BOrderManagement: React.FC = () => {
               {isUserFranchise && (
                 <div className="flex items-center shrink-0">
                   <Button
-                    onClick={addReplenishToCart}
-                    disabled={totalReplenishItems === 0}
+                    onClick={() => setActiveTab('cart')}
+                    disabled={cartItems.length === 0}
                     className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl px-3 sm:px-5 py-2.5 text-xs font-black"
                   >
-                    <ShoppingCart className="w-4 h-4 sm:mr-2" />
-                    <span className="hidden sm:inline">Add {totalReplenishItems > 0 ? `${totalReplenishItems} Item${totalReplenishItems > 1 ? 's' : ''}` : 'Items'} to Cart</span>
-                    <span className="sm:hidden">{totalReplenishItems > 0 ? totalReplenishItems : ''} Cart</span>
+                    <ShoppingCart className="w-4 h-4 mr-1.5 sm:mr-2" />
+                    <span className="hidden sm:inline">View cart{cartItems.length ? ` (${cartItems.length})` : ''}</span>
+                    <span className="sm:hidden">{cartItems.length || ''}</span>
                   </Button>
                 </div>
               )}
@@ -2859,7 +2901,7 @@ const B2BOrderManagement: React.FC = () => {
               <span className="flex-1">
                 {!isUserFranchise
                   ? "View product catalogue and variations. As a distributor, you can view the items but cannot place orders."
-                  : "Select products and quantities, then add to cart to request an order from your distributor."
+                  : "Set a quantity with + and it goes straight into your cart. Review the cart and request the order when you're done."
                 }
               </span>
               {showBrandPicker && (
@@ -2923,104 +2965,159 @@ const B2BOrderManagement: React.FC = () => {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {Object.entries(grouped).map(([productId, product]: [string, any]) => {
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5">
+                {groupedEntries.map(([productId, product]: [string, any]) => {
                   const images = productImages[productId] || [];
                   const mainImage = images[0];
                   const categoryName = product.category_id ? categoryMap[product.category_id] : null;
+                  const variations: any[] = product.variations;
+                  const inCart = variations.reduce((n: number, v: any) => n + cartQtyOf(v.product_id, v.variation_id), 0);
+                  const totalStock = variations.reduce((n: number, v: any) => n + Math.max(0, Number(v.stock_quantity) || 0), 0);
+                  /* One option with no real name ("Default") shows as just the product. */
+                  const single = variations.length === 1 && (!hasMeaningfulOrderText(variations[0]?.variation_name) || String(variations[0]?.variation_name).trim().toLowerCase() === 'default');
+                  /* Long option lists (a few products have up to 12) show three; the rest are in the details. */
+                  const shown = variations.length > 4 ? variations.slice(0, 3) : variations;
+                  const openDetails = () => {
+                    setDetailProductId(productId);
+                    setDetailImageIndex(0);
+                    setDetailVariationId(variations[0]?.variation_id || null);
+                  };
 
                   return (
                     <div
                       key={productId}
-                      onClick={() => {
-                        setDetailProductId(productId);
-                        setDetailImageIndex(0);
-                        setDetailVariationId(product.variations[0]?.variation_id || null);
-                      }}
-                      className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col md:flex-row h-full cursor-pointer"
+                      className={cn(
+                        'group bg-white rounded-3xl overflow-hidden flex flex-col border transition-all duration-300',
+                        inCart > 0
+                          ? 'border-orange-300 shadow-[0_8px_30px_rgba(249,115,22,0.12)]'
+                          : 'border-slate-100 shadow-sm hover:shadow-lg hover:-translate-y-0.5'
+                      )}
                     >
-                      {/* Left/Top Image block */}
-                      <div className="md:w-[160px] w-full bg-slate-50 flex items-center justify-center p-4 shrink-0 relative border-b md:border-b-0 md:border-r border-slate-100 min-h-[160px]">
+                      {/* Picture: tap for photos and details */}
+                      <button
+                        type="button"
+                        onClick={openDetails}
+                        className="relative aspect-[4/3] bg-gradient-to-b from-slate-50 to-white flex items-center justify-center p-5 overflow-hidden"
+                        aria-label={`See ${product.product_name}`}
+                      >
                         {mainImage ? (
                           <img
                             src={mainImage}
                             alt={product.product_name}
-                            className="object-contain max-h-[120px] max-w-full transition-transform duration-500 hover:scale-105"
+                            loading="lazy"
+                            className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-105"
                           />
                         ) : (
-                          <Package className="w-10 h-10 text-slate-300" />
+                          <Package className="w-12 h-12 text-slate-200" />
                         )}
                         {categoryName && (
-                          <Badge className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white hover:bg-slate-900/80 border-none font-bold uppercase tracking-wider text-[9px] px-2 py-0.5">
+                          <span className="absolute top-3 left-3 max-w-[60%] truncate rounded-full bg-white/90 backdrop-blur px-2.5 py-1 text-[10px] font-bold text-slate-600 border border-slate-100">
                             {categoryName}
-                          </Badge>
+                          </span>
                         )}
-                      </div>
+                        {isUserFranchise && (
+                          inCart > 0 ? (
+                            <span className="absolute top-3 right-3 flex items-center gap-1 rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-black text-white shadow">
+                              <ShoppingCart className="w-3 h-3" /> {inCart} in cart
+                            </span>
+                          ) : totalStock <= 0 ? (
+                            <span className="absolute top-3 right-3 rounded-full bg-slate-900/75 px-2.5 py-1 text-[10px] font-bold text-white">
+                              Out of stock
+                            </span>
+                          ) : null
+                        )}
+                        {images.length > 1 && (
+                          <span className="absolute bottom-2.5 right-3 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-500 border border-slate-100">
+                            {images.length} photos
+                          </span>
+                        )}
+                      </button>
 
-                      {/* Right Details Block */}
-                      <div className="flex-1 p-5 flex flex-col justify-between min-w-0">
-                        <div>
-                          <h3 className="font-black text-slate-900 text-sm uppercase tracking-wide truncate">
+                      <div className="flex-1 flex flex-col px-4 pt-3.5 pb-4 gap-3">
+                        <button type="button" onClick={openDetails} className="text-left">
+                          <h3 className="font-bold text-[15px] text-slate-900 leading-snug line-clamp-2 group-hover:text-orange-700 transition-colors">
                             {product.product_name}
                           </h3>
                           {product.product_description && (
-                            <p className="text-xs text-slate-400 font-medium line-clamp-2 mt-1 leading-relaxed">
-                              {product.product_description}
-                            </p>
+                            <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">{product.product_description}</p>
                           )}
-                        </div>
+                        </button>
 
-                        <div className="space-y-2 mt-4" onClick={(e) => e.stopPropagation()}>
-                          {product.variations.map((v: any) => {
+                        {/* One line per option: name, stock, and Add → − n + */}
+                        <div className="mt-auto space-y-1.5">
+                          {shown.map((v: any) => {
                             const key = replenishKey(v.product_id, v.variation_id);
-                            const qty = replenishQtys[key] || 0;
-
+                            const qty = cartQtyOf(v.product_id, v.variation_id);
+                            const stock = Number(v.stock_quantity) || 0;
                             return (
                               <div
                                 key={key}
-                                className="flex items-center justify-between gap-3 p-2.5 rounded-2xl bg-slate-50 border border-slate-100 hover:border-orange-100 hover:bg-orange-50/10 transition-all duration-300"
+                                className={cn(
+                                  'flex items-center justify-between gap-2 rounded-2xl pl-3 pr-1.5 py-1.5 transition-colors',
+                                  qty > 0 ? 'bg-orange-50' : 'bg-slate-50'
+                                )}
                               >
-                                <div className="min-w-0 flex-1">
-                                  <p className="font-black text-xs text-slate-800 truncate">
-                                    {v.variation_name || 'Default'}
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-slate-800 truncate">
+                                    {single ? 'Quantity' : (v.variation_name || 'Default')}
                                   </p>
-                                  {v.sku && (
-                                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                                      SKU: {v.sku}
-                                    </p>
-                                  )}
                                   {isUserFranchise && (
-                                    <p className={cn(
-                                      'text-[10px] font-bold mt-0.5',
-                                      v.stock_quantity > 0 ? 'text-emerald-600' : 'text-rose-500'
-                                    )}>
-                                      {v.stock_quantity > 0 ? `${v.stock_quantity} in stock` : 'Out of stock'}
+                                    <p className={cn('text-[10px] font-semibold', stock > 0 ? 'text-emerald-600' : 'text-slate-400')}>
+                                      {stock > 0 ? `${stock} in stock` : 'Out of stock'}
                                     </p>
                                   )}
                                 </div>
-
-                                {/* Quantity stepper or checkmark status */}
-                                {isUserFranchise ? (
-                                  <div className="shrink-0 scale-90 origin-right">
-                                    <QuantityStepper
-                                      value={qty}
-                                      max={v.stock_quantity}
-                                      onChange={val => setReplenishQtys(prev => ({ ...prev, [key]: val }))}
-                                    />
-                                  </div>
+                                {!isUserFranchise ? (
+                                  <span className="shrink-0 text-[11px] font-semibold text-slate-400 px-2">View only</span>
+                                ) : qty > 0 ? (
+                                  <QuantityStepper value={qty} max={Math.max(stock, qty)} onChange={val => setCartQty(v, Math.min(val, Math.max(stock, qty)))} />
+                                ) : stock > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCartQty(v, 1)}
+                                    className="shrink-0 h-8 px-4 rounded-xl border border-orange-300 bg-white text-xs font-black text-orange-600 hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-colors flex items-center gap-1"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" /> Add
+                                  </button>
                                 ) : (
-                                  <div className="shrink-0 text-xs font-semibold text-slate-400 bg-slate-100/80 px-2.5 py-1 rounded-lg">
-                                    View Only
-                                  </div>
+                                  <span className="shrink-0 text-[11px] font-semibold text-slate-400 px-2">Unavailable</span>
                                 )}
                               </div>
                             );
                           })}
+                          {shown.length < variations.length && (
+                            <button
+                              type="button"
+                              onClick={openDetails}
+                              className="w-full text-center text-xs font-bold text-orange-600 hover:text-orange-700 py-1.5"
+                            >
+                              +{variations.length - shown.length} more options
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* What is in the cart, always in reach while browsing. */}
+            {isUserFranchise && cartItems.length > 0 && (
+              <div className="sticky bottom-3 z-30 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('cart')}
+                  className="w-full flex items-center justify-between gap-3 rounded-2xl bg-slate-900 text-white px-5 py-3.5 shadow-xl hover:bg-slate-800 transition-colors"
+                >
+                  <span className="flex items-center gap-2.5 text-sm font-bold">
+                    <ShoppingCart className="w-4 h-4 text-orange-400" />
+                    {cartItems.length} item{cartItems.length === 1 ? '' : 's'} · {cartQty} unit{cartQty === 1 ? '' : 's'}
+                  </span>
+                  <span className="flex items-center gap-1.5 text-sm font-black text-orange-300">
+                    Review &amp; request order <ChevronRight className="w-4 h-4" />
+                  </span>
+                </button>
               </div>
             )}
           </div>
@@ -3036,14 +3133,14 @@ const B2BOrderManagement: React.FC = () => {
                 <ShoppingCart className="w-20 h-20 mb-5 opacity-20" />
                 <p className="font-black text-xl text-slate-600">Your cart is empty</p>
                 <p className="text-sm mt-2 max-w-xs text-center">
-                  Add items from the Quick Replenishment tab or from the Product Catalogue.
+                  Open Products and tap + on what you need — it comes straight here.
                 </p>
                 <Button
                   onClick={() => setActiveTab('replenish')}
                   className="mt-6 bg-orange-500 hover:bg-orange-600 text-white rounded-xl px-6"
                 >
                   <Package className="w-4 h-4 mr-2" />
-                  Go to Replenishment
+                  Browse products
                 </Button>
               </div>
             ) : (
@@ -3063,6 +3160,8 @@ const B2BOrderManagement: React.FC = () => {
 
                   {cartItems.map((item) => {
                     const itemImage = productImages[item.productId]?.[0];
+                    const stock = liveStockOf(item);
+                    const overStock = stock !== undefined && item.quantity > stock;
 
                     return (
                       <div key={`${item.productId}-${item.variationId}`} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300">
@@ -3084,7 +3183,8 @@ const B2BOrderManagement: React.FC = () => {
                           <div className="flex-1 min-w-0 flex flex-col justify-between">
                             <div className="flex items-start justify-between gap-3">
                               <div>
-                                <p className="font-black text-sm text-slate-800 truncate">{item.productName}</p>
+                                <p className="font-black text-sm text-slate-800 leading-snug line-clamp-2">{item.productName}</p>
+                                {item.distributorName && <p className="text-[11px] text-orange-600 font-bold mt-0.5">{item.distributorName}</p>}
                                 <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                                   {item.variationName && (
                                     <span className="text-[10px] text-slate-500 font-bold bg-slate-100 px-1.5 py-0.5 rounded">
@@ -3124,11 +3224,14 @@ const B2BOrderManagement: React.FC = () => {
                               </button>
                             </div>
 
-                            <div className="flex items-center justify-between mt-3.5 pt-2 border-t border-slate-50">
-                              <div></div>
+                            <div className="flex items-center justify-between gap-3 mt-3.5 pt-2 border-t border-slate-50">
+                              <span className={cn('text-[11px] font-bold', overStock ? 'text-rose-600' : 'text-slate-400')}>
+                                {stock === undefined ? '' : overStock ? `Only ${stock} in stock — lower the quantity` : `${stock} in stock`}
+                              </span>
                               <QuantityStepper
                                 value={item.quantity}
-                                onChange={(v) => updateQuantity(item.productId, item.variationId, v)}
+                                max={stock !== undefined ? Math.max(stock, item.quantity) : undefined}
+                                onChange={(v) => updateQuantity(item.productId, item.variationId, stock !== undefined && v > item.quantity ? Math.min(v, stock) : v, true)}
                               />
                             </div>
                           </div>
@@ -3402,7 +3505,7 @@ const B2BOrderManagement: React.FC = () => {
                           >
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-black text-slate-800 font-mono text-xs">#{formatOrderId(order.id)}</span>
-                              <StatusBadge status={order.status} isIncoming />
+                              <StatusBadge status={order.status} docket={(order as any).docket_id} isIncoming />
                               {order.status === 'delivered' && <ReceivedBadge />}
                             </div>
                             <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-500">
@@ -3410,6 +3513,12 @@ const B2BOrderManagement: React.FC = () => {
                               <span>-</span>
                               <span>{totalQty} units - {order.items?.length || 0} SKUs</span>
                             </div>
+                            {order.items?.length > 0 && (
+                              <p className="text-[11px] text-slate-700 font-semibold mt-1 line-clamp-1">
+                                {order.items.slice(0, 2).map((i: any) => i.product_name).join(', ')}
+                                {order.items.length > 2 ? ` +${order.items.length - 2} more` : ''}
+                              </p>
+                            )}
                             {order.status === 'cancelled' && (
                               <p className="text-[10px] font-bold text-rose-600 mt-1">
                                 {getDeclineSourceLabel(order.declined_by_role)}
@@ -3492,7 +3601,7 @@ const B2BOrderManagement: React.FC = () => {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="font-black text-slate-800 font-mono text-xs">#{formatOrderId(currentOrder.id)}</span>
-                                <StatusBadge status={currentOrder.status} isIncoming />
+                                <StatusBadge status={currentOrder.status} docket={currentOrder.docket_id} isIncoming />
                                 {currentOrder.status === 'delivered' && <ReceivedBadge />}
                               </div>
                               <p className="text-[11px] text-slate-500 mt-0.5 truncate">
@@ -3539,7 +3648,7 @@ const B2BOrderManagement: React.FC = () => {
                                 <TooltipContent>Download all {currentOrder.group_size} invoices</TooltipContent>
                               </Tooltip>
                             )}
-                            {(currentOrder.status === 'processing' || currentOrder.status === 'shipped') && (
+                            {(currentOrder.status === 'shipped' || (currentOrder.status === 'processing' && Boolean(currentOrder.docket_id))) && (
                               <Button
                                 size="sm"
                                 onClick={() => handleMarkReceived(currentOrder.id)}
@@ -3641,6 +3750,17 @@ const B2BOrderManagement: React.FC = () => {
                                 <div>
                                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Shipping Info</p>
                                   <p className="text-xs text-slate-600 font-bold">Awaiting shipment from your distributor.</p>
+                                  {/* No docket shared, but the goods may still have come. */}
+                                  {currentOrder.status === 'processing' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMarkReceived(currentOrder.id)}
+                                      disabled={receivingOrderId === currentOrder.id}
+                                      className="mt-1 text-[11px] font-bold text-emerald-700 hover:underline disabled:opacity-50"
+                                    >
+                                      Already got it? Mark received
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             )
@@ -4003,7 +4123,7 @@ const B2BOrderManagement: React.FC = () => {
                           >
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-black text-slate-800 font-mono text-xs">#{formatOrderId(order.id)}</span>
-                              <StatusBadge status={order.status} isIncoming />
+                              <StatusBadge status={order.status} docket={(order as any).docket_id} isIncoming />
                               {order.status === 'delivered' && <DeliveredBadge />}
                             </div>
                             <p className="text-[11px] text-orange-600 font-bold mt-1">{order.client_store_name || order.vendor_name || 'Unknown Store'}</p>
@@ -4012,6 +4132,12 @@ const B2BOrderManagement: React.FC = () => {
                               <span>-</span>
                               <span>{totalQty} units - {order.items?.length || 0} SKUs</span>
                             </div>
+                            {order.items?.length > 0 && (
+                              <p className="text-[11px] text-slate-700 font-semibold mt-1 line-clamp-1">
+                                {order.items.slice(0, 2).map((i: any) => i.product_name).join(', ')}
+                                {order.items.length > 2 ? ` +${order.items.length - 2} more` : ''}
+                              </p>
+                            )}
                             {order.status === 'cancelled' && (
                               <p className="text-[10px] font-bold text-rose-600 mt-1">
                                 {getDeclineSourceLabel(order.declined_by_role)}
@@ -4084,7 +4210,7 @@ const B2BOrderManagement: React.FC = () => {
                               <div className="flex items-center gap-2">
                                 
                                 <span className="font-black text-slate-800 font-mono text-xs">#{formatOrderId(currentIncoming.id)}</span>
-                                <StatusBadge status={currentIncoming.status} isIncoming />
+                                <StatusBadge status={currentIncoming.status} docket={(currentIncoming as any).docket_id} isIncoming />
                                 {currentIncoming.status === 'delivered' && <DeliveredBadge />}
                               </div>
                               <p className="text-[11px] text-slate-500 mt-0.5 truncate">
@@ -4518,10 +4644,11 @@ const B2BOrderManagement: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Product Detail Dialog (view-and-order) */}
+      {/* Product Detail Dialog: photos, every option with its own Add / − n +,
+          and what this product adds to the cart. */}
       <Dialog open={!!detailProductId} onOpenChange={(open) => { if (!open) setDetailProductId(null); }}>
         <DialogContent
-          className="max-w-4xl w-[95vw] max-h-[90vh] p-0 gap-0 rounded-[28px] overflow-hidden border-none shadow-2xl z-[9999]"
+          className="max-w-5xl w-[96vw] max-h-[92vh] p-0 sm:p-0 gap-0 rounded-[28px] overflow-hidden border-none shadow-2xl z-[9999]"
           style={{ zIndex: 9999 }}
         >
           <style>{`[role="dialog"] { z-index: 9999 !important; }`}</style>
@@ -4529,133 +4656,181 @@ const B2BOrderManagement: React.FC = () => {
             const product = detailProductId ? grouped[detailProductId] : null;
             if (!product) return null;
 
-            const images = productImages[product.product_id] || [];
-            const activeImage = images[detailImageIndex] || images[0];
+            const images: string[] = productImages[product.product_id] || [];
+            const imageAt = images.length ? ((detailImageIndex % images.length) + images.length) % images.length : 0;
+            const activeImage = images[imageAt];
             const categoryName = product.category_id ? categoryMap[product.category_id] : null;
-            const selectedVariation = product.variations.find((v: any) => v.variation_id === detailVariationId) || product.variations[0];
-            const key = selectedVariation ? replenishKey(selectedVariation.product_id, selectedVariation.variation_id) : '';
-            const dialogQty = replenishQtys[key] || 0;
-            const inStock = selectedVariation ? selectedVariation.stock_quantity > 0 : false;
+            const variations: any[] = product.variations;
+            const single = variations.length === 1 && (!hasMeaningfulOrderText(variations[0]?.variation_name) || String(variations[0]?.variation_name).trim().toLowerCase() === 'default');
+            const inCartUnits = variations.reduce((n: number, v: any) => n + cartQtyOf(v.product_id, v.variation_id), 0);
+            const totalStock = variations.reduce((n: number, v: any) => n + Math.max(0, Number(v.stock_quantity) || 0), 0);
+            const skus = variations.map((v: any) => v.sku).filter(Boolean);
+            /* The option the bottom bar adds: the one tapped, else the first. */
+            const picked = variations.find((v: any) => v.variation_id === detailVariationId) || variations[0];
+            const pickedQty = picked ? cartQtyOf(picked.product_id, picked.variation_id) : 0;
+            const pickedStock = picked ? Number(picked.stock_quantity) || 0 : 0;
 
             return (
-              <div className="flex flex-col md:flex-row max-h-[90vh] overflow-y-auto md:overflow-hidden">
-                {/* Left: image gallery */}
-                <div className="md:w-[45%] shrink-0 bg-gradient-to-br from-slate-50 to-slate-100/50 p-6 md:p-8 flex flex-col">
-                  <div className="relative w-full aspect-square rounded-3xl bg-white border border-slate-100 shadow-sm flex items-center justify-center p-6 overflow-hidden">
-                    {categoryName && (
-                      <Badge className="absolute top-4 left-4 bg-slate-900/90 backdrop-blur-sm text-white hover:bg-slate-900/90 border-none font-bold uppercase tracking-wider text-[9px] px-2.5 py-1 z-10">
-                        {categoryName}
-                      </Badge>
-                    )}
+              <div className="flex flex-col md:flex-row max-h-[92vh] overflow-y-auto md:overflow-hidden">
+                {/* Photos */}
+                <div className="md:w-[48%] shrink-0 bg-gradient-to-b from-slate-50 to-white p-4 sm:p-6 md:p-8 flex flex-col gap-4">
+                  <div className="relative w-full aspect-square max-h-[320px] md:max-h-none rounded-3xl bg-white border border-slate-100 flex items-center justify-center p-6 overflow-hidden">
                     {activeImage ? (
-                      <img src={activeImage} alt={product.product_name} className="max-h-full max-w-full object-contain transition-transform duration-300" />
+                      <img key={activeImage} src={activeImage} alt={product.product_name} className="max-h-full max-w-full object-contain animate-in fade-in duration-300" />
                     ) : (
                       <Package className="w-20 h-20 text-slate-200" />
                     )}
+                    {images.length > 1 && (
+                      <>
+                        <button type="button" onClick={() => setDetailImageIndex(imageAt - 1)} aria-label="Previous photo"
+                          className="absolute left-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/95 border border-slate-200 shadow flex items-center justify-center text-slate-600 hover:text-orange-600">
+                          <ChevronDown className="w-5 h-5 rotate-90" />
+                        </button>
+                        <button type="button" onClick={() => setDetailImageIndex(imageAt + 1)} aria-label="Next photo"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/95 border border-slate-200 shadow flex items-center justify-center text-slate-600 hover:text-orange-600">
+                          <ChevronRight className="w-5 h-5" />
+                        </button>
+                        <span className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-slate-900/70 px-2.5 py-0.5 text-[11px] font-semibold text-white tabular-nums">
+                          {imageAt + 1} / {images.length}
+                        </span>
+                      </>
+                    )}
                   </div>
                   {images.length > 1 && (
-                    <div className="flex gap-2.5 mt-4 overflow-x-auto no-scrollbar">
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar">
                       {images.map((img: string, idx: number) => (
                         <button
                           key={idx}
+                          type="button"
                           onClick={() => setDetailImageIndex(idx)}
                           className={cn(
-                            'w-14 h-14 shrink-0 rounded-2xl border-2 overflow-hidden bg-white flex items-center justify-center transition-all duration-200',
-                            idx === detailImageIndex ? 'border-orange-500 shadow-md scale-105' : 'border-slate-200 hover:border-orange-300 opacity-70 hover:opacity-100'
+                            'w-16 h-16 shrink-0 rounded-2xl border-2 overflow-hidden bg-white flex items-center justify-center transition-all',
+                            idx === imageAt ? 'border-orange-500' : 'border-slate-100 opacity-60 hover:opacity-100'
                           )}
                         >
-                          <img src={img} alt={`${product.product_name} ${idx + 1}`} className="object-contain w-full h-full p-1.5" />
+                          <img src={img} alt="" className="object-contain w-full h-full p-1.5" />
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
 
-                {/* Right: details + actions */}
-                <div className="flex-1 flex flex-col min-w-0 max-h-[90vh] md:max-h-none">
-                  <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
-                    <DialogHeader className="space-y-1.5 text-left">
-                      <DialogTitle className="text-2xl font-black text-slate-900 tracking-tight leading-tight pr-6">
+                {/* Details, options and the cart */}
+                <div className="flex-1 flex flex-col min-w-0 md:max-h-[92vh] md:min-h-0">
+                  <div className="flex-1 md:min-h-0 md:overflow-y-auto px-5 sm:px-8 pt-6 md:pt-8 pb-6 space-y-6">
+                    <DialogHeader className="space-y-2 text-left pr-8">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {categoryName && (
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">{categoryName}</span>
+                        )}
+                        {isUserFranchise && (
+                          <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-bold',
+                            totalStock > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+                            {totalStock > 0 ? 'In stock with your distributor' : 'Out of stock'}
+                          </span>
+                        )}
+                      </div>
+                      <DialogTitle className="text-2xl font-black text-slate-900 tracking-tight leading-tight">
                         {product.product_name}
                       </DialogTitle>
-                      {selectedVariation?.sku && (
-                        <p className="text-[11px] text-slate-400 font-mono">SKU: {selectedVariation.sku}</p>
-                      )}
+                      {skus.length === 1 && <p className="text-[11px] text-slate-400 font-mono">SKU: {skus[0]}</p>}
                     </DialogHeader>
 
+                    {/* Options: tap one to choose it; the bar below adds it. */}
+                    {!single && (
+                      <section>
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2.5">
+                          Choose option ({variations.length})
+                        </h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {variations.map((v: any) => {
+                            const qty = cartQtyOf(v.product_id, v.variation_id);
+                            const stock = Number(v.stock_quantity) || 0;
+                            const isPicked = picked && v.variation_id === picked.variation_id;
+                            return (
+                              <button
+                                type="button"
+                                key={replenishKey(v.product_id, v.variation_id)}
+                                onClick={() => setDetailVariationId(v.variation_id)}
+                                className={cn('relative text-left rounded-2xl border-2 px-3.5 py-2.5 transition-colors',
+                                  isPicked ? 'border-orange-500 bg-orange-50' : 'border-slate-100 bg-white hover:border-orange-200',
+                                  stock <= 0 && !isPicked && 'opacity-60')}
+                              >
+                                <p className="text-sm font-bold text-slate-900 truncate pr-6">{v.variation_name || 'Default'}</p>
+                                {isUserFranchise && (
+                                  <p className={cn('text-[11px] font-semibold mt-0.5', stock > 0 ? 'text-emerald-600' : 'text-slate-400')}>
+                                    {stock > 0 ? `${stock} in stock` : 'Out of stock'}
+                                  </p>
+                                )}
+                                {qty > 0 && (
+                                  <span className="absolute top-2 right-2 min-w-[20px] h-5 px-1 rounded-full bg-orange-500 text-white text-[10px] font-black flex items-center justify-center">
+                                    {qty}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    )}
+
                     {product.product_description && (
-                      <div>
-                        <h4 className="text-[11px] font-black text-orange-600 uppercase tracking-widest mb-2">Description</h4>
+                      <section>
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2">About this product</h4>
                         <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">{product.product_description}</p>
-                      </div>
+                      </section>
                     )}
 
                     {Array.isArray(product.additional_info) && product.additional_info.length > 0 && (
-                      <div>
-                        <h4 className="text-[11px] font-black text-orange-600 uppercase tracking-widest mb-2">Additional Information</h4>
+                      <section>
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2">Highlights</h4>
                         <ul className="space-y-2">
                           {product.additional_info.map((info: string, idx: number) => (
                             <li key={idx} className="text-sm text-slate-600 leading-relaxed flex items-start gap-2.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 mt-1.5 shrink-0" />
+                              <CheckCircle2 className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
                               {info}
                             </li>
                           ))}
                         </ul>
-                      </div>
-                    )}
-
-                    {product.variations.length > 1 && (
-                      <div>
-                        <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">Variant</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {product.variations.map((v: any) => (
-                            <button
-                              key={v.variation_id}
-                              onClick={() => setDetailVariationId(v.variation_id)}
-                              className={cn(
-                                'px-3.5 py-2 rounded-xl text-xs font-bold border-2 transition-all duration-200',
-                                v.variation_id === detailVariationId
-                                  ? 'bg-orange-500 text-white border-orange-500 shadow-sm'
-                                  : 'bg-white text-slate-600 border-slate-200 hover:border-orange-300'
-                              )}
-                            >
-                              {v.variation_name || 'Default'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      </section>
                     )}
                   </div>
 
-                  {/* Sticky action footer */}
-                  {selectedVariation && isUserFranchise && (
-                    <div className="border-t border-slate-100 bg-slate-50/60 p-5 md:p-6 flex items-center justify-between gap-4 shrink-0">
-                      <div>
-                        <p className={cn(
-                          'text-xs font-black flex items-center gap-1.5',
-                          inStock ? 'text-emerald-600' : 'text-rose-500'
-                        )}>
-                          <span className={cn('w-1.5 h-1.5 rounded-full', inStock ? 'bg-emerald-500' : 'bg-rose-500')} />
-                          {inStock ? `${selectedVariation.stock_quantity} in stock` : 'Out of stock'}
+                  {/* The chosen option: its stock, Add → − n +, and the cart */}
+                  {isUserFranchise && picked && (
+                    <div className="sticky bottom-0 border-t border-slate-100 bg-white/95 backdrop-blur px-5 sm:px-8 py-4 flex items-center justify-between gap-3 shrink-0">
+                      <div className="min-w-0">
+                        <p className={cn('text-sm font-black flex items-center gap-1.5', pickedStock > 0 ? 'text-emerald-600' : 'text-rose-500')}>
+                          <span className={cn('w-2 h-2 rounded-full', pickedStock > 0 ? 'bg-emerald-500' : 'bg-rose-500')} />
+                          {pickedStock > 0 ? `${pickedStock} in stock` : 'Out of stock'}
+                        </p>
+                        <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                          {!single && <span className="font-semibold text-slate-700">{picked.variation_name || 'Default'}</span>}
+                          {!single && inCartUnits > 0 && ' · '}
+                          {inCartUnits > 0 && `${inCartUnits} unit${inCartUnits === 1 ? '' : 's'} of this product in cart`}
                         </p>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <QuantityStepper
-                          value={dialogQty}
-                          max={selectedVariation.stock_quantity}
-                          onChange={val => setReplenishQtys(prev => ({ ...prev, [key]: val }))}
-                        />
-                        <Button
-                          onClick={() => {
-                            addReplenishToCart();
-                            setDetailProductId(null);
-                          }}
-                          disabled={dialogQty <= 0}
-                          className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-black text-xs px-5 h-10 shadow-sm"
-                        >
-                          <ShoppingCart className="w-3.5 h-3.5 mr-2" />
-                          Add to Cart
-                        </Button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {pickedQty > 0 ? (
+                          <QuantityStepper value={pickedQty} max={Math.max(pickedStock, pickedQty)}
+                            onChange={val => setCartQty(picked, Math.min(val, Math.max(pickedStock, pickedQty)))} />
+                        ) : (
+                          <Button
+                            onClick={() => setCartQty(picked, 1)}
+                            disabled={pickedStock <= 0}
+                            className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-black text-xs px-6 h-10"
+                          >
+                            <Plus className="w-4 h-4 mr-1" /> Add
+                          </Button>
+                        )}
+                        {cartItems.length > 0 && (
+                          <Button
+                            onClick={() => { setDetailProductId(null); setActiveTab('cart'); }}
+                            className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-black text-xs px-4 h-10"
+                          >
+                            <ShoppingCart className="w-3.5 h-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">Go to cart</span>
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -4748,7 +4923,7 @@ const B2BOrderManagement: React.FC = () => {
               Cancel
             </Button>
             <Button
-              onClick={confirmCustomization}
+              onClick={() => confirmCustomization()}
               className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl"
             >
               <ShoppingCart className="w-4 h-4 mr-2" />

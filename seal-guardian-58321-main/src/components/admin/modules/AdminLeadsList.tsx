@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useLeadOptions, DEFAULT_LEAD_OPTIONS, TONE_BADGE, TONE_TEXT, type LeadOptions } from "@/lib/leadOptions";
+import { LeadSettingsDialog } from "./LeadSettingsDialog";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
@@ -18,7 +20,7 @@ import {
 import {
     Loader2, Search, RefreshCw, Inbox, AlertTriangle, Copy,
     Check, CheckCheck, XCircle, Pencil, Plus, MapPin, Download, CalendarDays,
-    Store as StoreIcon, Send, X, SlidersHorizontal, ChevronDown
+    Store as StoreIcon, Send, X, SlidersHorizontal, ChevronDown, Settings2
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -262,6 +264,8 @@ interface Counts {
     product: Record<string, number>;
     channel: Record<string, number>;
     review_pending: number;
+    /* Leads in the date range and search, by vehicle — for the Vehicle filter. */
+    vehicle?: Record<string, number>;
 }
 
 /*
@@ -286,6 +290,11 @@ const CHANNEL_FILTERS: Record<string, {
     instagram: { stages: ALL_STAGES, forwardedTo: true, ivrCall: false, asm: true, alert: true },
     ivr: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: true, asm: false, alert: true },
     website: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: false },
+    /* A WhatsApp enquiry the team added by hand: routed like IVR and website. */
+    whatsapp_manual: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: true },
+    /* Instagram and Facebook DMs the team added by hand: the same. */
+    instagram_dm: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: true },
+    facebook_dm: { stages: ["not-forwarded", "forwarded", "failed"], forwardedTo: false, ivrCall: false, asm: false, alert: true },
 };
 
 /* A day as YYYY-MM-DD in the browser's own time — the team's, in India. */
@@ -324,43 +333,44 @@ const STAGE_LABEL: Record<Stage, string> = {
 };
 
 /*
- * The seven ways a lead conversation ends, as found when an admin calls the
- * customer back. Stored as an enum, so this list and the database must agree.
+ * The review outcomes and the channels come from the admin's Lead settings
+ * (lib/leadOptions). They are module-level because helpers outside the
+ * component read them; applyLists() refreshes them in place when the lists
+ * load or are saved, and the component re-renders with them.
  */
-const OUTCOMES = [
-    { value: "no_response", label: "No response" },
-    { value: "follow_up", label: "Follow up" },
-    { value: "closed_won", label: "Closed won" },
-    { value: "closed_lost", label: "Closed lost" },
-    { value: "call_disconnected", label: "Call disconnected" },
-    { value: "switched_off", label: "Switched off" },
-    { value: "number_not_working", label: "Number not working" },
-] as const;
+type Outcome = string;
+const OUTCOMES: { value: string; label: string; active: boolean }[] = [];
+const OUTCOME_LABEL: Record<string, string> = {};
+const OUTCOME_TONE: Record<string, string> = {};
+const CHANNEL_LABEL: Record<string, string> = {};
+const CHANNEL_TEXT: Record<string, string> = {};
+/* The channels that find their own ASM or store (WhatsApp, the Instagram ad
+   form). The rest wait for the auditor to forward them. */
+const AUTO_ROUTED: string[] = [];
+const SHOWN_CHANNELS: string[] = [];
+const ADD_LEAD_CHANNELS: { value: string; label: string }[] = [];
 
-type Outcome = (typeof OUTCOMES)[number]["value"];
+function applyLists(o: LeadOptions) {
+    const reset = (r: Record<string, string>) => Object.keys(r).forEach(k => delete r[k]);
+    OUTCOMES.splice(0, OUTCOMES.length, ...o.outcomes.map(x => ({ value: x.value, label: x.label, active: x.active })));
+    reset(OUTCOME_LABEL); reset(OUTCOME_TONE); reset(CHANNEL_LABEL); reset(CHANNEL_TEXT);
+    for (const x of o.outcomes) { OUTCOME_LABEL[x.value] = x.label; if (x.tone !== "slate") OUTCOME_TONE[x.value] = TONE_BADGE[x.tone]; }
+    for (const c of o.channels) { CHANNEL_LABEL[c.value] = c.label; CHANNEL_TEXT[c.value] = TONE_TEXT[c.tone]; }
+    AUTO_ROUTED.splice(0, AUTO_ROUTED.length, ...o.channels.filter(c => c.auto_routed).map(c => c.value));
+    SHOWN_CHANNELS.splice(0, SHOWN_CHANNELS.length, ...o.channels.filter(c => c.active).map(c => c.value));
+    ADD_LEAD_CHANNELS.splice(0, ADD_LEAD_CHANNELS.length, ...o.channels.filter(c => c.active && c.add_lead).map(c => ({ value: c.value, label: c.label })));
+}
+applyLists(DEFAULT_LEAD_OPTIONS);
 
-const OUTCOME_LABEL: Record<string, string> =
-    Object.fromEntries(OUTCOMES.map(o => [o.value, o.label]));
+/* A channel added in Lead settings is forwarded by hand, like a WhatsApp enquiry added by hand. */
+const filtersFor = (channel: string) => CHANNEL_FILTERS[channel] ?? CHANNEL_FILTERS.whatsapp_manual;
 
-/* Only the two decided outcomes carry colour. The rest are states of not
-   having reached anyone yet, and colouring five of seven would leave the
-   column looking like a warning light. */
-const OUTCOME_TONE: Record<string, string> = {
-    closed_won: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    closed_lost: "bg-rose-50 text-rose-700 border-rose-200",
-    follow_up: "bg-blue-50 text-blue-700 border-blue-200",
-};
-
-const CHANNEL_LABEL: Record<string, string> = {
-    whatsapp: "WhatsApp",
-    instagram: "Instagram",
-    ivr: "IVR",
-    website: "Website",
-};
-
-/* The channels that find their own ASM or store. The rest (IVR, website) wait
-   for the auditor to forward them. */
-const AUTO_ROUTED = ["whatsapp", "instagram"];
+/* 2-wheelers are filed with "2-Wheeler" in the vehicle (the chat's first
+   question, or Add Lead); everything else is a car. The model on its own,
+   without that tag, for showing under the type. */
+const isTwoWheeler = (car: string | null | undefined) => /2-Wheeler/i.test(car || "");
+const modelOnly = (car: string | null | undefined) =>
+    String(car || "").replace(/\s*\(2-Wheeler\)\s*$/i, "").replace(/^2-Wheeler$/i, "").trim();
 
 /* What happened to the store's own alert after an admin sent a store. */
 const STORE_ALERT_NOTE: Record<string, string> = {
@@ -440,6 +450,10 @@ const formatWhen = (iso: string) => {
 };
 
 export const AdminLeadsList = () => {
+    /* The admin's lists; applied before anything below reads them. */
+    const leadOpts = useLeadOptions();
+    applyLists(leadOpts);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const { toast } = useToast();
     const [leads, setLeads] = useState<Lead[]>([]);
     const [counts, setCounts] = useState<Counts | null>(null);
@@ -457,14 +471,22 @@ export const AdminLeadsList = () => {
     /* What the server searches for: the box, a moment after typing stops. */
     const [searchQuery, setSearchQuery] = useState("");
     const [stage, setStage] = useState("all");
-    /* How many leads matched, when more than the page shows. */
+    /* How many leads matched in all, across the pages. */
     const [matched, setMatched] = useState(0);
+    /* Which page of the matches is on screen, and how many make a page. */
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState<number>(() => {
+        try { const n = Number(localStorage.getItem("leads.pageSize")); return [50, 100, 200].includes(n) ? n : 100; } catch { return 100; }
+    });
+    const [exporting, setExporting] = useState(false);
     /* Filters that only mean something for some channels — see CHANNEL_FILTERS. */
     const [forwardedTo, setForwardedTo] = useState("all");
     const [storeId, setStoreId] = useState("all");
     const [ivrCall, setIvrCall] = useState("all");
     const [storeOptions, setStoreOptions] = useState<{ id: string; name: string; count: number }[]>([]);
     const [stateFilter, setStateFilter] = useState("all");
+    /* 4-wheeler or 2-wheeler: 2-wheelers go to the Customer Executive. */
+    const [vehicleFilter, setVehicleFilter] = useState("all");
     const [stateOptions, setStateOptions] = useState<{ name: string; count: number }[]>([]);
     const [product, setProduct] = useState("all");
     const [delivery, setDelivery] = useState("all");
@@ -502,7 +524,7 @@ export const AdminLeadsList = () => {
     const [chosenStore, setChosenStore] = useState<string | null>(null);
     const [sendingStore, setSendingStore] = useState(false);
 
-    // Adding a lead by hand, for IVR and website enquiries.
+    // Adding a lead by hand, for IVR, website and WhatsApp enquiries.
     const [addOpen, setAddOpen] = useState(false);
     /* Stores for the area typed into the add form, loaded before any lead
        exists so the customer can be given one in the same step. */
@@ -512,10 +534,14 @@ export const AdminLeadsList = () => {
     const [loadingAddStores, setLoadingAddStores] = useState(false);
 
     const [addForm, setAddForm] = useState({
-        name: "", phone: "", area: "", product: "", car: "", source: "ivr",
+        name: "", phone: "", pincode: "", area: "", product: "", car: "", source: "ivr", internal_notes: "",
+        /* 2w: goes to the Customer Executive, not a store — no pincode needed. */
+        wheels: "4w" as "4w" | "2w",
     });
     const [addPreview, setAddPreview] = useState<{
-        state: string | null; matched: boolean; asm_name: string | null;
+        state: string | null; matched: boolean; asm_name: string | null; district?: string | null;
+        /* With a pincode: where the chain lands — stores to pick from, or who gets it instead. */
+        outcome?: "stores" | "asm" | "distributor" | "support"; store_count?: number; contact_name?: string | null;
     } | null>(null);
     const [previewing, setPreviewing] = useState(false);
     const [adding, setAdding] = useState(false);
@@ -523,17 +549,18 @@ export const AdminLeadsList = () => {
        number is one nobody can ever call back, which is the whole point of
        capturing it. */
     const addPhoneError = getPhoneError(addForm.phone);
-    const addAreaError = getCityError(addForm.area);
-    const addValid = Boolean(addForm.phone.trim()) && !addPhoneError
-        && Boolean(addForm.area.trim()) && !addAreaError;
+    /* The pincode is what lets a store be sent to the customer; the area is
+       only for a customer who does not know theirs. One of the two is needed. */
+    const addPinOk = /^[1-9]\d{5}$/.test(addForm.pincode);
+    const addPinError = addForm.pincode && !addPinOk ? "A pincode is 6 digits, not starting with 0." : null;
+    const addAreaError = addForm.area.trim() ? getCityError(addForm.area) : null;
+    const addTwoWheeler = addForm.wheels === "2w";
+    const addValid = Boolean(addForm.phone.trim()) && !addPhoneError && !addPinError && !addAreaError
+        && (addTwoWheeler || addPinOk || Boolean(addForm.area.trim()));
 
 
-    const fetchLeads = useCallback(async (silent = false) => {
-        const request = ++latestRequest.current;
-        if (silent) setRefreshing(true);
-        else if (loadedOnce.current) setUpdating(true);
-        else setLoading(true);
-        try {
+    /* The filters as the server takes them; the list's page and the export share them. */
+    const filterParams = useCallback(() => {
             const params: Record<string, string> = {};
             if (stage !== "all") params.stage = stage;
             if (searchQuery) params.q = searchQuery;
@@ -541,6 +568,7 @@ export const AdminLeadsList = () => {
             if (storeId !== "all") params.store = storeId;
             if (ivrCall !== "all") params.ivr_call = ivrCall;
             if (stateFilter !== "all") params.state = stateFilter;
+            if (vehicleFilter !== "all") params.vehicle = vehicleFilter;
             if (product !== "all") params.product = product;
             if (delivery !== "all") params.delivery = delivery;
             if (asmId !== "all") params.asm_id = asmId;
@@ -548,7 +576,19 @@ export const AdminLeadsList = () => {
             if (review !== "all") params.review = review;
             if (dateFrom) params.dateFrom = dateFrom;
             if (dateTo) params.dateTo = dateTo;
+            return params;
+    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, vehicleFilter, product, delivery, asmId, channel, review, dateFrom, dateTo]);
 
+    /* A new filter starts again from the first page. */
+    useEffect(() => { setPage(1); }, [filterParams, pageSize]);
+
+    const fetchLeads = useCallback(async (silent = false) => {
+        const request = ++latestRequest.current;
+        if (silent) setRefreshing(true);
+        else if (loadedOnce.current) setUpdating(true);
+        else setLoading(true);
+        try {
+            const params = { ...filterParams(), limit: String(pageSize), offset: String((page - 1) * pageSize) };
             const res = await api.get("/asm/leads/list", { params });
             if (request !== latestRequest.current) return;
             if (res.data.success) {
@@ -581,12 +621,12 @@ export const AdminLeadsList = () => {
                 setUpdating(false);
             }
         }
-    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, product, delivery, asmId, channel, review, dateFrom, dateTo, toast]);
+    }, [filterParams, page, pageSize, toast]);
 
     const clearFilters = () => {
         setSearch(""); setStage("all"); setProduct("all"); setChannel("all");
         setDelivery("all"); setAsmId("all"); setReview("all");
-        setForwardedTo("all"); setStoreId("all"); setIvrCall("all"); setStateFilter("all");
+        setForwardedTo("all"); setStoreId("all"); setIvrCall("all"); setStateFilter("all"); setVehicleFilter("all");
         setDateFrom(""); setDateTo("");
     };
 
@@ -595,9 +635,9 @@ export const AdminLeadsList = () => {
      * switching drops any that no longer apply — a hidden filter still
      * narrowing the list is worse than no filter.
      */
-    const shows = CHANNEL_FILTERS[channel] ?? CHANNEL_FILTERS.all;
+    const shows = channel === "all" ? CHANNEL_FILTERS.all : filtersFor(channel);
     const pickChannel = (next: string) => {
-        const allowed = CHANNEL_FILTERS[next] ?? CHANNEL_FILTERS.all;
+        const allowed = next === "all" ? CHANNEL_FILTERS.all : filtersFor(next);
         setChannel(next);
         if (!allowed.stages.includes(stage as Stage)) setStage("all");
         if (!allowed.forwardedTo) { setForwardedTo("all"); setStoreId("all"); }
@@ -800,16 +840,24 @@ export const AdminLeadsList = () => {
      * area cannot be recalled — so the form says who it is about to reach, and
      * the admin confirms it.
      */
-    const previewLead = async () => {
-        if (!addValid) return;
+    const previewLead = async (form = addForm) => {
+        // A 2-wheeler goes to the executive whatever the area: nothing to look up.
+        if (form.wheels === "2w") return;
+        const pinOk = /^[1-9]\d{5}$/.test(form.pincode);
+        if (!pinOk && !form.area.trim()) return;
         setPreviewing(true);
         try {
-            const res = await api.post("/asm/leads", { ...addForm, preview: true });
+            // The phone is not needed to see where the lead goes; a placeholder keeps the check happy.
+            const res = await api.post("/asm/leads", { ...form, phone: form.phone || "9999999999", preview: true });
             if (res.data.success) {
                 setAddPreview({
                     state: res.data.state,
                     matched: res.data.matched,
                     asm_name: res.data.asm_name,
+                    district: res.data.district ?? null,
+                    outcome: res.data.outcome,
+                    store_count: res.data.store_count,
+                    contact_name: res.data.contact_name ?? null,
                 });
             }
         } catch {
@@ -817,7 +865,7 @@ export const AdminLeadsList = () => {
         } finally {
             setPreviewing(false);
         }
-        loadAddStores(addForm.area);
+        loadAddStores(form.area, pinOk ? form.pincode : "");
     };
 
     /*
@@ -828,15 +876,16 @@ export const AdminLeadsList = () => {
      * belonged to the old state, and silently sending it would be worse than
      * making the admin pick again.
      */
-    const loadAddStores = async (area: string) => {
+    const loadAddStores = async (area: string, pincode = "") => {
         const q = String(area || "").trim();
         setAddStore(null);
         setAddStoreSearch("");
-        if (!q) { setAddStores([]); return; }
+        if (!q && !pincode) { setAddStores([]); return; }
 
         setLoadingAddStores(true);
         try {
-            const res = await api.get("/asm/stores-for-area", { params: { area: q } });
+            // By pincode: the stores near the customer, nearest first, as WhatsApp offers them.
+            const res = await api.get("/asm/stores-for-area", { params: { area: q, ...(pincode ? { pincode } : {}) } });
             setAddStores(res.data?.success ? (res.data.stores || []) : []);
         } catch {
             /* The form still works without them; the empty state says so. */
@@ -857,13 +906,14 @@ export const AdminLeadsList = () => {
     const submitLead = async () => {
         setAdding(true);
         try {
-            const res = await api.post("/asm/leads", addForm);
+            // A picked store ends the chain: only the customer and that store are messaged.
+            const res = await api.post("/asm/leads", { ...addForm, store_picked: !addTwoWheeler && Boolean(addStore) });
             if (!res.data.success) return;
 
             const created = res.data.id;
             let storeNote = "";
 
-            if (addStore && created) {
+            if (!addTwoWheeler && addStore && created) {
                 const store = addStores.find(s => s.id === addStore);
                 try {
                     const sent = await api.post(`/asm/leads/${created}/send-store`, { store_id: addStore });
@@ -883,7 +933,7 @@ export const AdminLeadsList = () => {
 
             toast({ title: "Lead added", description: res.data.message + storeNote });
             setAddOpen(false);
-            setAddForm({ name: "", phone: "", area: "", product: "", car: "", source: "ivr" });
+            setAddForm({ name: "", phone: "", pincode: "", area: "", product: "", car: "", source: "ivr", internal_notes: "", wheels: "4w" });
             setAddPreview(null);
             setAddStores([]);
             setAddStore(null);
@@ -911,13 +961,27 @@ export const AdminLeadsList = () => {
      * Columns mirror the table, in the same order, with the codes spelled out:
      * a spreadsheet reading "closed_won" helps nobody.
      */
-    const exportCsv = () => {
-        if (!visible.length) {
+    const exportCsv = async () => {
+        if (!matched) {
             toast({ title: "Nothing to export", description: "No enquiries match the current filters." });
             return;
         }
+        /* Every match, not only the page on screen. */
+        let all: Lead[] = visible;
+        if (matched > visible.length || page > 1) {
+            setExporting(true);
+            try {
+                const res = await api.get("/asm/leads/list", { params: { ...filterParams(), limit: String(matched), offset: "0", export: "1" } });
+                all = res.data.leads || [];
+            } catch (error) {
+                toast({ title: "Export failed", description: getErrorMessage(error, "Please try again"), variant: "destructive" });
+                return;
+            } finally {
+                setExporting(false);
+            }
+        }
 
-        const rows = visible.map(lead => ({
+        const rows = all.map(lead => ({
             Date: formatWhen(lead.created_at),
             Customer: lead.customer_name || "",
             Phone: lead.customer_phone,
@@ -928,7 +992,8 @@ export const AdminLeadsList = () => {
             Pincode: lead.pincode || "",
             Area: placeOf(lead) || "",
             State: lead.state || "",
-            Vehicle: lead.car_model || "",
+            "Vehicle type": isTwoWheeler(lead.car_model) ? "2-Wheeler" : "4-Wheeler",
+            Vehicle: modelOnly(lead.car_model),
             Product: lead.product || "",
             "Forwarded to": forwardedNames(lead),
             "ASM phone": lead.asm_phone || "",
@@ -968,7 +1033,7 @@ export const AdminLeadsList = () => {
     /** Whether anything is narrowing the list — so an empty result can say why. */
     const anyFilter = Boolean(
         search.trim() || stage !== "all" || product !== "all" ||
-        forwardedTo !== "all" || storeId !== "all" || ivrCall !== "all" || stateFilter !== "all" ||
+        forwardedTo !== "all" || storeId !== "all" || ivrCall !== "all" || stateFilter !== "all" || vehicleFilter !== "all" ||
         delivery !== "all" || asmId !== "all" || channel !== "all" ||
         review !== "all" || dateFrom || dateTo
     );
@@ -988,6 +1053,7 @@ export const AdminLeadsList = () => {
         stage !== "all" && chip("st", STAGE_LABEL[stage as Stage] ?? stage, () => setStage("all")),
         product !== "all" && chip("pr", product === "none" ? "Product not given" : product, () => setProduct("all")),
         ivrCall !== "all" && chip("ivr", IVR_CALL_LABEL[ivrCall] ?? ivrCall, () => setIvrCall("all")),
+        vehicleFilter !== "all" && chip("veh", vehicleFilter === "2w" ? "2-Wheeler" : "4-Wheeler", () => setVehicleFilter("all")),
         forwardedTo !== "all" && chip("fw", `Forwarded to: ${FORWARDED_TO_LABEL[forwardedTo] ?? forwardedTo}`, () => setForwardedTo("all")),
         storeId !== "all" && chip("store", `Store: ${storeOptions.find(s => s.id === storeId)?.name ?? "…"}`, () => setStoreId("all")),
         delivery !== "all" && chip("dl", `Alert: ${DELIVERY_FILTER_LABEL[delivery] ?? delivery}`, () => setDelivery("all")),
@@ -1003,7 +1069,9 @@ export const AdminLeadsList = () => {
     const pillFilters: FilterDef[] = [
         {
             label: "Channel", value: channel, set: pickChannel,
-            options: [["all", "All"], ...Object.entries(CHANNEL_LABEL).map(([k, l]) => [k, l, counts?.channel[k]] as [string, string, number?])],
+            options: [["all", "All"], ...Object.entries(CHANNEL_LABEL)
+                .filter(([k]) => SHOWN_CHANNELS.includes(k) || (counts?.channel[k] ?? 0) > 0)
+                .map(([k, l]) => [k, l, counts?.channel[k]] as [string, string, number?])],
         },
         {
             label: "Stage", value: stage, set: setStage,
@@ -1015,6 +1083,14 @@ export const AdminLeadsList = () => {
                 ["all", "Any"],
                 ...["Seat Covers", "Mats", "Accessories"].map(p => [p, p, counts?.product[p]] as [string, string, number?]),
                 ["none", "Not given", counts?.product.none],
+            ],
+        },
+        {
+            label: "Vehicle", value: vehicleFilter, set: setVehicleFilter,
+            options: [
+                ["all", "Any"],
+                ["4w", "4-Wheeler", counts?.vehicle?.["4w"]],
+                ["2w", "2-Wheeler", counts?.vehicle?.["2w"]],
             ],
         },
     ];
@@ -1039,7 +1115,7 @@ export const AdminLeadsList = () => {
         }] : []),
         {
             label: "Review", value: review, set: setReview,
-            options: [["all", "Any"], ["pending", "Not reviewed"], ...OUTCOMES.map(o => [o.value, o.label])] as [string, string][],
+            options: [["all", "Any"], ["pending", "Not reviewed"], ...OUTCOMES.map(o => [o.value, o.active ? o.label : `${o.label} (hidden)`])] as [string, string][],
         },
         ...(shows.asm && asmOptions.length ? [{
             label: "ASM", value: asmId, set: setAsmId,
@@ -1094,14 +1170,18 @@ export const AdminLeadsList = () => {
                         variant="outline" size="sm"
                         onClick={exportCsv}
                         disabled={!visible.length}
-                        title="Export the enquiries currently shown"
+                        title="Export every enquiry the filters match"
                     >
                         <Download className="h-4 w-4 mr-1.5" />
-                        Export{visible.length ? ` (${visible.length})` : ""}
+                        {exporting ? "Exporting…" : `Export${matched ? ` (${matched})` : ""}`}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setSettingsOpen(true)} title="Review outcomes and channels">
+                        <Settings2 className="h-4 w-4 mr-1.5" /> Lead settings
                     </Button>
                     <Button size="sm" onClick={() => setAddOpen(true)} className="bg-orange-500 hover:bg-orange-600">
                         <Plus className="h-4 w-4 mr-1.5" /> Add Lead
                     </Button>
+                    <LeadSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
                 </div>
             </div>
 
@@ -1114,14 +1194,13 @@ export const AdminLeadsList = () => {
                 picked. A channel with nothing in it is still shown: a campaign
                 that has stopped producing leads is worth noticing. */}
             {counts && (
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
                     {([
                         { label: "Total", value: Object.values(counts.channel).reduce((a, b) => a + (b || 0), 0), tone: "text-slate-800", key: "all" },
-                        { label: "WhatsApp", value: counts.channel.whatsapp, tone: "text-emerald-700", key: "whatsapp" },
-                        { label: "Instagram", value: counts.channel.instagram, tone: "text-pink-500", key: "instagram" },
-                        { label: "IVR", value: counts.channel.ivr, tone: "text-indigo-600", key: "ivr" },
-                        { label: "Website", value: counts.channel.website, tone: "text-cyan-600", key: "website" },
-                    ] as const).map(s => {
+                        ...Object.keys(CHANNEL_LABEL)
+                            .filter(k => SHOWN_CHANNELS.includes(k) || (counts.channel[k] ?? 0) > 0)
+                            .map(k => ({ label: CHANNEL_LABEL[k], value: counts.channel[k] ?? 0, tone: CHANNEL_TEXT[k] ?? "text-slate-700", key: k })),
+                    ]).map(s => {
                         const active = channel === s.key;
                         const empty = !s.value;
                         return (
@@ -1299,8 +1378,8 @@ export const AdminLeadsList = () => {
                     ))}
                     <span className="ml-auto text-xs text-slate-400 tabular-nums">
                         {matched > visible.length
-                            ? `Newest ${visible.length} of ${matched} enquiries`
-                            : `${visible.length} ${visible.length === 1 ? "enquiry" : "enquiries"}`}
+                            ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + visible.length} of ${matched} enquiries`
+                            : `${matched} ${matched === 1 ? "enquiry" : "enquiries"}`}
                     </span>
                 </div>
 
@@ -1367,7 +1446,7 @@ export const AdminLeadsList = () => {
                         horizontal scrollbar is always on screen instead of
                         under the last row, and the headings stay in view. */}
                     <div className="relative w-full overflow-auto max-h-[calc(100vh-240px)]">
-                        <table className="w-full text-sm text-left table-fixed min-w-[1690px]">
+                        <table className="w-full text-sm text-left table-fixed min-w-[1800px]">
                             <thead className="sticky top-0 z-10 bg-slate-50 text-slate-500 shadow-[0_1px_0_0_rgb(241,245,249)]">
                                 <tr>
                                     <th className="px-3 py-3 w-[110px] font-semibold">Date</th>
@@ -1376,7 +1455,8 @@ export const AdminLeadsList = () => {
                                     <th className="px-3 py-3 w-[140px] font-semibold">Call</th>
                                     <th className="px-3 py-3 w-[90px] font-semibold">Pincode</th>
                                     <th className="px-3 py-3 w-[180px] font-semibold">Area / State</th>
-                                    <th className="px-3 py-3 w-[110px] font-semibold">Vehicle</th>
+                                    <th className="px-3 py-3 w-[120px] font-semibold">Type</th>
+                                    <th className="px-3 py-3 w-[130px] font-semibold">Vehicle</th>
                                     <th className="px-3 py-3 w-[120px] font-semibold">Product</th>
                                     <th className="px-3 py-3 w-[160px] font-semibold">Forwarded to</th>
                                     <th className="px-3 py-3 w-[150px] font-semibold">Store sent</th>
@@ -1484,8 +1564,18 @@ export const AdminLeadsList = () => {
                                         </td>
 
                                         <td className="px-3 py-3 align-top">
-                                            <span className="text-slate-600 truncate block" title={lead.car_model || ""}>
-                                                {lead.car_model || <span className="text-slate-300">—</span>}
+                                            <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide whitespace-nowrap ${
+                                                isTwoWheeler(lead.car_model)
+                                                    ? "bg-violet-50 border-violet-200 text-violet-700"
+                                                    : "bg-slate-50 border-slate-200 text-slate-600"
+                                            }`}>
+                                                {isTwoWheeler(lead.car_model) ? "🏍️ 2-Wheeler" : "🚗 4-Wheeler"}
+                                            </span>
+                                        </td>
+
+                                        <td className="px-3 py-3 align-top">
+                                            <span className="text-slate-600 truncate block" title={modelOnly(lead.car_model)}>
+                                                {modelOnly(lead.car_model) || <span className="text-slate-300">—</span>}
                                             </span>
                                         </td>
 
@@ -1641,6 +1731,37 @@ export const AdminLeadsList = () => {
                             </tbody>
                         </table>
                     </div>
+                    {/* Pages of the matches: where you are, and the way to the rest. */}
+                    {matched > 0 && (() => {
+                        const pages = Math.max(1, Math.ceil(matched / pageSize));
+                        const first = (page - 1) * pageSize + 1;
+                        const nums = [...new Set([1, page - 1, page, page + 1, pages])].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b);
+                        return (
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+                                <span className="tabular-nums">{first}–{Math.min(first + visible.length - 1, matched)} of {matched}</span>
+                                <div className="flex items-center gap-1">
+                                    <Button size="sm" variant="outline" className="h-8" disabled={page <= 1 || updating} onClick={() => setPage(p => p - 1)}>‹ Previous</Button>
+                                    {nums.map((n, i) => (
+                                        <span key={n} className="flex items-center">
+                                            {i > 0 && n - nums[i - 1] > 1 && <span className="px-1 text-slate-300">…</span>}
+                                            <Button size="sm" variant={n === page ? "default" : "ghost"} disabled={updating}
+                                                className={`h-8 min-w-8 px-2 tabular-nums ${n === page ? "bg-slate-900 hover:bg-slate-900" : ""}`}
+                                                onClick={() => setPage(n)} aria-current={n === page ? "page" : undefined}>{n}</Button>
+                                        </span>
+                                    ))}
+                                    <Button size="sm" variant="outline" className="h-8" disabled={page >= pages || updating} onClick={() => setPage(p => p + 1)}>Next ›</Button>
+                                </div>
+                                <label className="flex items-center gap-2">
+                                    Per page
+                                    <select value={pageSize} aria-label="Leads per page"
+                                        onChange={e => { const n = Number(e.target.value); setPageSize(n); try { localStorage.setItem("leads.pageSize", String(n)); } catch { /* not kept */ } }}
+                                        className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs">
+                                        {[50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+                                    </select>
+                                </label>
+                            </div>
+                        );
+                    })()}
                 </Card>
             )}
 
@@ -1759,8 +1880,8 @@ export const AdminLeadsList = () => {
                                         </SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="none">Not reviewed</SelectItem>
-                                            {OUTCOMES.map(o => (
-                                                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                            {OUTCOMES.filter(o => o.active || o.value === editForm.review_status).map(o => (
+                                                <SelectItem key={o.value} value={o.value}>{o.label}{o.active ? "" : " (hidden)"}</SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
@@ -2042,8 +2163,9 @@ export const AdminLeadsList = () => {
                     <DialogHeader className="space-y-1">
                         <DialogTitle className="text-lg">Add a lead</DialogTitle>
                         <DialogDescription className="text-xs">
-                            Forwarded to the ASM covering the area, exactly as an automatic
-                            enquiry would be.
+                            {addTwoWheeler
+                                ? "A 2-wheeler enquiry goes to the Customer Executive, as on WhatsApp."
+                                : "Forwarded to the ASM covering the area, exactly as an automatic enquiry would be."}
                         </DialogDescription>
                     </DialogHeader>
 
@@ -2058,6 +2180,42 @@ export const AdminLeadsList = () => {
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                                 Enquiry
                             </p>
+
+                            {/* 4-wheeler or 2-wheeler — the WhatsApp chat's first question too. */}
+                            <div className="space-y-1.5 min-w-0">
+                                <Label className="text-xs">Vehicle type</Label>
+                                <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+                                    {([["4w", "🚗 4-Wheeler"], ["2w", "🏍️ 2-Wheeler"]] as const).map(([v, label]) => (
+                                        <button
+                                            key={v}
+                                            type="button"
+                                            onClick={() => {
+                                                const next = { ...addForm, wheels: v };
+                                                setAddForm(next);
+                                                setAddPreview(null);
+                                                if (v === "2w") { setAddStores([]); setAddStore(null); setAddStoreSearch(""); }
+                                                else previewLead(next);
+                                            }}
+                                            className={`h-9 rounded-lg text-xs font-bold transition-colors ${
+                                                addForm.wheels === v ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                                            }`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="space-y-1.5 min-w-0">
+                                <Label htmlFor="a-car" className="text-xs">Vehicle</Label>
+                                <Input
+                                    id="a-car"
+                                    value={addForm.car}
+                                    onChange={e => setAddForm({ ...addForm, car: e.target.value })}
+                                    placeholder={addTwoWheeler ? "e.g. Activa" : "e.g. Creta"}
+                                    className="h-9"
+                                />
+                            </div>
 
                             <div className="space-y-1.5 min-w-0">
                                 <Label htmlFor="a-phone" className="text-xs">Phone *</Label>
@@ -2080,7 +2238,32 @@ export const AdminLeadsList = () => {
                             </div>
 
                             <div className="space-y-1.5 min-w-0">
-                                <Label htmlFor="a-area" className="text-xs">Area *</Label>
+                                <Label htmlFor="a-pin" className="text-xs">
+                                    Pincode {addTwoWheeler ? <span className="text-slate-400 font-normal">(optional)</span> : "*"}
+                                </Label>
+                                <Input
+                                    id="a-pin"
+                                    inputMode="numeric"
+                                    value={addForm.pincode}
+                                    /* Six digits: the store list and the routing come from it,
+                                       so the moment it is complete, they are looked up. */
+                                    onChange={e => {
+                                        const pincode = e.target.value.replace(/\D/g, "").slice(0, 6);
+                                        const next = { ...addForm, pincode };
+                                        setAddForm(next);
+                                        setAddPreview(null);
+                                        if (/^[1-9]\d{5}$/.test(pincode)) previewLead(next);
+                                    }}
+                                    placeholder="e.g. 122018"
+                                    className={`h-9 ${addPinError ? "border-red-300 focus-visible:ring-red-200" : ""}`}
+                                />
+                                {addPinError && <p className="text-[11px] text-red-600 leading-snug">{addPinError}</p>}
+                            </div>
+
+                            <div className="space-y-1.5 min-w-0">
+                                <Label htmlFor="a-area" className="text-xs">
+                                    Area {addPinOk ? <span className="text-slate-400 font-normal">(optional)</span> : <span className="text-slate-400 font-normal">— only if the customer doesn't know the pincode</span>}
+                                </Label>
                                 <Input
                                     id="a-area"
                                     value={addForm.area}
@@ -2089,18 +2272,47 @@ export const AdminLeadsList = () => {
                                        collapsing spaces mid-word fights the typist. */
                                     onBlur={e => {
                                         const tidy = cleanPlaceName(e.target.value);
-                                        if (tidy !== addForm.area) setAddForm({ ...addForm, area: tidy });
-                                        previewLead();
+                                        const next = { ...addForm, area: tidy };
+                                        if (tidy !== addForm.area) setAddForm(next);
+                                        previewLead(next);
                                     }}
                                     placeholder="e.g. Rohini Delhi"
                                     className={`h-9 ${addAreaError ? "border-red-300 focus-visible:ring-red-200" : ""}`}
                                 />
+                                {!addPinOk && addForm.area.trim() && !addAreaError && (
+                                    <p className="text-[11px] text-amber-700 leading-snug">
+                                        Without a pincode, stores are listed for the whole state, not by distance.
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="min-w-0 -mt-1.5">
                                 {addAreaError ? (
                                     <p className="text-[11px] text-red-600 leading-snug">{addAreaError}</p>
                                 ) : previewing ? (
                                     <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
                                         <Loader2 className="h-3 w-3 animate-spin" /> Checking…
                                     </p>
+                                ) : addPreview?.outcome ? (
+                                    /* By pincode: the WhatsApp chain. Stores near → the
+                                       auditor picks one; none → who gets it instead. */
+                                    addPreview.outcome === "stores" ? (
+                                        <p className="text-[11px] text-emerald-700 flex items-start gap-1">
+                                            <Check className="h-3 w-3 mt-0.5 shrink-0" />
+                                            <span>
+                                                {[addPreview.district, addPreview.state].filter(Boolean).join(", ")} —{" "}
+                                                <b>{addPreview.store_count} store{addPreview.store_count === 1 ? "" : "s"} nearby</b>.
+                                                Pick one: the customer and the store get the message.
+                                            </span>
+                                        </p>
+                                    ) : (
+                                        <p className="text-[11px] text-amber-700 leading-snug">
+                                            {[addPreview.district, addPreview.state].filter(Boolean).join(", ")} — no store nearby.
+                                            {" "}On save it goes to <b>{addPreview.contact_name || "customer support"}</b>
+                                            {addPreview.outcome === "asm" ? " (ASM)" : addPreview.outcome === "distributor" ? " (distributor)" : ""},
+                                            and the customer gets their number — unless you pick a store.
+                                        </p>
+                                    )
                                 ) : addPreview ? (
                                     /* Who this is about to reach. A mistyped area costs a
                                        real message to a real ASM, so it is shown before
@@ -2108,7 +2320,7 @@ export const AdminLeadsList = () => {
                                     addPreview.matched ? (
                                         <p className="text-[11px] text-emerald-700 flex items-start gap-1">
                                             <Check className="h-3 w-3 mt-0.5 shrink-0" />
-                                            <span>{addPreview.state} — goes to <b>{addPreview.asm_name}</b></span>
+                                            <span>{[addPreview.district, addPreview.state].filter(Boolean).join(", ")} — goes to <b>{addPreview.asm_name}</b></span>
                                         </p>
                                     ) : (
                                         <p className="text-[11px] text-amber-700 leading-snug">
@@ -2138,8 +2350,7 @@ export const AdminLeadsList = () => {
                                     <Select value={addForm.source} onValueChange={v => setAddForm({ ...addForm, source: v })}>
                                         <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="ivr">IVR</SelectItem>
-                                            <SelectItem value="website">Website</SelectItem>
+                                            {ADD_LEAD_CHANNELS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -2161,18 +2372,37 @@ export const AdminLeadsList = () => {
                             </div>
 
                             <div className="space-y-1.5 min-w-0">
-                                <Label htmlFor="a-car" className="text-xs">Vehicle</Label>
-                                <Input
-                                    id="a-car"
-                                    value={addForm.car}
-                                    onChange={e => setAddForm({ ...addForm, car: e.target.value })}
-                                    placeholder="e.g. Creta"
-                                    className="h-9"
+                                <Label htmlFor="a-notes" className="text-xs">
+                                    Internal notes <span className="font-normal text-slate-400">· only the team sees these</span>
+                                </Label>
+                                <Textarea
+                                    id="a-notes"
+                                    className="text-sm min-h-[64px]"
+                                    maxLength={2000}
+                                    value={addForm.internal_notes}
+                                    onChange={e => setAddForm({ ...addForm, internal_notes: e.target.value })}
+                                    placeholder="Anything for the next person on this lead — call back after 6, spoke to the brother…"
                                 />
                             </div>
                         </div>
 
                         {/* ── The store, and what the customer would receive ── */}
+                        {addTwoWheeler ? (
+                            <div className="space-y-2 min-w-0 lg:border-l lg:border-slate-100 lg:pl-4">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Who gets it</p>
+                                <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4 space-y-2">
+                                    <p className="text-sm font-bold text-slate-800">🏍️ Customer Executive</p>
+                                    <p className="text-[12px] text-slate-600 leading-relaxed">
+                                        2-wheeler enquiries don't go to a store. On save, the Customer Executive
+                                        (the support number in Store Locator settings) gets the <b>New Support Lead</b> WhatsApp alert
+                                        with this customer's number and "2-Wheeler" as the vehicle.
+                                    </p>
+                                    <p className="text-[12px] text-slate-600 leading-relaxed">
+                                        The customer isn't messaged — give them the executive's number on the call.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
                         <div className="space-y-2 min-w-0 lg:border-l lg:border-slate-100 lg:pl-4">
                             <div className="flex items-baseline gap-2">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
@@ -2195,9 +2425,9 @@ export const AdminLeadsList = () => {
                                    the dialog does not jump when the area is typed. */
                                 <div className="rounded-xl border border-dashed border-slate-200 grid place-items-center px-4 py-10">
                                     <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-                                        {addForm.area.trim()
-                                            ? `No verified franchise in ${addPreview?.state || "that state"} yet.`
-                                            : "Enter an area to see the stores that could serve this customer."}
+                                        {addPinOk || addForm.area.trim()
+                                            ? `No verified franchise near ${addPinOk ? addForm.pincode : addPreview?.state || "that area"} yet.`
+                                            : "Enter the pincode to see the stores nearest this customer."}
                                     </p>
                                 </div>
                             ) : (() => {
@@ -2304,6 +2534,7 @@ export const AdminLeadsList = () => {
                                 );
                             })()}
                         </div>
+                        )}
                     </div>
 
                     <DialogFooter className="border-t border-slate-100 pt-3">
@@ -2313,9 +2544,16 @@ export const AdminLeadsList = () => {
                         <p className="mr-auto text-[11px] text-slate-400 leading-snug hidden sm:block">
                             {(() => {
                                 const store = addStores.find(s => s.id === addStore);
+                                const who = addForm.phone || "the customer";
+                                if (addTwoWheeler) return "The Customer Executive gets the lead alert · the customer is not messaged";
+                                if (addPreview?.outcome) {
+                                    if (store) return `${who} and ${store.store_name} get the message`;
+                                    if (addPreview.outcome === "stores") return "Saved — pick a store to message the customer and the store.";
+                                    return `${addPreview.contact_name || "Customer support"} gets the lead · ${who} gets their number`;
+                                }
                                 const parts = [];
                                 if (addPreview?.matched) parts.push(`${addPreview.asm_name} is notified`);
-                                if (store) parts.push(`${addForm.phone || "the customer"} gets ${store.store_name}`);
+                                if (store) parts.push(`${who} gets ${store.store_name}`);
                                 return parts.length ? parts.join(" · ") : "Saved without notifying anyone.";
                             })()}
                         </p>

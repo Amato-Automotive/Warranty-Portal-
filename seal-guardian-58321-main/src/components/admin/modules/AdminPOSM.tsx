@@ -1,32 +1,28 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api, { getErrorMessage } from "@/lib/api";
 import { formatToIST, cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Loader2, RefreshCw, MessageSquare, Search, Paperclip, Store, User, Mail, Send, Clock, Eye, Filter, CheckCircle2, X, FileImage, FileVideo, FileText, Download, Plus } from "lucide-react";
+import { ChevronLeft, Download, Loader2, Mail, MapPin, Paperclip, Plus, RefreshCw, Search, Send, Store, Truck, User, X } from "lucide-react";
 import {
-    Pagination,
-    PaginationContent,
-    PaginationEllipsis,
-    PaginationItem,
-    PaginationLink,
-    PaginationNext,
-    PaginationPrevious,
-} from "@/components/ui/pagination";
+    STATUS_LABEL, STAGES, ACTIONS_AT, ACTION_LABEL, HISTORY_TEXT, BRAND_LABEL, decideLine,
+    type Brand, type HistoryEntry, type PosmAction, type PosmItem, type PosmLimits, type PosmLine, type Usage,
+} from "@/lib/posm";
+import { POSMLines, POSMTracker } from "@/components/posm/POSMLines";
+import { POSMShop, requestForm } from "@/components/posm/POSMShop";
+import { POSMItemBuilder } from "./POSMItemBuilder";
 
 interface POSMRequest {
     id: number;
     ticket_id: string;
     franchise_id: string;
     store_name: string;
-    // From vendor_details via a LEFT JOIN in posm.repository — null when the
-    // franchise has no store row.
     store_code?: string | null;
     store_address?: string | null;
     store_city?: string | null;
@@ -41,6 +37,11 @@ interface POSMRequest {
     internal_notes: string | null;
     created_at: string;
     updated_at: string;
+    allowed_brands?: string | null;
+    items?: PosmLine[] | null;
+    dispatch?: { courier?: string; tracking?: string; date?: string | null } | null;
+    delivery?: { by?: string; at?: string; photos?: string[] } | null;
+    history?: HistoryEntry[] | null;
 }
 
 interface Message {
@@ -52,1005 +53,689 @@ interface Message {
     created_at: string;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-    open: "bg-blue-500",
-    under_review: "bg-purple-500",
-    approved: "bg-green-500",
-    in_production: "bg-orange-500",
-    pending: "bg-amber-500",
-    dispatched: "bg-teal-500",
-    delivered: "bg-emerald-500",
-    closed: "bg-gray-500",
-    rejected: "bg-red-500"
-};
+type Limit = PosmLimits & { used_month?: number; used_year?: number };
 
-/*
- * The statuses an admin may set.
- *
- * Approved, Delivered and Action Required (stored as `rejected`) are not
- * offered: the stages in between already say where a request stands, and no
- * request has ever been put into any of the three. They remain in the enum
- * and in STATUS_COLORS so that a row carrying one — set before this list was
- * trimmed, or by another part of the system — still renders with its own
- * colour rather than falling through as an unknown status.
- */
-const STATUS_OPTIONS = [
-    { value: 'open', label: 'Open' },
-    { value: 'under_review', label: 'Under Review' },
-    { value: 'in_production', label: 'In Production' },
-    // Partly done with the rest outstanding, or not started at all.
-    { value: 'pending', label: 'Pending' },
-    { value: 'dispatched', label: 'Dispatched' },
-    { value: 'closed', label: 'Closed' }
-];
+const STATUS_TONE: Record<string, string> = {
+    open: "bg-blue-50 text-blue-700 border-blue-100", under_review: "bg-blue-50 text-blue-700 border-blue-100",
+    approved: "bg-emerald-50 text-emerald-700 border-emerald-100", in_production: "bg-amber-50 text-amber-700 border-amber-100",
+    pending: "bg-amber-50 text-amber-700 border-amber-100", dispatched: "bg-orange-50 text-orange-700 border-orange-100",
+    delivered: "bg-emerald-50 text-emerald-700 border-emerald-100", closed: "bg-slate-100 text-slate-600 border-slate-200",
+    rejected: "bg-red-50 text-red-700 border-red-100",
+};
+const statusText = (s: string) => (s === "open" || s === "under_review" ? "To approve" : STATUS_LABEL[s] ?? s.replace("_", " "));
+const StatusPill = ({ status }: { status: string }) => (
+    <Badge variant="outline" className={cn("text-[10px] uppercase font-bold whitespace-nowrap", STATUS_TONE[status] || "bg-slate-100 text-slate-600")}>
+        {statusText(status)}
+    </Badge>
+);
+const brandsText = (b?: string | null) => {
+    const v = String(b ?? "AF").toUpperCase();
+    return v === "AFAC" ? "Autoform + Autocruze" : BRAND_LABEL[v as Brand] ?? v;
+};
+const itemsText = (r: POSMRequest) =>
+    r.items?.length ? r.items.map(l => `${l.item_name} ×${l.line_status === 'rejected' ? 0 : (l.approved_qty ?? l.qty)}`).join(", ") : r.requirement;
+const stageOf = (s: string) => STAGES.find(x => x.statuses.includes(s))?.key ?? "approve";
 
 export const AdminPOSM = () => {
     const { toast } = useToast();
+    const [page, setPage] = useState<'requests' | 'builder'>('requests');
     const [requests, setRequests] = useState<POSMRequest[]>([]);
-    const [filteredRequests, setFilteredRequests] = useState<POSMRequest[]>([]);
     const [loading, setLoading] = useState(true);
-    const [selectedRequest, setSelectedRequest] = useState<POSMRequest | null>(null);
+    const [catalogItems, setCatalogItems] = useState<PosmItem[]>([]);
+
+    // The queue
+    const [stage, setStage] = useState("approve");
+    const [searchQuery, setSearchQuery] = useState("");
+    const [itemFilter, setItemFilter] = useState("all");
+    const [stateFilter, setStateFilter] = useState("all");
+    const [originFilter, setOriginFilter] = useState("all");
+
+    // The ticket open
+    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const [ticket, setTicket] = useState<POSMRequest | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
-    const [loadingMessages, setLoadingMessages] = useState(false);
-
-    // Admin Update States
-    const [tempStatus, setTempStatus] = useState("");
-    const [tempInternalNotes, setTempInternalNotes] = useState("");
-    const [updating, setUpdating] = useState(false);
-
-    // Chat State
-    const [newMessage, setNewMessage] = useState("");
-    const [adminAttachments, setAdminAttachments] = useState<File[]>([]);
+    const [limits, setLimits] = useState<Record<string, Limit>>({});
+    const [actions, setActions] = useState<PosmAction[]>([]);
+    const [loadingTicket, setLoadingTicket] = useState(false);
+    const [lines, setLines] = useState<PosmLine[]>([]);
+    const [pending, setPending] = useState<PosmAction | null>(null);   // reject and dispatch open their small form first
+    const [reason, setReason] = useState("");
+    const [dispatch, setDispatch] = useState({ courier: "", tracking: "", date: "" });
+    const [acting, setActing] = useState(false);
+    const [notes, setNotes] = useState("");
+    const [savingNotes, setSavingNotes] = useState(false);
+    const [reply, setReply] = useState("");
+    const [replyFiles, setReplyFiles] = useState<File[]>([]);
     const [sending, setSending] = useState(false);
 
-    // Filters
-    const [searchQuery, setSearchQuery] = useState("");
-    const [statusFilter, setStatusFilter] = useState("all");
-    const [originFilter, setOriginFilter] = useState("all");
-    const [activeTab, setActiveTab] = useState<'details' | 'chat'>('details');
-
-    // Pagination State
-    const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 15;
-
-    // Raising a request on a franchise's behalf, for requirements that come in
-    // by phone or email rather than through the portal.
+    // Raising a request on a store's behalf
     const [onBehalfOpen, setOnBehalfOpen] = useState(false);
     const [franchises, setFranchises] = useState<{ id: string; store_name: string; store_code?: string | null; city?: string | null }[]>([]);
     const [franchiseSearch, setFranchiseSearch] = useState("");
     const [onBehalfFranchiseId, setOnBehalfFranchiseId] = useState<string | null>(null);
+    const [onBehalfMode, setOnBehalfMode] = useState<'items' | 'text'>('items');
     const [onBehalfRequirement, setOnBehalfRequirement] = useState("");
     const [onBehalfFiles, setOnBehalfFiles] = useState<File[]>([]);
     const [creating, setCreating] = useState(false);
+    const [storeShop, setStoreShop] = useState<{ items: PosmItem[]; brands: Brand[]; usage: Usage } | null>(null);
+    const [ignoreLimits, setIgnoreLimits] = useState(false);
 
-    const fetchRequests = async () => {
-        setLoading(true);
+    /* quiet: a background refresh, with no spinner and no error toast. */
+    const fetchRequests = async (quiet = false) => {
+        if (!quiet) setLoading(true);
         try {
             const response = await api.get("/posm/admin/all");
-            if (response.data.success) {
-                setRequests(response.data.data);
-            }
-        } catch (error: any) {
-            toast({
-                title: "Error",
-                description: "Failed to fetch POSM requests",
-                variant: "destructive",
-            });
+            if (response.data.success) setRequests(response.data.data);
+        } catch {
+            if (!quiet) toast({ title: "Error", description: "Failed to fetch POSM requests", variant: "destructive" });
         } finally {
-            setLoading(false);
+            if (!quiet) setLoading(false);
         }
     };
 
-    const fetchTicketDetails = async (id: number) => {
+    const loadTicket = async (id: number) => {
+        setLoadingTicket(true);
         try {
-            setLoadingMessages(true);
-            const response = await api.get(`/posm/${id}`);
-            if (response.data.success) {
-                setMessages(response.data.data.messages || []);
-            }
-        } catch (error) {
-            console.error('Error fetching ticket messages:', error);
+            const r = await api.get(`/posm/${id}`);
+            const { messages: msgs, limits: lim, actions: acts, ...t } = r.data.data;
+            setTicket(t); setMessages(msgs || []); setLimits(lim || {});
+            setActions(acts || ACTIONS_AT[t.status] || []);
+            setLines((t.items || []).map((l: PosmLine) => ({ ...l })));
+            setNotes(t.internal_notes || "");
+            setDispatch({ courier: t.dispatch?.courier || "", tracking: t.dispatch?.tracking || "", date: t.dispatch?.date || new Date().toISOString().slice(0, 10) });
+        } catch (e) {
+            toast({ title: "Could not open the request", description: getErrorMessage(e, ""), variant: "destructive" });
         } finally {
-            setLoadingMessages(false);
+            setLoadingTicket(false);
         }
     };
 
+    useEffect(() => { fetchRequests(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    /* New requests arrive while the page is open: refresh every 30 seconds and
+       whenever the admin comes back to the tab. */
     useEffect(() => {
-        fetchRequests();
-    }, []);
-
+        const refresh = () => { if (document.visibilityState === "visible") fetchRequests(true); };
+        const timer = window.setInterval(refresh, 30_000);
+        document.addEventListener("visibilitychange", refresh);
+        window.addEventListener("focus", refresh);
+        return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
-        let result = requests;
+        if (page !== 'requests') return;
+        api.get("/posm/catalog").then(r => setCatalogItems(r.data.data.catalog.items || [])).catch(() => setCatalogItems([]));
+    }, [page]);
+    useEffect(() => {
+        setPending(null); setReason(""); setReply(""); setReplyFiles([]);
+        if (selectedId != null) loadTicket(selectedId); else setTicket(null);
+    }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-        // Search filter
-        if (searchQuery) {
-            const query = searchQuery.toLowerCase();
-            result = result.filter(r =>
-                r.ticket_id.toLowerCase().includes(query) ||
-                r.store_name.toLowerCase().includes(query) ||
-                r.contact_name.toLowerCase().includes(query) ||
-                (r.created_by_name || "").toLowerCase().includes(query) ||
-                r.requirement.toLowerCase().includes(query)
-            );
-        }
-
-        // Status filter
-        if (statusFilter !== "all") {
-            result = result.filter(r => r.status === statusFilter);
-        }
-
-        // Who raised it
-        if (originFilter !== "all") {
-            result = result.filter(r =>
-                originFilter === "admin"
-                    ? r.created_by_role === "admin"
-                    : r.created_by_role !== "admin"
-            );
-        }
-
-        setFilteredRequests(result);
-        setCurrentPage(1); // Reset to first page when filters change
-    }, [searchQuery, statusFilter, originFilter, requests]);
-
-    // Pagination Calculation
-    const totalPages = Math.ceil(filteredRequests.length / itemsPerPage);
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const paginatedRequests = filteredRequests.slice(startIndex, startIndex + itemsPerPage);
-
-    const handleOpenDetail = (r: POSMRequest) => {
-        setSelectedRequest(r);
-        setTempStatus(r.status);
-        setTempInternalNotes(r.internal_notes || "");
-        setActiveTab('details');
-        fetchTicketDetails(r.id);
+    /* ---------- the queue ---------- */
+    const states = useMemo(() => [...new Set(requests.map(r => (r.store_state || "").trim()).filter(Boolean))].sort(), [requests]);
+    const matches = (r: POSMRequest) => {
+        const q = searchQuery.trim().toLowerCase();
+        if (q && ![r.ticket_id, r.store_name, r.store_code, r.store_city, r.contact_name, r.requirement].some(v => (v || "").toLowerCase().includes(q))) return false;
+        if (itemFilter !== "all" && !(r.items || []).some(l => l.item_id === itemFilter)) return false;
+        if (stateFilter !== "all" && (r.store_state || "").trim() !== stateFilter) return false;
+        if (originFilter !== "all" && (originFilter === "admin") !== (r.created_by_role === "admin")) return false;
+        return true;
     };
+    const filtered = requests.filter(matches);
+    const counts = Object.fromEntries(STAGES.map(st => [st.key, filtered.filter(r => st.statuses.includes(r.status)).length]));
+    // Oldest first while there is work to do; the most recent first once done.
+    const queue = filtered.filter(r => stageOf(r.status) === stage)
+        .sort((a, b) => stage === "done" ? b.updated_at.localeCompare(a.updated_at) : a.created_at.localeCompare(b.created_at));
 
-    const handleSaveChanges = async () => {
-        if (!selectedRequest) return;
-
-        setUpdating(true);
+    /* ---------- steps ---------- */
+    /* Quantities can be set until dispatch: before approval they go with Approve,
+       after it with Save quantities. */
+    const editable = !!ticket && ["open", "under_review", "pending", "approved", "in_production"].includes(ticket.status) && lines.length > 0;
+    const afterApproval = !!ticket && ["approved", "in_production"].includes(ticket.status);
+    const linesChanged = !!ticket && JSON.stringify((ticket.items || []).map(l => [l.approved_qty ?? null, l.line_status ?? "pending"]))
+        !== JSON.stringify(lines.map(l => [l.approved_qty ?? null, l.line_status ?? "pending"]));
+    const [savingLines, setSavingLines] = useState(false);
+    const saveLines = async () => {
+        if (!ticket) return;
+        setSavingLines(true);
         try {
-            const response = await api.put(`/posm/${selectedRequest.id}/status`, {
-                status: tempStatus,
-                internalNotes: tempInternalNotes
-            });
-
-            if (response.data.success) {
-                toast({ title: "Success", description: "Request updated successfully" });
-                fetchRequests();
-                // Update local selected request
-                setSelectedRequest(prev => prev ? { ...prev, status: tempStatus, internal_notes: tempInternalNotes } : null);
-            }
-        } catch (error: any) {
-            toast({
-                title: "Error",
-                description: getErrorMessage(error, "Failed to update request"),
-                variant: "destructive",
-            });
+            const r = await api.put(`/posm/${ticket.id}/status`, { decisions: lines.map((l, index) => ({ index, approved_qty: l.approved_qty ?? null, line_status: l.line_status ?? "pending" })) });
+            toast({ title: "Quantities saved", description: `${ticket.store_name} is told in their notifications.` });
+            setRequests(list => list.map(x => x.id === ticket.id ? { ...x, ...r.data.data } : x));
+            loadTicket(ticket.id);
+        } catch (e) {
+            toast({ title: "Not saved", description: getErrorMessage(e, ""), variant: "destructive" });
         } finally {
-            setUpdating(false);
+            setSavingLines(false);
+        }
+    };
+    const approvable = lines.filter(l => l.line_status !== "rejected" && (l.approved_qty ?? l.qty) > 0).length;
+
+    const act = async (action: PosmAction) => {
+        if (!ticket) return;
+        if ((action === "reject" || action === "dispatch") && pending !== action) { setPending(action); return; }
+        setActing(true);
+        try {
+            const body: Record<string, unknown> = { action };
+            if (action === "approve" && lines.length) body.decisions = lines.map((l, index) => ({ index, approved_qty: l.approved_qty ?? null, line_status: l.line_status ?? "pending" }));
+            if (action === "reject") body.reason = reason;
+            if (action === "dispatch") body.dispatch = dispatch;
+            const r = await api.post(`/posm/${ticket.id}/action`, body);
+            const fresh = r.data.data;
+            toast({ title: `${ticket.ticket_id}: ${r.data.message}`, description: `${ticket.store_name} is told in their notifications.` });
+            setPending(null); setReason("");
+            setRequests(list => list.map(x => x.id === ticket.id ? { ...x, ...fresh } : x));
+            setStage(stageOf(fresh.status));
+            loadTicket(ticket.id);
+        } catch (e) {
+            toast({ title: "Not done", description: getErrorMessage(e, "Try again."), variant: "destructive" });
+        } finally {
+            setActing(false);
         }
     };
 
-    const handleSendMessage = async (e: React.FormEvent) => {
+    const saveNotes = async () => {
+        if (!ticket) return;
+        setSavingNotes(true);
+        try {
+            await api.put(`/posm/${ticket.id}/status`, { internalNotes: notes });
+            setTicket(t => t ? { ...t, internal_notes: notes } : t);
+            toast({ title: "Internal note saved" });
+        } catch (e) {
+            toast({ title: "Not saved", description: getErrorMessage(e, ""), variant: "destructive" });
+        } finally {
+            setSavingNotes(false);
+        }
+    };
+
+    const saveDispatch = async () => {
+        if (!ticket) return;
+        try {
+            await api.put(`/posm/${ticket.id}/status`, { dispatch });
+            toast({ title: "Dispatch details saved" });
+            loadTicket(ticket.id);
+        } catch (e) {
+            toast({ title: "Not saved", description: getErrorMessage(e, ""), variant: "destructive" });
+        }
+    };
+
+    const sendReply = async (e: React.FormEvent) => {
         e.preventDefault();
-        if ((!newMessage.trim() && adminAttachments.length === 0) || !selectedRequest) return;
-
+        if (!ticket || (!reply.trim() && !replyFiles.length)) return;
         setSending(true);
         try {
-            const formData = new FormData();
-            formData.append("message", newMessage);
-            adminAttachments.forEach(file => {
-                formData.append("attachments", file);
-            });
-
-            const response = await api.post(`/posm/${selectedRequest.id}/messages`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
-
-            if (response.data.success) {
-                setNewMessage("");
-                setAdminAttachments([]);
-                fetchTicketDetails(selectedRequest.id);
-            }
-        } catch (error: any) {
-            toast({
-                title: "Error",
-                description: "Failed to send message",
-                variant: "destructive",
-            });
+            const fd = new FormData();
+            fd.append("message", reply.trim());
+            replyFiles.forEach(f => fd.append("attachments", f));
+            await api.post(`/posm/${ticket.id}/messages`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+            setReply(""); setReplyFiles([]);
+            loadTicket(ticket.id);
+        } catch (e) {
+            toast({ title: "Message not sent", description: getErrorMessage(e, ""), variant: "destructive" });
         } finally {
             setSending(false);
         }
     };
 
-    const getFileIcon = (url: string) => {
-        const ext = url.split('.').pop()?.toLowerCase();
-        if (['jpg', 'jpeg', 'png', 'webp'].includes(ext!)) return <FileImage className="h-4 w-4" />;
-        if (['mp4', 'mov', 'avi'].includes(ext!)) return <FileVideo className="h-4 w-4" />;
-        return <FileText className="h-4 w-4" />;
-    };
+    /* The timeline and the chat, in time order. Older requests have no
+       timeline; their start is the day they were raised. */
+    const feed = useMemo(() => {
+        if (!ticket) return [];
+        const steps = (ticket.history?.length ? ticket.history
+            : [{ action: "sent", status: "open", at: ticket.created_at, by_role: ticket.created_by_role === "admin" ? "admin" : "franchise" } as HistoryEntry])
+            .map(h => ({ at: h.at, kind: "step" as const, h }));
+        const msgs = messages.map(m => ({ at: m.created_at, kind: "msg" as const, m }));
+        return [...steps, ...msgs].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    }, [ticket, messages]);
 
-    // Export to CSV function
+    /* ---------- export ---------- */
     const exportToCSV = () => {
-        const dataToExport = filteredRequests;
-        if (dataToExport.length === 0) {
+        if (filtered.length === 0) {
             toast({ title: "No Data", description: "No POSM requests to export with current filters.", variant: "destructive" });
             return;
         }
-
-        const headers = ["Date", "Ticket ID", "Franchise", "Store Code", "Address", "City",
-            "State", "Pincode", "Contact Name", "Contact Email", "Requirement", "Status",
-            "Raised By", "Raised By Name", "Last Update"];
-
-        /* A CSV cell has to survive quotes, commas and newlines alike, and an
-           address is the field most likely to hold all three. */
-        const cell = (value: unknown) =>
-            `"${String(value ?? "").replace(/"/g, '""').replace(/[\r\n]+/g, " ").trim()}"`;
-
-        const csvContent = [
-            headers.join(","),
-            ...dataToExport.map(r => [
-                `"${formatToIST(r.created_at)}"`,
-                `"${r.ticket_id}"`,
-                cell(r.store_name),
-                cell(r.store_code),
-                cell(r.store_address),
-                cell(r.store_city),
-                cell(r.store_state),
-                cell(r.store_pincode),
-                cell(r.contact_name),
-                cell(r.contact_email),
-                cell(r.requirement),
-                cell(r.status.replace("_", " ")),
-                cell(r.created_by_role === 'admin' ? 'Admin (on behalf)' : 'Franchise'),
-                cell(r.created_by_name),
-                `"${formatToIST(r.updated_at)}"`
-            ].join(","))
-        ].join("\n");
-
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const headers = ["Date", "Ticket ID", "Franchise", "Store Code", "Address", "City", "State", "Pincode", "Contact Name", "Contact Email",
+            "Requirement", "Status", "Raised By", "Raised By Name", "Items (asked / approved)", "Dispatch", "Last Update"];
+        const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""').replace(/[\r\n]+/g, " ").trim()}"`;
+        const csv = [headers.join(","), ...filtered.map(r => [
+            cell(formatToIST(r.created_at)), cell(r.ticket_id), cell(r.store_name), cell(r.store_code), cell(r.store_address), cell(r.store_city),
+            cell(r.store_state), cell(r.store_pincode), cell(r.contact_name), cell(r.contact_email), cell(r.requirement), cell(statusText(r.status)),
+            cell(r.created_by_role === 'admin' ? 'Admin (on behalf)' : 'Franchise'), cell(r.created_by_name),
+            cell((r.items || []).map(l => `${l.item_name} ${l.qty}/${l.line_status === 'rejected' ? 0 : (l.approved_qty ?? '-')}`).join('; ')),
+            cell(r.dispatch?.courier ? [r.dispatch.courier, r.dispatch.tracking, r.dispatch.date].filter(Boolean).join(' ') : ''),
+            cell(formatToIST(r.updated_at)),
+        ].join(","))].join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
         link.download = `posm_requests_${new Date().toISOString().split('T')[0]}.csv`;
         link.click();
         URL.revokeObjectURL(link.href);
-
-        toast({ title: "Exported", description: `${dataToExport.length} POSM requests exported to CSV.` });
+        toast({ title: "Exported", description: `${filtered.length} POSM requests exported to CSV.` });
     };
 
+    /* ---------- raise for a store ---------- */
     const openOnBehalf = async () => {
-        setOnBehalfOpen(true);
-        setOnBehalfFranchiseId(null);
-        setOnBehalfRequirement("");
-        setOnBehalfFiles([]);
-        setFranchiseSearch("");
+        setOnBehalfOpen(true); setOnBehalfFranchiseId(null); setOnBehalfRequirement(""); setOnBehalfFiles([]);
+        setFranchiseSearch(""); setOnBehalfMode('items'); setIgnoreLimits(false); setStoreShop(null);
         if (franchises.length > 0) return;
         try {
             const res = await api.get("/admin/vendors");
             const list = res.data.vendors || res.data.data || [];
-            setFranchises(
-                list
-                    .map((v: any) => ({
-                        id: v.vendor_details_id ?? v.id,
-                        store_name: v.store_name,
-                        store_code: v.store_code,
-                        city: v.city,
-                    }))
-                    .filter((v: any) => v.id && v.store_name)
-            );
-        } catch (error: any) {
-            toast({
-                title: "Could not load franchises",
-                description: getErrorMessage(error, "Try reopening the form."),
-                variant: "destructive",
-            });
+            setFranchises(list.map((v: any) => ({ id: v.vendor_details_id ?? v.id, store_name: v.store_name, store_code: v.store_code, city: v.city }))
+                .filter((v: any) => v.id && v.store_name));
+        } catch (error) {
+            toast({ title: "Could not load franchises", description: getErrorMessage(error, "Try reopening the form."), variant: "destructive" });
         }
     };
+    useEffect(() => {
+        setStoreShop(null);
+        if (!onBehalfFranchiseId) return;
+        api.get(`/posm/catalog?franchiseId=${encodeURIComponent(onBehalfFranchiseId)}`)
+            .then(r => setStoreShop({ items: r.data.data.catalog.items || [], brands: r.data.data.brands || ['AF'], usage: r.data.data.usage || {} }))
+            .catch(e => toast({ title: "Could not load the items", description: getErrorMessage(e, "Try again."), variant: "destructive" }));
+    }, [onBehalfFranchiseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const handleCreateOnBehalf = async () => {
+    const afterRaise = (requestId?: number) => {
+        setOnBehalfOpen(false);
+        fetchRequests();
+        setStage("approve");
+        if (requestId) setSelectedId(requestId);
+    };
+    const raiseItems = async (picked: Parameters<typeof requestForm>[0], note: string) => {
+        if (!onBehalfFranchiseId) return false;
+        try {
+            const r = await api.post("/posm/admin/on-behalf/items",
+                requestForm(picked, note, { franchiseId: onBehalfFranchiseId, ignore_limits: String(ignoreLimits) }),
+                { headers: { "Content-Type": "multipart/form-data" } });
+            toast({ title: `Request raised — ${r.data?.data?.ticketId ?? ""}`.trim(), description: r.data?.message });
+            afterRaise(r.data?.data?.requestId);
+            return true;
+        } catch (error) {
+            toast({ title: "Could not raise the request", description: getErrorMessage(error, "Failed to submit POSM request"), variant: "destructive" });
+            return false;
+        }
+    };
+    const raiseText = async () => {
         if (!onBehalfFranchiseId || !onBehalfRequirement.trim()) return;
         setCreating(true);
         try {
-            const formData = new FormData();
-            formData.append("franchiseId", onBehalfFranchiseId);
-            formData.append("requirement", onBehalfRequirement);
-            onBehalfFiles.forEach(file => formData.append("attachments", file));
-
-            const response = await api.post("/posm/admin/on-behalf", formData, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
-
-            toast({
-                title: `Request raised — ${response.data?.data?.ticketId ?? ""}`.trim(),
-                description: response.data?.message || "The request is now in the queue.",
-            });
-            setOnBehalfOpen(false);
-            fetchRequests();
-        } catch (error: any) {
-            toast({
-                title: "Could not raise the request",
-                description: getErrorMessage(error, "Failed to submit POSM request"),
-                variant: "destructive",
-            });
+            const fd = new FormData();
+            fd.append("franchiseId", onBehalfFranchiseId);
+            fd.append("requirement", onBehalfRequirement);
+            onBehalfFiles.forEach(file => fd.append("attachments", file));
+            const r = await api.post("/posm/admin/on-behalf", fd, { headers: { "Content-Type": "multipart/form-data" } });
+            toast({ title: `Request raised — ${r.data?.data?.ticketId ?? ""}`.trim(), description: r.data?.message });
+            afterRaise(r.data?.data?.requestId);
+        } catch (error) {
+            toast({ title: "Could not raise the request", description: getErrorMessage(error, "Failed to submit POSM request"), variant: "destructive" });
         } finally {
             setCreating(false);
         }
     };
-
     const filteredFranchises = (() => {
         const q = franchiseSearch.trim().toLowerCase();
-        if (!q) return franchises.slice(0, 40);
-        return franchises
-            .filter(f =>
-                f.store_name.toLowerCase().includes(q) ||
-                (f.store_code || "").toLowerCase().includes(q) ||
-                (f.city || "").toLowerCase().includes(q)
-            )
-            .slice(0, 40);
+        const list = q ? franchises.filter(f => [f.store_name, f.store_code, f.city].some(v => (v || "").toLowerCase().includes(q))) : franchises;
+        return list.slice(0, 40);
     })();
-
     const selectedFranchise = franchises.find(f => f.id === onBehalfFranchiseId) || null;
 
-    const stats = {
-        total: requests.length,
-        open: requests.filter(r => r.status === 'open').length,
-        active: requests.filter(r => !['closed', 'rejected', 'delivered'].includes(r.status)).length,
-        completed: requests.filter(r => ['delivered', 'closed'].includes(r.status)).length
-    };
-
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center h-[400px]">
-                <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-            </div>
-        );
-    }
+    /* ---------- page ---------- */
+    const pageSwitch = (
+        <div className="inline-flex rounded-2xl border border-orange-100 bg-white p-1 shadow-sm">
+            {([['requests', 'Requests'], ['builder', 'Item builder']] as const).map(([v, label]) => (
+                <button key={v} type="button" onClick={() => setPage(v)}
+                    className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-colors", page === v ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-800")}>
+                    {label}
+                </button>
+            ))}
+        </div>
+    );
+    if (page === 'builder') return <div className="space-y-6">{pageSwitch}<POSMItemBuilder /></div>;
 
     return (
-        <div className="space-y-6">
-            {/* Stats Row */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="border-orange-100 shadow-sm bg-white/50 backdrop-blur-sm">
-                    <CardContent className="pt-6">
-                        <p className="text-3xl font-black text-slate-800">{stats.total}</p>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Requests</p>
-                    </CardContent>
-                </Card>
-                <Card className="border-orange-100 shadow-sm bg-white/50 backdrop-blur-sm">
-                    <CardContent className="pt-6">
-                        <p className="text-3xl font-black text-blue-500">{stats.open}</p>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">New (Open)</p>
-                    </CardContent>
-                </Card>
-                <Card className="border-orange-100 shadow-sm bg-white/50 backdrop-blur-sm">
-                    <CardContent className="pt-6">
-                        <p className="text-3xl font-black text-orange-500">{stats.active}</p>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">In Progress</p>
-                    </CardContent>
-                </Card>
-                <Card className="border-orange-100 shadow-sm bg-white/50 backdrop-blur-sm">
-                    <CardContent className="pt-6">
-                        <p className="text-3xl font-black text-green-500">{stats.completed}</p>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fulfilled</p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* Filters Row */}
-            <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-white p-4 rounded-3xl border border-orange-50 shadow-sm">
-                <div className="relative w-full md:w-[400px]">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
-                        placeholder="Search by Ticket ID, Franchise or Requirement..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-11 h-12 border-orange-100 focus:border-orange-200 rounded-2xl text-sm bg-slate-50/50"
-                    />
-                </div>
-
-                <div className="flex w-full md:w-auto gap-3 items-center">
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                        <SelectTrigger className="w-[180px] border-orange-100 h-12 rounded-2xl bg-slate-50/50">
-                            <Filter className="h-4 w-4 mr-2 text-slate-400" />
-                            <SelectValue placeholder="Status Filter" />
-                        </SelectTrigger>
-                        <SelectContent className="rounded-2xl">
-                            <SelectItem value="all">All Statuses</SelectItem>
-                            {STATUS_OPTIONS.map(opt => (
-                                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-
-                    <Select value={originFilter} onValueChange={setOriginFilter}>
-                        <SelectTrigger className="w-[170px] border-orange-100 h-12 rounded-2xl bg-slate-50/50">
-                            <User className="h-4 w-4 mr-2 text-slate-400" />
-                            <SelectValue placeholder="Raised By" />
-                        </SelectTrigger>
-                        <SelectContent className="rounded-2xl">
-                            <SelectItem value="all">Anyone</SelectItem>
-                            <SelectItem value="franchise">By franchise</SelectItem>
-                            <SelectItem value="admin">By admin</SelectItem>
-                        </SelectContent>
-                    </Select>
-
-                    <Button
-                        onClick={openOnBehalf}
-                        className="h-12 rounded-2xl shrink-0 gap-2 bg-orange-600 hover:bg-orange-700"
-                    >
-                        <Plus className="h-4 w-4" />
-                        <span>Raise for a franchise</span>
-                    </Button>
-                    <Button
-                        variant="outline"
-                        onClick={exportToCSV}
-                        className="h-12 border-orange-100 hover:bg-orange-50 rounded-2xl shrink-0 gap-2 text-slate-600"
-                    >
-                        <Download className="h-4 w-4" />
-                        <span>Export</span>
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={fetchRequests}
-                        className="h-12 w-12 border-orange-100 hover:bg-orange-50 rounded-2xl shrink-0"
-                    >
-                        <RefreshCw className="h-4 w-4" />
-                    </Button>
+        <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                {pageSwitch}
+                <div className="flex flex-wrap gap-2">
+                    <Button onClick={openOnBehalf} className="rounded-xl gap-1.5 bg-orange-600 hover:bg-orange-700"><Plus className="h-4 w-4" /> Raise for a store</Button>
+                    <Button variant="outline" onClick={exportToCSV} className="rounded-xl gap-1.5 border-orange-100"><Download className="h-4 w-4" /> Export</Button>
+                    <Button variant="outline" size="icon" onClick={() => fetchRequests()} className="rounded-xl border-orange-100" aria-label="Refresh"><RefreshCw className="h-4 w-4" /></Button>
                 </div>
             </div>
 
-            {/* List Desktop View */}
-            <Card className="border-orange-100 shadow-sm overflow-hidden hidden md:block rounded-[32px]">
-                <div className="w-full overflow-auto">
-                    <table className="w-full text-sm text-left">
-                        <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-widest border-b border-orange-50">
-                            <tr>
-                                <th className="p-6">Date</th>
-                                <th className="p-6">Ticket</th>
-                                <th className="p-6">Franchise</th>
-                                <th className="p-6">Requirement</th>
-                                <th className="p-6">Status</th>
-                                <th className="p-6 text-right">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-orange-50 bg-white">
-                            {paginatedRequests.map((r) => (
-                                <tr key={r.id} className="hover:bg-orange-50/30 transition-colors">
-                                    <td className="p-6 text-slate-500 font-medium whitespace-nowrap">
-                                        {formatToIST(r.created_at)}
-                                    </td>
-                                    <td className="p-6">
-                                        <div className="flex flex-col gap-1 items-start">
-                                            <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded-lg">
-                                                {r.ticket_id}
-                                            </span>
-                                            {r.created_by_role === 'admin' ? (
-                                                <span
-                                                    title={r.created_by_name ? `Raised by ${r.created_by_name}` : undefined}
-                                                    className="text-[9px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 border border-purple-100 px-1.5 py-0.5 rounded"
-                                                >
-                                                    By admin
-                                                </span>
-                                            ) : (
-                                                <span
-                                                    title={r.created_by_name ? `Raised by ${r.created_by_name}` : undefined}
-                                                    className="text-[9px] font-black uppercase tracking-wider text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded"
-                                                >
-                                                    By franchise
-                                                </span>
-                                            )}
-                                        </div>
-                                    </td>
-                                    <td className="p-6">
-                                        <div className="flex flex-col">
-                                            <span className="font-bold text-slate-900">{r.store_name}</span>
-                                            <span className="text-[10px] text-slate-400">{r.contact_name}</span>
-                                        </div>
-                                    </td>
-                                    <td className="p-6 max-w-[300px]">
-                                        <p className="truncate text-slate-600 font-medium">{r.requirement}</p>
-                                    </td>
-                                    <td className="p-6">
-                                        <Badge className={cn(STATUS_COLORS[r.status], "shadow-sm uppercase text-[10px] h-6")}>
-                                            {r.status === 'rejected' ? 'Action Required' : r.status.replace("_", " ")}
-                                        </Badge>
-                                    </td>
-                                    <td className="p-6 text-right">
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="h-10 w-10 p-0 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-xl"
-                                            onClick={() => handleOpenDetail(r)}
-                                        >
-                                            <Eye className="h-5 w-5" />
-                                        </Button>
-                                    </td>
-                                </tr>
-                            ))}
-                            {filteredRequests.length === 0 && (
-                                <tr>
-                                    <td colSpan={6} className="p-12 text-center text-slate-400 italic font-medium">
-                                        No POSM requests found matching your filters.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </Card>
-
-            {/* Mobile Cards View */}
-            <div className="md:hidden space-y-4">
-                {paginatedRequests.map((r) => (
-                    <Card key={r.id} className="border-orange-100 shadow-sm rounded-3xl overflow-hidden" onClick={() => handleOpenDetail(r)}>
-                        <CardContent className="p-6">
-                            <div className="flex justify-between items-start mb-4">
-                                <Badge className={cn(STATUS_COLORS[r.status], "uppercase text-[9px] px-2")}>
-                                    {r.status === 'rejected' ? 'Action Required' : r.status.replace("_", " ")}
-                                </Badge>
-                                <span className="text-[10px] font-bold text-slate-400 font-mono tracking-tighter bg-slate-50 px-2 py-1 rounded-lg">
-                                    {r.ticket_id}
-                                </span>
-                                {r.created_by_role === 'admin' ? (
-                                    <span className="text-[9px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 border border-purple-100 px-1.5 py-0.5 rounded">
-                                        By admin
-                                    </span>
-                                ) : (
-                                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
-                                        By franchise
-                                    </span>
-                                )}
-                            </div>
-                            <h3 className="font-black text-slate-800 mb-1 leading-tight">{r.store_name}</h3>
-                            <p className="text-xs text-slate-500 line-clamp-2 mb-4 font-medium">{r.requirement}</p>
-                            <div className="flex justify-between items-center text-[10px] text-slate-400 pt-3 border-t border-orange-50">
-                                <span className="flex items-center gap-1 font-bold italic">
-                                    <Clock className="h-3 w-3" /> {formatToIST(r.created_at)}
-                                </span>
-                                <span className="font-bold uppercase tracking-widest text-orange-500">View Details →</span>
-                            </div>
-                        </CardContent>
-                    </Card>
+            {/* Stages */}
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {STAGES.map(st => (
+                    <button key={st.key} type="button" onClick={() => { setStage(st.key); setSelectedId(null); }}
+                        className={cn("shrink-0 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors",
+                            stage === st.key ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300")}>
+                        {st.label}
+                        <span className={cn("ml-1.5 tabular-nums", stage === st.key ? "text-white/70" : st.key === "approve" && counts[st.key] ? "text-orange-600" : "text-slate-400")}>{counts[st.key] ?? 0}</span>
+                    </button>
                 ))}
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-                <Pagination className="mt-4">
-                    <PaginationContent>
-                        <PaginationItem>
-                            <PaginationPrevious
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                aria-disabled={currentPage === 1}
-                                className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                            />
-                        </PaginationItem>
+            {/* Filters */}
+            <div className="flex flex-wrap gap-2">
+                <div className="relative flex-1 min-w-[220px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input placeholder="Search store, ticket, city…" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-9 h-10 rounded-xl bg-white" />
+                </div>
+                <Select value={itemFilter} onValueChange={setItemFilter}>
+                    <SelectTrigger className="w-[160px] h-10 rounded-xl bg-white"><SelectValue placeholder="Item" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">All items</SelectItem>{catalogItems.map(it => <SelectItem key={it.id} value={it.id}>{it.name}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={stateFilter} onValueChange={setStateFilter}>
+                    <SelectTrigger className="w-[150px] h-10 rounded-xl bg-white"><SelectValue placeholder="State" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">All states</SelectItem>{states.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={originFilter} onValueChange={setOriginFilter}>
+                    <SelectTrigger className="w-[160px] h-10 rounded-xl bg-white"><SelectValue placeholder="Raised by" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">Raised by anyone</SelectItem><SelectItem value="franchise">By the store</SelectItem><SelectItem value="admin">By admin</SelectItem></SelectContent>
+                </Select>
+            </div>
 
-                        {Array.from({ length: totalPages }, (_, i) => i + 1)
-                            .filter(page => {
-                                return page === 1 ||
-                                    page === totalPages ||
-                                    Math.abs(page - currentPage) <= 1;
-                            })
-                            .map((page, index, array) => {
-                                if (index > 0 && array[index - 1] !== page - 1) {
-                                    return (
-                                        <div key={`ellipsis-${page}`} className="flex items-center">
-                                            <PaginationEllipsis />
-                                            <PaginationItem>
-                                                <PaginationLink
-                                                    isActive={currentPage === page}
-                                                    onClick={() => setCurrentPage(page)}
-                                                    className="cursor-pointer"
-                                                >
-                                                    {page}
-                                                </PaginationLink>
-                                            </PaginationItem>
-                                        </div>
-                                    );
-                                }
-
-                                return (
-                                    <PaginationItem key={page}>
-                                        <PaginationLink
-                                            isActive={currentPage === page}
-                                            onClick={() => setCurrentPage(page)}
-                                            className="cursor-pointer"
-                                        >
-                                            {page}
-                                        </PaginationLink>
-                                    </PaginationItem>
-                                );
-                            })}
-
-                        <PaginationItem>
-                            <PaginationNext
-                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                aria-disabled={currentPage === totalPages}
-                                className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                            />
-                        </PaginationItem>
-                    </PaginationContent>
-                </Pagination>
-            )}
-
-            {/* Detail & Chat Dialog */}
-            <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>
-                <DialogContent className="max-w-4xl h-[90vh] p-0 gap-0 overflow-hidden rounded-[40px] border-none">
-                    <div className="sr-only">
-                        <DialogTitle>POSM Request: {selectedRequest?.ticket_id}</DialogTitle>
-                        <DialogDescription>View and manage the POSM request from {selectedRequest?.store_name}</DialogDescription>
-                    </div>
-                    {selectedRequest && (
-                        <div className="flex flex-col h-full w-full overflow-hidden">
-                            {/* Mobile Tab Switcher */}
-                            <div className="lg:hidden sticky top-0 z-10 px-6 pt-10 pb-4 bg-white/80 backdrop-blur-xl border-b border-orange-50 shrink-0">
-                                <div className="bg-slate-100 p-1.5 rounded-3xl flex gap-1">
-                                    <Button
-                                        variant="ghost"
-                                        onClick={() => setActiveTab('details')}
-                                        className={cn(
-                                            "flex-1 rounded-2xl h-11 font-black text-[10px] uppercase tracking-widest transition-all duration-300",
-                                            activeTab === 'details'
-                                                ? "bg-white text-slate-900 shadow-sm"
-                                                : "text-slate-400 hover:text-slate-600"
-                                        )}
-                                    >
-                                        <FileText className={cn("h-4 w-4 mr-2 transition-transform", activeTab === 'details' && "scale-110")} />
-                                        Details
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        onClick={() => setActiveTab('chat')}
-                                        className={cn(
-                                            "flex-1 rounded-2xl h-11 font-black text-[10px] uppercase tracking-widest transition-all duration-300",
-                                            activeTab === 'chat'
-                                                ? "bg-white text-slate-900 shadow-sm"
-                                                : "text-slate-400 hover:text-slate-600"
-                                        )}
-                                    >
-                                        <MessageSquare className={cn("h-4 w-4 mr-2 transition-transform", activeTab === 'chat' && "scale-110")} />
-                                        Chat
-                                    </Button>
-                                </div>
-                            </div>
-
-                            <div className="flex flex-col lg:flex-row h-full w-full overflow-hidden">
-                                {/* Details Pane (Left/Static) */}
-                                <div className={cn(
-                                    "w-full lg:w-[350px] h-full bg-slate-50 border-r border-orange-50 flex flex-col overflow-hidden shrink-0",
-                                    activeTab !== 'details' && "hidden lg:flex"
-                                )}>
-                                    <div className="p-8 border-b border-orange-50 bg-white">
-                                        <Badge className={cn(STATUS_COLORS[selectedRequest.status], "mb-4 h-6 uppercase text-[10px]")}>
-                                            {selectedRequest.status === 'rejected' ? 'Action Required' : selectedRequest.status.replace("_", " ")}
-                                        </Badge>
-                                        <h2 className="text-2xl font-black text-slate-800 mb-1">#{selectedRequest.ticket_id}</h2>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{formatToIST(selectedRequest.created_at)}</p>
-                                        <p className="text-[11px] font-semibold text-slate-500 mt-2">
-                                            Raised by{" "}
-                                            {selectedRequest.created_by_role === 'admin' ? (
-                                                <span className="text-purple-600">
-                                                    {selectedRequest.created_by_name || "an admin"} (admin, on the store's behalf)
-                                                </span>
-                                            ) : (
-                                                <span className="text-slate-700">
-                                                    {selectedRequest.created_by_name || selectedRequest.contact_name} (franchise)
-                                                </span>
-                                            )}
-                                        </p>
+            <div className="grid lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] gap-4 items-start">
+                {/* The queue */}
+                <div className={cn("rounded-2xl border border-slate-100 bg-white overflow-hidden", selectedId != null && "hidden lg:block")}>
+                    {loading ? (
+                        <div className="flex justify-center p-10"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>
+                    ) : queue.length === 0 ? (
+                        <p className="p-8 text-center text-sm text-slate-400">Nothing in {STAGES.find(s => s.key === stage)?.label} right now.</p>
+                    ) : (
+                        <div className="divide-y divide-slate-50 max-h-[72vh] overflow-y-auto">
+                            {queue.map(r => (
+                                <button key={r.id} type="button" onClick={() => setSelectedId(r.id)}
+                                    className={cn("w-full text-left p-4 space-y-1 hover:bg-slate-50", selectedId === r.id && "bg-orange-50/70 hover:bg-orange-50/70")}>
+                                    <div className="flex items-start justify-between gap-2">
+                                        <p className="font-bold text-slate-800 leading-tight">{r.store_name}</p>
+                                        <span className="text-[11px] text-slate-400 whitespace-nowrap">{formatToIST(r.created_at)}</span>
                                     </div>
-
-                                    <div className="p-8 flex-1 overflow-y-auto min-h-0 space-y-8 custom-scrollbar">
-                                        {/* Requester Info */}
-                                        <div className="space-y-4">
-                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 flex items-center gap-2">
-                                                <Store className="h-3 w-3" /> Requester Store
-                                            </h4>
-                                            <div className="bg-white p-5 rounded-3xl border border-orange-50 shadow-sm">
-                                                <p className="font-black text-slate-800 leading-tight mb-2">{selectedRequest.store_name}</p>
-                                                <div className="space-y-1">
-                                                    <p className="text-xs text-slate-500 flex items-center gap-2 font-medium">
-                                                        <User className="h-3 w-3" /> {selectedRequest.contact_name}
-                                                    </p>
-                                                    <p className="text-[11px] text-slate-400 flex items-center gap-2 font-mono">
-                                                        <Mail className="h-3 w-3" /> {selectedRequest.contact_email}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Requirement */}
-                                        <div className="space-y-4">
-                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 flex items-center gap-2">
-                                                <MessageSquare className="h-3 w-3" /> Requirement Details
-                                            </h4>
-                                            <div className="bg-white p-5 rounded-3xl border border-orange-50 shadow-sm italic text-slate-600 text-sm leading-relaxed">
-                                                "{selectedRequest.requirement}"
-                                            </div>
-                                        </div>
-
-                                        {/* Status & Notes Form */}
-                                        <div className="space-y-6 pt-4 border-t border-orange-50">
-                                            <div className="space-y-2">
-                                                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Update Status</label>
-                                                <Select value={tempStatus} onValueChange={setTempStatus}>
-                                                    <SelectTrigger className="rounded-2xl border-orange-100 bg-white h-11 font-bold text-xs">
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent className="rounded-2xl">
-                                                        {STATUS_OPTIONS.map(opt => (
-                                                            <SelectItem key={opt.value} value={opt.value} className="text-xs font-bold">{opt.label}</SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Internal Notes (Priv)</label>
-                                                <Textarea
-                                                    value={tempInternalNotes}
-                                                    onChange={(e) => setTempInternalNotes(e.target.value)}
-                                                    className="rounded-2xl border-orange-100 bg-white min-h-[100px] text-xs font-medium resize-none"
-                                                    placeholder="Notes for admin eyes only..."
-                                                />
-                                            </div>
-
-                                            <Button
-                                                onClick={handleSaveChanges}
-                                                disabled={updating}
-                                                className="w-full bg-slate-900 border-none hover:bg-slate-800 text-white rounded-2xl h-11 font-black text-xs uppercase tracking-widest shadow-lg shadow-slate-100"
-                                            >
-                                                {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Changes"}
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Chat Pane (Right/Flexible) */}
-                                <div className={cn(
-                                    "flex-1 min-w-0 h-full flex flex-col bg-white overflow-hidden",
-                                    activeTab !== 'chat' && "hidden lg:flex"
-                                )}>
-                                    <div className="p-6 border-b border-orange-50 flex items-center justify-between">
-                                        <h3 className="font-black text-slate-800 text-lg flex items-center gap-2">
-                                            <MessageSquare className="h-5 w-5 text-orange-500" />
-                                            Conversation History
-                                        </h3>
-                                    </div>
-
-                                    <div className="flex-1 overflow-y-auto min-h-0 p-8 space-y-6 bg-slate-50/30 custom-scrollbar">
-                                        {loadingMessages ? (
-                                            <div className="flex justify-center p-12">
-                                                <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-                                            </div>
-                                        ) : (
-                                            messages.map((msg) => (
-                                                <div
-                                                    key={msg.id}
-                                                    className={cn(
-                                                        "flex flex-col max-w-[85%] md:max-w-[70%]",
-                                                        msg.sender_role === 'admin' ? "ml-auto items-end" : "mr-auto items-start"
-                                                    )}
-                                                >
-                                                    <div className={cn(
-                                                        "p-5 rounded-[32px] shadow-sm text-sm font-medium leading-relaxed",
-                                                        msg.sender_role === 'admin'
-                                                            ? "bg-slate-900 text-white rounded-tr-none"
-                                                            : "bg-white text-slate-700 border border-orange-50 rounded-tl-none"
-                                                    )}>
-                                                        {msg.message && <p className="whitespace-pre-wrap">{msg.message}</p>}
-
-                                                        {msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
-                                                            <div className="flex flex-wrap gap-2 mt-4">
-                                                                {msg.attachments.map((url, i) => (
-                                                                    <a
-                                                                        key={i}
-                                                                        href={url}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                        className={cn(
-                                                                            "flex items-center gap-2 p-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                                                                            msg.sender_role === 'admin'
-                                                                                ? "bg-white/10 hover:bg-white/20 text-white"
-                                                                                : "bg-orange-50 hover:bg-orange-100 text-orange-600"
-                                                                        )}
-                                                                    >
-                                                                        {getFileIcon(url)}
-                                                                        <span className="truncate max-w-[120px]">File {i + 1}</span>
-                                                                    </a>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                    <div className="flex items-center gap-2 mt-2 px-2">
-                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                                                            {msg.sender_role === 'admin' ? 'Support' : 'Franchise'}
-                                                        </span>
-                                                        <div className="w-1 h-1 rounded-full bg-slate-200" />
-                                                        <span className="text-[10px] font-bold text-slate-300">
-                                                            {formatToIST(msg.created_at)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            ))
-                                        )}
-                                    </div>
-
-                                    <div className="p-8 border-t border-orange-50 bg-white">
-                                        <form onSubmit={handleSendMessage} className="space-y-4">
-                                            {adminAttachments.length > 0 && (
-                                                <div className="flex flex-wrap gap-2 pb-2">
-                                                    {adminAttachments.map((file, i) => (
-                                                        <Badge key={i} variant="secondary" className="pr-1 gap-1 py-1 bg-orange-50 text-orange-700 border-orange-100">
-                                                            <span className="truncate max-w-[150px]">{file.name}</span>
-                                                            <X
-                                                                className="h-3 w-3 cursor-pointer hover:text-red-500"
-                                                                onClick={() => setAdminAttachments(prev => prev.filter((_, idx) => idx !== i))}
-                                                            />
-                                                        </Badge>
-                                                    ))}
-                                                </div>
-                                            )}
-                                            <div className="flex items-end gap-3">
-                                                <div className="flex-1 relative">
-                                                    <Textarea
-                                                        placeholder="Write a message to the franchise..."
-                                                        value={newMessage}
-                                                        onChange={(e) => setNewMessage(e.target.value)}
-                                                        className="min-h-[60px] max-h-[150px] rounded-3xl bg-slate-50 border-orange-50 focus:border-orange-200 focus:bg-white transition-all resize-none font-medium text-sm p-4 pr-12"
-                                                    />
-                                                    <div className="absolute right-3 bottom-3">
-                                                        <input
-                                                            type="file"
-                                                            id="admin-chat-file"
-                                                            multiple
-                                                            className="hidden"
-                                                            onChange={(e) => {
-                                                                if (e.target.files) {
-                                                                    setAdminAttachments(prev => [...prev, ...Array.from(e.target.files!)]);
-                                                                }
-                                                            }}
-                                                        />
-                                                        <label
-                                                            htmlFor="admin-chat-file"
-                                                            className="p-2 text-slate-400 hover:text-orange-500 cursor-pointer transition-colors block"
-                                                        >
-                                                            <Paperclip className="h-5 w-5" />
-                                                        </label>
-                                                    </div>
-                                                </div>
-                                                <Button
-                                                    type="submit"
-                                                    disabled={sending || (!newMessage.trim() && adminAttachments.length === 0)}
-                                                    className="bg-orange-500 hover:bg-orange-600 text-white h-[60px] w-[60px] rounded-[24px] p-0 flex items-center justify-center shrink-0 shadow-lg shadow-orange-100 transition-all active:scale-95"
-                                                >
-                                                    {sending ? <Loader2 className="h-6 w-6 animate-spin" /> : <Send className="h-6 w-6" />}
-                                                </Button>
-                                            </div>
-                                        </form>
-                                        <p className="text-[10px] font-bold text-slate-300 mt-4 text-center uppercase tracking-widest">
-                                            Franchise will be notified of your reply instantly via dashboard
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
+                                    <p className="text-[11px] text-slate-400">
+                                        {[r.store_city, r.store_state].filter(Boolean).join(" · ")} · <span className="font-mono">{r.ticket_id}</span>
+                                        {r.created_by_role === 'admin' && <span className="ml-1 text-purple-600 font-semibold">· by admin</span>}
+                                    </p>
+                                    <p className="text-sm text-slate-600 line-clamp-2">{itemsText(r)}</p>
+                                    {stage === "done" && <StatusPill status={r.status} />}
+                                </button>
+                            ))}
                         </div>
                     )}
-                </DialogContent>
-            </Dialog>
+                </div>
 
-            {/* Raise a request on a franchise's behalf */}
+                {/* The ticket */}
+                {selectedId == null ? (
+                    <div className="hidden lg:grid rounded-2xl border border-dashed border-slate-200 bg-white/60 p-12 place-items-center text-center text-sm text-slate-400">
+                        Pick a request from the list.
+                    </div>
+                ) : !ticket || (loadingTicket && ticket.id !== selectedId) ? (
+                    <div className="rounded-2xl border border-slate-100 bg-white p-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>
+                ) : (
+                    <div className="rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 space-y-5 min-w-0">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="flex items-start gap-2 min-w-0">
+                                <Button variant="ghost" size="icon" className="lg:hidden h-8 w-8 -ml-1" onClick={() => setSelectedId(null)} aria-label="Back to the list"><ChevronLeft className="h-5 w-5" /></Button>
+                                <div className="min-w-0">
+                                    <p className="text-xs font-mono text-slate-400">{ticket.ticket_id} · {formatToIST(ticket.created_at)}</p>
+                                    <h2 className="text-xl font-black text-slate-800 leading-tight">{ticket.store_name}</h2>
+                                    <p className="text-xs text-slate-500">
+                                        {[ticket.store_city, ticket.store_state].filter(Boolean).join(", ")} · {brandsText(ticket.allowed_brands)}
+                                        {ticket.created_by_role === 'admin' && <span className="text-purple-600"> · raised by {ticket.created_by_name || "an admin"}</span>}
+                                    </p>
+                                </div>
+                            </div>
+                            <StatusPill status={ticket.status} />
+                        </div>
+
+                        {/* The actions open at this stage */}
+                        {actions.length > 0 && (
+                            <div className="space-y-3">
+                                <div className="flex flex-wrap gap-2">
+                                    {actions.map(a => {
+                                        const primary = ["approve", "start", "dispatch", "resume", "deliver"].includes(a);
+                                        const label = a === "approve" && lines.length ? `Approve ${approvable} item${approvable === 1 ? "" : "s"}` : ACTION_LABEL[a];
+                                        return (
+                                            <Button key={a} size="sm" disabled={acting || (a === "approve" && lines.length > 0 && approvable === 0)}
+                                                onClick={() => act(a)} variant={primary ? "default" : "outline"}
+                                                className={cn("rounded-xl", primary && (a === "approve" || a === "deliver" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-orange-600 hover:bg-orange-700"),
+                                                    a === "reject" && "text-red-600 hover:text-red-700")}>
+                                                {label}
+                                            </Button>
+                                        );
+                                    })}
+                                    {acting && <Loader2 className="h-4 w-4 animate-spin text-slate-400 self-center" />}
+                                </div>
+                                {pending === "reject" && (
+                                    <div className="rounded-xl bg-red-50/70 border border-red-100 p-3 space-y-2">
+                                        <label htmlFor="posm-reason" className="text-xs font-semibold text-red-800">Reason (the store sees it)</label>
+                                        <Textarea id="posm-reason" rows={2} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. The FRP limit for this month is reached" className="bg-white" />
+                                        <div className="flex justify-end gap-2">
+                                            <Button size="sm" variant="ghost" onClick={() => setPending(null)}>Cancel</Button>
+                                            <Button size="sm" disabled={acting || reason.trim().length < 3} onClick={() => act("reject")} className="bg-red-600 hover:bg-red-700">Reject request</Button>
+                                        </div>
+                                    </div>
+                                )}
+                                {pending === "dispatch" && (
+                                    <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 space-y-2">
+                                        <div className="grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_160px] gap-2">
+                                            <Input value={dispatch.courier} onChange={e => setDispatch(d => ({ ...d, courier: e.target.value }))} placeholder="Courier, by hand, distributor…" aria-label="How it is sent" className="bg-white" />
+                                            <Input value={dispatch.tracking} onChange={e => setDispatch(d => ({ ...d, tracking: e.target.value }))} placeholder="Tracking / docket no." aria-label="Tracking number" className="bg-white" />
+                                            <Input type="date" value={dispatch.date} onChange={e => setDispatch(d => ({ ...d, date: e.target.value }))} aria-label="Dispatch date" className="bg-white" />
+                                        </div>
+                                        <div className="flex justify-end gap-2">
+                                            <Button size="sm" variant="ghost" onClick={() => setPending(null)}>Cancel</Button>
+                                            <Button size="sm" disabled={acting || !dispatch.courier.trim()} onClick={() => act("dispatch")} className="bg-orange-600 hover:bg-orange-700">Mark dispatched</Button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {ticket.items?.length ? <POSMTracker status={ticket.status} /> : null}
+
+                        {/* Shipment */}
+                        {ticket.dispatch?.courier && (
+                            <div className="rounded-xl bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <Truck className="h-5 w-5 text-orange-500 shrink-0" />
+                                    <div className="min-w-0">
+                                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Shipment</p>
+                                        <p className="font-bold text-slate-800 break-words">{ticket.dispatch.courier}{ticket.dispatch.tracking ? ` · ${ticket.dispatch.tracking}` : ""}</p>
+                                    </div>
+                                </div>
+                                <div className="text-right text-xs text-slate-500">
+                                    {ticket.dispatch.date && <p>Dispatched {ticket.dispatch.date.split("-").reverse().join("/")}</p>}
+                                    {ticket.delivery?.at && <p className="text-emerald-700 font-semibold">Delivered {formatToIST(ticket.delivery.at)} · {ticket.delivery.by === 'franchise' ? "confirmed by the store" : "marked by admin"}</p>}
+                                </div>
+                                {ticket.status === "dispatched" && (
+                                    <details className="w-full">
+                                        <summary className="text-xs text-slate-500 cursor-pointer">Correct the dispatch details</summary>
+                                        <div className="grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px_auto] gap-2 mt-2">
+                                            <Input value={dispatch.courier} onChange={e => setDispatch(d => ({ ...d, courier: e.target.value }))} aria-label="How it is sent" className="bg-white h-9" />
+                                            <Input value={dispatch.tracking} onChange={e => setDispatch(d => ({ ...d, tracking: e.target.value }))} aria-label="Tracking number" className="bg-white h-9" />
+                                            <Input type="date" value={dispatch.date} onChange={e => setDispatch(d => ({ ...d, date: e.target.value }))} aria-label="Dispatch date" className="bg-white h-9" />
+                                            <Button size="sm" variant="outline" onClick={saveDispatch}>Save</Button>
+                                        </div>
+                                    </details>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Items */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-black text-slate-800">Items</h3>
+                                {editable && !afterApproval && <span className="text-[11px] text-slate-400">Set what you'll send (0 = not approved), then Approve</span>}
+                                {afterApproval && (
+                                    <div className="flex items-center gap-2">
+                                        {linesChanged && <Button size="sm" variant="ghost" onClick={() => setLines((ticket.items || []).map(l => ({ ...l })))}>Undo</Button>}
+                                        <Button size="sm" variant="outline" disabled={!linesChanged || savingLines} onClick={saveLines}>
+                                            {savingLines && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />} Save quantities
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                            {lines.length ? (
+                                <POSMLines lines={lines} items={catalogItems} limits={limits} disabled={acting}
+                                    onDecide={editable ? (i, p) => setLines(ls => ls.map((l, j) => j === i ? decideLine(l, p) : l)) : undefined} />
+                            ) : (
+                                <p className="text-sm text-slate-600 whitespace-pre-wrap rounded-xl bg-slate-50 p-3">{ticket.requirement}</p>
+                            )}
+                        </div>
+
+                        {/* Store */}
+                        <div className="grid sm:grid-cols-3 gap-2 text-xs">
+                            <p className="flex items-center gap-1.5 text-slate-600 min-w-0"><User className="h-3.5 w-3.5 text-slate-400 shrink-0" /><span className="truncate">{ticket.contact_name || "—"}</span></p>
+                            <p className="flex items-center gap-1.5 text-slate-600 min-w-0"><Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" /><span className="truncate">{ticket.contact_email || "—"}</span></p>
+                            <p className="flex items-center gap-1.5 text-slate-600 min-w-0"><MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" /><span className="truncate">{[ticket.store_address, ticket.store_pincode].filter(Boolean).join(", ") || "—"}</span></p>
+                        </div>
+
+                        {/* Timeline & messages */}
+                        <div className="space-y-2">
+                            <h3 className="text-sm font-black text-slate-800">Timeline & messages</h3>
+                            <div className="space-y-2 max-h-[46vh] overflow-y-auto pr-1">
+                                {feed.map((f, i) => f.kind === "step" ? (
+                                    <p key={`s${i}`} className="text-center text-[11px] font-semibold text-slate-400">
+                                        {formatToIST(f.h.at)} · {HISTORY_TEXT[f.h.action] ?? f.h.action}
+                                        {f.h.note ? ` · ${f.h.note}` : ""}
+                                        {f.h.by_role === "admin" && f.h.by_name ? ` · ${f.h.by_name}` : f.h.by_role === "franchise" ? " · by the store" : ""}
+                                    </p>
+                                ) : (
+                                    <div key={`m${f.m.id}`} className={cn("flex flex-col max-w-[85%]", f.m.sender_role === "admin" ? "ml-auto items-end" : "mr-auto items-start")}>
+                                        <div className={cn("px-3 py-2 rounded-2xl text-sm", f.m.sender_role === "admin" ? "bg-slate-900 text-white rounded-br-md" : "bg-slate-100 text-slate-800 rounded-bl-md")}>
+                                            {f.m.message && <p className="whitespace-pre-wrap">{f.m.message}</p>}
+                                            {f.m.attachments?.length ? (
+                                                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                                    {f.m.attachments.map((url, k) => (
+                                                        <a key={k} href={url} target="_blank" rel="noopener noreferrer"
+                                                            className={cn("inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold", f.m.sender_role === "admin" ? "bg-white/15 text-white" : "bg-white text-slate-600")}>
+                                                            <Paperclip className="h-3 w-3" /> File {k + 1}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 mt-0.5">{f.m.sender_role === "admin" ? "Autoform team" : ticket.store_name} · {formatToIST(f.m.created_at)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <form onSubmit={sendReply} className="space-y-2">
+                                {replyFiles.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {replyFiles.map((f, i) => (
+                                            <Badge key={i} variant="secondary" className="pr-1 gap-1 bg-orange-50 text-orange-700 border-orange-100">
+                                                <span className="truncate max-w-[150px]">{f.name}</span>
+                                                <X className="h-3 w-3 cursor-pointer" onClick={() => setReplyFiles(p => p.filter((_, j) => j !== i))} />
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="flex items-center gap-2">
+                                    <input id="admin-posm-file" type="file" multiple className="hidden"
+                                        onChange={e => { const fl = e.target.files; if (fl) setReplyFiles(p => [...p, ...Array.from(fl)].slice(0, 5)); e.target.value = ""; }} />
+                                    <label htmlFor="admin-posm-file" className="p-2 text-slate-400 hover:text-orange-500 cursor-pointer" aria-label="Attach a file"><Paperclip className="h-5 w-5" /></label>
+                                    <Input value={reply} onChange={e => setReply(e.target.value)} placeholder={`Write to ${ticket.store_name}…`} className="rounded-xl" aria-label="Message to the store" />
+                                    <Button type="submit" size="icon" disabled={sending || (!reply.trim() && !replyFiles.length)} className="rounded-xl bg-orange-500 hover:bg-orange-600 shrink-0" aria-label="Send">
+                                        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                                    </Button>
+                                </div>
+                            </form>
+                        </div>
+
+                        {/* Internal note */}
+                        <div className="space-y-1.5 rounded-xl bg-amber-50/50 border border-amber-100 p-3">
+                            <label htmlFor="posm-notes" className="text-xs font-bold text-amber-900">Internal note · only admins see it</label>
+                            <div className="flex gap-2">
+                                <Textarea id="posm-notes" rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. FRP from the Noida warehouse" className="bg-white text-sm" />
+                                <Button size="sm" variant="outline" disabled={savingNotes || notes === (ticket.internal_notes || "")} onClick={saveNotes} className="self-end">
+                                    {savingNotes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Raise a request on a store's behalf */}
             <Dialog open={onBehalfOpen} onOpenChange={(v) => { if (!v && !creating) setOnBehalfOpen(false); }}>
-                <DialogContent className="max-w-xl max-h-[90vh] flex flex-col p-0 gap-0">
+                <DialogContent className={cn("max-h-[92vh] flex flex-col p-0 gap-0", selectedFranchise && onBehalfMode === 'items' ? "max-w-6xl" : "max-w-xl")}>
                     <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
-                        <DialogTitle className="text-base flex items-center gap-2">
-                            <Store className="h-4 w-4 text-orange-500" /> Raise a POSM request for a franchise
-                        </DialogTitle>
-                        <DialogDescription className="text-xs">
-                            For requirements received by phone or email. The ticket is filed
-                            against the store and joins the same queue as a self-raised one.
-                        </DialogDescription>
+                        <DialogTitle className="text-base flex items-center gap-2"><Store className="h-4 w-4 text-orange-500" /> Raise a POSM request for a store</DialogTitle>
+                        <DialogDescription className="text-xs">For requirements received by phone or email. Pick the store, then its items as the store would.</DialogDescription>
                     </DialogHeader>
-
                     <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-5">
-                        {/* Which franchise */}
                         <div>
-                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Franchise</p>
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Store</p>
                             {selectedFranchise ? (
                                 <div className="flex items-center justify-between p-3 rounded-xl border border-orange-200 bg-orange-50">
                                     <div className="min-w-0">
                                         <p className="text-sm font-bold text-slate-800 truncate">{selectedFranchise.store_name}</p>
-                                        <p className="text-[11px] text-slate-500">
-                                            {[selectedFranchise.store_code, selectedFranchise.city].filter(Boolean).join(" · ")}
-                                        </p>
+                                        <p className="text-[11px] text-slate-500">{[selectedFranchise.store_code, selectedFranchise.city].filter(Boolean).join(" · ")}</p>
                                     </div>
-                                    <Button variant="ghost" size="sm" onClick={() => setOnBehalfFranchiseId(null)} className="text-xs shrink-0">
-                                        Change
-                                    </Button>
+                                    <Button variant="ghost" size="sm" onClick={() => setOnBehalfFranchiseId(null)} className="text-xs shrink-0">Change</Button>
                                 </div>
                             ) : (
                                 <>
                                     <div className="relative">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                                        <Input
-                                            autoFocus
-                                            placeholder="Search by name, code or city..."
-                                            className="pl-9 h-9 text-sm"
-                                            value={franchiseSearch}
-                                            onChange={(e) => setFranchiseSearch(e.target.value)}
-                                        />
+                                        <Input autoFocus placeholder="Search by name, code or city..." className="pl-9 h-9 text-sm" value={franchiseSearch} onChange={(e) => setFranchiseSearch(e.target.value)} />
                                     </div>
-                                    <div className="mt-2 max-h-48 overflow-y-auto space-y-1">
+                                    <div className="mt-2 max-h-56 overflow-y-auto space-y-1">
                                         {filteredFranchises.map(f => (
-                                            <button
-                                                key={f.id}
-                                                onClick={() => setOnBehalfFranchiseId(f.id)}
-                                                className="w-full text-left p-2.5 rounded-lg border border-slate-100 hover:border-orange-200 hover:bg-orange-50/50 transition-colors"
-                                            >
+                                            <button key={f.id} onClick={() => setOnBehalfFranchiseId(f.id)}
+                                                className="w-full text-left p-2.5 rounded-lg border border-slate-100 hover:border-orange-200 hover:bg-orange-50/50 transition-colors">
                                                 <p className="text-sm font-semibold text-slate-700 truncate">{f.store_name}</p>
-                                                <p className="text-[11px] text-slate-400">
-                                                    {[f.store_code, f.city].filter(Boolean).join(" · ")}
-                                                </p>
+                                                <p className="text-[11px] text-slate-400">{[f.store_code, f.city].filter(Boolean).join(" · ")}</p>
                                             </button>
                                         ))}
-                                        {filteredFranchises.length === 0 && (
-                                            <p className="text-xs text-slate-400 text-center py-6">No franchise matches that search.</p>
-                                        )}
+                                        {filteredFranchises.length === 0 && <p className="text-xs text-slate-400 text-center py-6">No store matches that search.</p>}
                                     </div>
                                 </>
                             )}
                         </div>
 
-                        {/* The requirement itself */}
                         {selectedFranchise && (
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="inline-flex rounded-xl border border-slate-200 p-1 bg-white">
+                                    {([['items', 'Pick items'], ['text', 'Free text']] as const).map(([m, label]) => (
+                                        <button key={m} type="button" onClick={() => setOnBehalfMode(m)}
+                                            className={cn("px-3 py-1.5 rounded-lg text-xs font-bold", onBehalfMode === m ? "bg-slate-900 text-white" : "text-slate-500")}>{label}</button>
+                                    ))}
+                                </div>
+                                {onBehalfMode === 'items' && (
+                                    <label className="flex items-center gap-2 text-xs text-slate-600">
+                                        <Switch checked={ignoreLimits} onCheckedChange={setIgnoreLimits} aria-label="Ignore item limits" /> Ignore the item limits for this request
+                                    </label>
+                                )}
+                            </div>
+                        )}
+
+                        {selectedFranchise && onBehalfMode === 'items' && (
+                            storeShop
+                                ? <POSMShop key={selectedFranchise.id} items={storeShop.items} brands={storeShop.brands} usage={storeShop.usage}
+                                    ignoreLimits={ignoreLimits} onSend={raiseItems} sendLabel="Raise request" forStore={selectedFranchise.store_name} />
+                                : <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>
+                        )}
+
+                        {selectedFranchise && onBehalfMode === 'text' && (
                             <>
                                 <div>
                                     <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Requirement</p>
-                                    <Textarea
-                                        value={onBehalfRequirement}
-                                        onChange={(e) => setOnBehalfRequirement(e.target.value)}
-                                        placeholder="What the franchise has asked for - material, size, quantity, where it will be placed..."
-                                        rows={5}
-                                        className="text-sm resize-none"
-                                    />
+                                    <Textarea value={onBehalfRequirement} onChange={(e) => setOnBehalfRequirement(e.target.value)}
+                                        placeholder="What the store asked for - material, size, quantity, where it goes..." rows={5} className="text-sm resize-none" />
                                 </div>
-
                                 <div>
-                                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">
-                                        Attachments <span className="font-medium normal-case tracking-normal">(optional, up to 5)</span>
-                                    </p>
-                                    <input
-                                        type="file"
-                                        id="posm-on-behalf-file"
-                                        multiple
-                                        className="hidden"
-                                        onChange={(e) => {
-                                            if (e.target.files) {
-                                                setOnBehalfFiles(prev => [...prev, ...Array.from(e.target.files!)].slice(0, 5));
-                                            }
-                                        }}
-                                    />
-                                    <label
-                                        htmlFor="posm-on-behalf-file"
-                                        className="border-2 border-dashed border-slate-100 rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 hover:border-orange-200 transition-all text-slate-400 hover:text-orange-500"
-                                    >
-                                        <Paperclip className="h-6 w-6 mb-1.5" />
-                                        <span className="text-xs font-medium">Click to attach files</span>
+                                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Attachments <span className="font-medium normal-case tracking-normal">(optional, up to 5)</span></p>
+                                    <input type="file" id="posm-on-behalf-file" multiple className="hidden"
+                                        onChange={(e) => { if (e.target.files) setOnBehalfFiles(prev => [...prev, ...Array.from(e.target.files!)].slice(0, 5)); e.target.value = ""; }} />
+                                    <label htmlFor="posm-on-behalf-file" className="border-2 border-dashed border-slate-100 rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 hover:border-orange-200 transition-all text-slate-400 hover:text-orange-500">
+                                        <Paperclip className="h-6 w-6 mb-1.5" /><span className="text-xs font-medium">Click to attach files</span>
                                     </label>
                                     {onBehalfFiles.length > 0 && (
                                         <div className="mt-2 space-y-1">
                                             {onBehalfFiles.map((file, i) => (
                                                 <div key={i} className="flex items-center justify-between text-xs bg-slate-50 rounded-lg px-3 py-2">
                                                     <span className="truncate text-slate-600">{file.name}</span>
-                                                    <button
-                                                        onClick={() => setOnBehalfFiles(prev => prev.filter((_, idx) => idx !== i))}
-                                                        className="text-slate-400 hover:text-red-500 shrink-0 ml-2"
-                                                    >
-                                                        <X className="h-3.5 w-3.5" />
-                                                    </button>
+                                                    <button onClick={() => setOnBehalfFiles(prev => prev.filter((_, idx) => idx !== i))} className="text-slate-400 hover:text-red-500 shrink-0 ml-2" aria-label={`Remove ${file.name}`}><X className="h-3.5 w-3.5" /></button>
                                                 </div>
                                             ))}
                                         </div>
@@ -1059,21 +744,13 @@ export const AdminPOSM = () => {
                             </>
                         )}
                     </div>
-
                     <DialogFooter className="px-6 py-4 border-t border-slate-100 shrink-0">
-                        <Button variant="outline" onClick={() => setOnBehalfOpen(false)} disabled={creating} className="border-slate-200">
-                            Cancel
-                        </Button>
-                        <Button
-                            onClick={handleCreateOnBehalf}
-                            disabled={!onBehalfFranchiseId || !onBehalfRequirement.trim() || creating}
-                            className="bg-orange-600 hover:bg-orange-700"
-                        >
-                            {creating
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                                : <Send className="h-3.5 w-3.5 mr-1.5" />}
-                            Raise request
-                        </Button>
+                        <Button variant="outline" onClick={() => setOnBehalfOpen(false)} disabled={creating}>Close</Button>
+                        {onBehalfMode === 'text' && (
+                            <Button onClick={raiseText} disabled={!onBehalfFranchiseId || !onBehalfRequirement.trim() || creating} className="bg-orange-600 hover:bg-orange-700">
+                                {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Send className="h-3.5 w-3.5 mr-1.5" />} Raise request
+                            </Button>
+                        )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

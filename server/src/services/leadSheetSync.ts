@@ -216,7 +216,17 @@ export type ImportAction =
     /* No number anyone could call back. */
     | 'unusable'
     /* Before the import's start date. */
-    | 'too-old';
+    | 'too-old'
+    /* Too new to act on: the customer's WhatsApp copy may still be on its way. */
+    | 'wait';
+
+/*
+ * A sheet row is left alone for this long. Most people who fill the form also
+ * send the WhatsApp message within a minute or two; letting that arrive first
+ * means the sheet row is recognised as the same enquiry instead of messaging
+ * the customer and alerting the store a second time.
+ */
+export const SETTLE_MINUTES = 10;
 
 export interface ImportDecision {
     lead: SheetLead;
@@ -227,15 +237,20 @@ export interface ImportDecision {
 export interface KnownLeads {
     /** Meta lead ids already imported. */
     metaIds: Set<string>;
-    /** When each number last reached us as an Instagram lead, any way in. */
+    /**
+     * When each number last reached us as an Instagram lead, any way in. Only
+     * the same number is the same enquiry: a different number is a different
+     * lead, even under the same name (decided 6 Oct 2026).
+     */
     instagramAt: Map<string, Date[]>;
 }
 
-export function planSheetImport(leads: SheetLead[], known: KnownLeads, since: Date | null): ImportDecision[] {
+export function planSheetImport(leads: SheetLead[], known: KnownLeads, since: Date | null, now: Date = new Date()): ImportDecision[] {
     const ids = new Set(known.metaIds);
     const seen = new Map<string, Date[]>();
     for (const [k, dates] of known.instagramAt) seen.set(k, [...dates]);
     const windowMs = SAME_ENQUIRY_DAYS * 86_400_000;
+    const settleBefore = now.getTime() - SETTLE_MINUTES * 60_000;
 
     // Oldest first, so of two rows for one enquiry the first is the one kept.
     const ordered = [...leads].sort((a, b) => (leadDate(a)?.getTime() ?? 0) - (leadDate(b)?.getTime() ?? 0));
@@ -253,6 +268,7 @@ export function planSheetImport(leads: SheetLead[], known: KnownLeads, since: Da
         if (earlier.some(d => Math.abs(d.getTime() - when.getTime()) <= windowMs)) {
             return { lead, action: 'same-enquiry', at };
         }
+        if (at && at.getTime() > settleBefore) return { lead, action: 'wait', at };
         if (id) ids.add(id);
         seen.set(key, [...earlier, when]);
         return { lead, action: 'insert', at };
@@ -260,7 +276,7 @@ export function planSheetImport(leads: SheetLead[], known: KnownLeads, since: Da
 }
 
 /** The car as the lead screen shows it: "SUV", "Etios cross 2015", "Swift (2019)". */
-export function sheetCar(lead: SheetLead): string | null {
+export function sheetCar(lead: Pick<SheetLead, 'car' | 'carYear'>): string | null {
     const car = String(lead.car ?? '').trim();
     const year = String(lead.carYear ?? '').trim();
     const yes = /^(yes|no|ok|haan|na)$/i;

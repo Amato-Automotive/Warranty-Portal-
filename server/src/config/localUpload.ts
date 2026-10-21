@@ -288,6 +288,40 @@ export const posmUpload = multer({
     },
 });
 
+/** POSM item requests: a file per item line (visiting-card photos, art-work
+ *  places) plus a note's own → uploads/posm_requests/YYYY-MM/. Images and PDFs only. */
+export const posmItemUpload = multer({
+    storage: multer.diskStorage({
+        destination: createDestination('posm_requests'),
+        filename: genericFileName,
+    }),
+    limits: {
+        fileSize: 20 * 1024 * 1024,
+        files: 20,
+    },
+    fileFilter: (_req, file, cb) => {
+        const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+        if (['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'].includes(ext) || /^image\//.test(file.mimetype) || file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error(`Only photos and PDFs can be attached: ${file.originalname}`));
+        }
+    },
+});
+
+/** Offers & Schemes: banners and the stores' entry files → uploads/schemes/YYYY-MM/.
+ *  Which formats a field accepts is the scheme's own rule, checked after upload. */
+export const schemeUpload = multer({
+    storage: multer.diskStorage({
+        destination: createDestination('schemes'),
+        filename: genericFileName,
+    }),
+    limits: {
+        fileSize: 50 * 1024 * 1024, // the field's own limit is checked too; this is the ceiling for videos
+        files: 20,
+    },
+});
+
 /** Grievance uploads → uploads/grievances/YYYY-MM/ */
 export const grievanceUpload = multer({
     storage: multer.diskStorage({

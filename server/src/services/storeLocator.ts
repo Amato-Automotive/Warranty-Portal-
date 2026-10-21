@@ -112,11 +112,14 @@ export function isInIndia(lat: number | null, lng: number | null): boolean {
 }
 
 /**
- * Every store that qualifies, alphabetically.
+ * Every store that qualifies: the customer's own city first, then the rest,
+ * each part alphabetically.
  *
  * Within the radius, and with enough approved warranties. Distance is still
  * worked out for each, because the customer is told how far a store is — it
- * just does not decide the order.
+ * just does not decide the order. A 201301 customer was offered Delhi and
+ * Ghaziabad stores ahead of the two in Noida itself (14 Oct 2026), so
+ * `inCity` lifts the stores in their city to the top; the radius is unchanged.
  *
  * Stores without a usable pin are left out rather than measured from 0,0,
  * which would put a store in Delhi thousands of kilometres from anywhere.
@@ -125,18 +128,21 @@ export function storesToOffer<T extends LocatableStore>(
     customer: GeoPoint,
     stores: T[],
     rules: LocatorRules,
+    inCity: (store: T) => boolean = () => false,
 ): OfferedStore<T>[] {
     return stores
         .filter(s => isInIndia(s.lat, s.lng))
         .filter(s => Number(s.warranties) >= rules.minWarranties)
-        .map(store => ({ store, distanceKm: haversineKm(customer, store) }))
+        .map(store => ({ store, distanceKm: haversineKm(customer, store), local: inCity(store) }))
         .filter(o => o.distanceKm <= rules.radiusKm)
         .sort((a, b) =>
-            String(a.store.store_name).trim().localeCompare(
+            Number(b.local) - Number(a.local)
+            || String(a.store.store_name).trim().localeCompare(
                 String(b.store.store_name).trim(), 'en', { sensitivity: 'base' })
             // Two stores with the same name are ordered by id, so the same
             // query always returns the same list.
-            || String(a.store.id).localeCompare(String(b.store.id), 'en', { numeric: true }));
+            || String(a.store.id).localeCompare(String(b.store.id), 'en', { numeric: true }))
+        .map(({ store, distanceKm }) => ({ store, distanceKm }));
 }
 
 /**

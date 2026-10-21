@@ -10,6 +10,7 @@ import { NotificationService } from '../services/notification.service.js';
 import { signalAdminAttention } from '../services/adminAttention.service.js';
 import { RegisterData } from '../types/index.js';
 import { canonicalState } from '../services/indianStates.js';
+import { isAppRequest } from '../config/appOrigins.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -211,12 +212,12 @@ export class AuthController {
           email,
           phoneNumber,
           role,
-          role === 'vendor' ? storeName : null,
+          role === 'vendor' ? storeName ?? null : null,
           role === 'vendor' ? email : null,
-          role === 'vendor' ? address : null,
-          role === 'vendor' ? state : null,
-          role === 'vendor' ? city : null,
-          role === 'vendor' ? pincode : null,
+          role === 'vendor' ? address ?? null : null,
+          role === 'vendor' ? state ?? null : null,
+          role === 'vendor' ? city ?? null : null,
+          role === 'vendor' ? pincode ?? null : null,
           role === 'vendor' ? (gstNumber || null) : null,
           manpowerJson,
           expiresAt
@@ -596,6 +597,8 @@ export class AuthController {
           return res.json({
             success: true,
             message: 'Registration successful!',
+            // The native app cannot use the cookie; see config/appOrigins.ts.
+            ...(isAppRequest(req) && { token }),
             user: {
               id: newUserId,
               email: pending.email,
@@ -707,6 +710,8 @@ export class AuthController {
 
       res.json({
         success: true,
+        // The native app cannot use the cookie; see config/appOrigins.ts.
+        ...(isAppRequest(req) && { token }),
         user: {
           id: user.id,
           email: user.email,

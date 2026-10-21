@@ -4,6 +4,7 @@ import { HelpPopover } from "./HelpPopover";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useB2BCart } from "@/contexts/B2BCartContext";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface ModuleLayoutProps {
     title: string;
@@ -20,6 +21,7 @@ interface ModuleLayoutProps {
 
 export const ModuleLayout = ({ title, description, children, actions, onNavigate, onMenuToggle, roleLabel }: ModuleLayoutProps) => {
     const { isDistributor, isFranchise } = useB2BCart();
+    const { t } = useLanguage();
 
     // Determine the role title dynamically
     let roleText = "Franchise";
@@ -54,18 +56,18 @@ export const ModuleLayout = ({ title, description, children, actions, onNavigate
                                         </Button>
                                         <div className="flex flex-col">
                                             <h1 className="font-black tracking-tighter sm:tracking-tight leading-[0.95] text-lg sm:text-2xl md:text-4xl lg:text-5xl flex flex-col md:flex-row md:items-center">
-                                                <span className="bg-gradient-to-r from-slate-800 to-slate-900 bg-clip-text text-transparent uppercase">{roleText}</span>
-                                                <span className="bg-gradient-to-r from-orange-500 to-orange-600 bg-clip-text text-transparent md:ml-3 uppercase">Dashboard</span>
+                                                <span className="bg-gradient-to-r from-slate-800 to-slate-900 bg-clip-text text-transparent uppercase">{t(roleText)}</span>
+                                                <span className="bg-gradient-to-r from-orange-500 to-orange-600 bg-clip-text text-transparent md:ml-3 uppercase">{t("Dashboard")}</span>
                                             </h1>
                                             <p className="md:hidden text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 leading-none opacity-80">
-                                                {title}
+                                                {t(title)}
                                             </p>
                                         </div>
                                     </div>
                                     <div className="hidden md:flex gap-3 items-center">
                                         <div className="h-1.5 w-12 bg-black rounded-full" />
                                         <p className="text-xs font-black text-slate-500 tracking-[0.2em] uppercase opacity-70">
-                                            {title} <span>• {description || "Management Suite"}</span>
+                                            {t(title)} <span>• {description || t("Management Suite")}</span>
                                         </p>
                                         <div className="h-1.5 w-12 bg-gradient-to-r from-orange-500 to-orange-600 rounded-full" />
                                     </div>

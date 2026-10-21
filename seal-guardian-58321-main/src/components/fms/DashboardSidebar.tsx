@@ -16,13 +16,15 @@ import {
     ChevronRight,
     ChevronLeft,
     LogOut,
-    User
+    User,
+    PhoneIncoming
 }
     from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { Button } from "@/components/ui/button";
 import { useB2BCart } from "@/contexts/B2BCartContext";
+import { Tx, useLanguage } from "@/contexts/LanguageContext";
 
 import {
     Tooltip,
@@ -33,6 +35,7 @@ import {
 export type FmsModule =
     | 'home'
     | 'warranty'
+    | 'leads'
     | 'register'
     | 'orders'
     | 'grievances'
@@ -58,7 +61,9 @@ interface SidebarItemProps {
     isCollapsed?: boolean;
 }
 
-export const SidebarItem = ({ icon: Icon, label, active, onClick, badge, comingSoon, isCollapsed }: SidebarItemProps) => {
+export const SidebarItem = ({ icon: Icon, label: english, active, onClick, badge, comingSoon, isCollapsed }: SidebarItemProps) => {
+    const { t } = useLanguage();
+    const label = t(english);
     const itemContent = (
         <button
             onClick={onClick}
@@ -90,7 +95,7 @@ export const SidebarItem = ({ icon: Icon, label, active, onClick, badge, comingS
                     <span className="font-bold text-xs tracking-tight truncate">{label}</span>
                     <div className="flex items-center gap-1.5 shrink-0">
                         {comingSoon && (
-                            <span className="text-[9px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full font-black uppercase">Soon</span>
+                            <span className="text-[9px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full font-black uppercase">{t("Soon")}</span>
                         )}
                         {badge && !comingSoon && (
                             <div className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-black text-white shadow-sm ring-2 ring-white">
@@ -149,6 +154,8 @@ export const menuGroups = [
                 label: "Warranty Management",
                 icon: ShieldCheck,
             },
+            /* Leads this store was sent, and how the auditor's call went. */
+            { id: 'leads' as const, label: "My Leads", icon: PhoneIncoming },
         ]
     },
     {
@@ -178,7 +185,6 @@ export const menuGroups = [
                 id: 'offers' as const,
                 label: "Offers & Schemes",
                 icon: Gift,
-                comingSoon: true,
             },
             { id: 'audit' as const, label: "Audit & Compliance", icon: ClipboardCheck },
         ]
@@ -236,7 +242,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
         let items = group.items;
 
         if (isDistributor && !isFranchise) {
-            const franchiseOnly = ['warranty', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets'];
+            const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets'];
             items = items.filter(item => !franchiseOnly.includes(item.id));
         }
 
@@ -295,7 +301,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
                     <div key={group.label} className="space-y-4">
                         {!isCollapsed && (
                             <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 animate-in-fade">
-                                {group.label}
+                                <Tx>{group.label}</Tx>
                             </h2>
                         )}
                         <div className="space-y-2">
@@ -334,7 +340,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
                             className="px-4 py-2.5 bg-white border border-orange-100 text-slate-800 text-[10px] font-black uppercase tracking-[0.15em] rounded-2xl shadow-[0_15px_40px_rgba(244,102,23,0.15)] flex items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-300"
                         >
                             <div className="w-1 h-3 bg-orange-500 rounded-full" />
-                            My Profile
+                            <Tx>My Profile</Tx>
                         </TooltipContent>
                     </Tooltip>
                 ) : (
@@ -345,13 +351,13 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
                             <User className="h-5 w-5" />
                         </div>
                         <div className="flex-1 min-w-0 animate-in-fade">
-                            <p className="text-xs font-black text-slate-800 truncate uppercase mt-0.5">{user?.name || "Partner"}</p>
+                            <p className="text-xs font-black text-slate-800 truncate uppercase mt-0.5">{user?.name || <Tx>Partner</Tx>}</p>
                             <p className="text-[10px] font-bold text-orange-500 tracking-tighter truncate uppercase leading-none">
                                 {isDistributor && isFranchise
-                                    ? "Distributor / Franchise Dashboard"
+                                    ? <Tx>Distributor / Franchise Dashboard</Tx>
                                     : isDistributor
-                                        ? "Distributor Portal"
-                                        : "Franchise Portal"}
+                                        ? <Tx>Distributor Portal</Tx>
+                                        : <Tx>Franchise Portal</Tx>}
                             </p>
                         </div>
                     </div>
@@ -374,7 +380,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
                             className="px-4 py-2.5 bg-white border border-red-100 text-slate-800 text-[10px] font-black uppercase tracking-[0.15em] rounded-2xl shadow-[0_15px_40px_rgba(220,38,38,0.15)] flex items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-300"
                         >
                             <div className="w-1 h-3 bg-red-500 rounded-full" />
-                            Sign Out
+                            <Tx>Sign Out</Tx>
                         </TooltipContent>
                     </Tooltip>
                 ) : (
@@ -384,7 +390,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
                         onClick={logout}
                     >
                         <LogOut className="h-5 w-5 transition-transform group-hover:scale-110" />
-                        <span className="font-bold text-xs">Sign Out</span>
+                        <span className="font-bold text-xs"><Tx>Sign Out</Tx></span>
                     </Button>
                 )}
             </div>

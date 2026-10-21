@@ -143,7 +143,7 @@ export class PublicController {
                 } else {
                     const [existingReg]: any = await db.execute(
                         'SELECT uid, customer_name FROM warranty_registrations WHERE product_type = ? AND status != "rejected" AND registration_number = ? LIMIT 1',
-                        [normalizedType, reg]
+                        [normalizedType, String(reg)]
                     );
 
                     if (existingReg.length > 0) {
@@ -703,9 +703,18 @@ export class PublicController {
                     );
                 }
 
-                // If email was provided but DB email is null/empty, update it
+                // If email was provided but DB email is null/empty, add it — only when no
+                // other profile has it. profiles.email is UNIQUE and stores reuse one
+                // address across customers; claiming a taken one failed the whole
+                // submission for returning customers. It stays on the warranty either way.
                 if (customerEmail && (!existingUsers[0].email)) {
-                    await db.execute('UPDATE profiles SET email = ? WHERE id = ?', [customerEmail, userId]);
+                    const [emailTaken]: any = await db.execute(
+                        'SELECT id FROM profiles WHERE email = ? AND id <> ? LIMIT 1',
+                        [customerEmail, userId]
+                    );
+                    if (emailTaken.length === 0) {
+                        await db.execute('UPDATE profiles SET email = ? WHERE id = ?', [customerEmail, userId]);
+                    }
                 }
             } else {
                 // Create new customer user
@@ -988,7 +997,6 @@ export class PublicController {
                                 warrantyData.installerName || 'Franchise Partner',
                                 warrantyData.customerName,
                                 warrantyData.customerPhone,
-                                warrantyData.registrationNumber,
                                 productName,
                                 warrantyId,
                                 warrantyId
@@ -1036,7 +1044,6 @@ export class PublicController {
                         warrantyData.customerPhone,
                         warrantyData.customerName,
                         productName,
-                        warrantyData.registrationNumber,
                         warrantyId,
                         warrantyData.productType,
                         warrantyData.purchaseDate,

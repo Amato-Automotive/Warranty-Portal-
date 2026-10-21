@@ -96,6 +96,24 @@ describe('storesToOffer — within 15 km', () => {
     });
 });
 
+describe('storesToOffer — the customer\'s city first', () => {
+    const list = [store('Alpha', northOfRohini(2)), store('Zeta', northOfRohini(3)), store('Mid', northOfRohini(4))];
+
+    test('stores in the city come first, each part A to Z', () => {
+        const r = storesToOffer(ROHINI, list, RULES, s => s.store_name !== 'Alpha');
+        assert.deepEqual(names(r), ['Mid', 'Zeta', 'Alpha']);
+    });
+
+    test('without a city, the list stays A to Z', () => {
+        assert.deepEqual(names(storesToOffer(ROHINI, list, RULES)), ['Alpha', 'Mid', 'Zeta']);
+    });
+
+    test('a store in the city but out of range is still left out', () => {
+        const r = storesToOffer(ROHINI, [store('Far', northOfRohini(20))], RULES, () => true);
+        assert.deepEqual(r, []);
+    });
+});
+
 describe('storesToOffer — the warranty threshold', () => {
     test('a store below the minimum is left out', () => {
         const r = storesToOffer(ROHINI, [

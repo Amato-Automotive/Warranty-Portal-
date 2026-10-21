@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { spreadsheetId, normaliseKey, readServiceAccount } from '../googleSheets.js';
+import { spreadsheetId, normaliseKey, readServiceAccount, matchTabTitle } from '../googleSheets.js';
 
 /**
  * The parts that can be checked without calling Google.
@@ -95,4 +95,12 @@ describe('readServiceAccount', () => {
             GOOGLE_SERVICE_ACCOUNT_JSON: JSON.stringify({ client_email: 'a@b.com' }),
         } as NodeJS.ProcessEnv), null);
     });
+});
+
+describe('matchTabTitle', () => {
+    const tabs = ['AD1', 'Ad New 1 '];
+    test('an exact name wins', () => assert.equal(matchTabTitle(tabs, 'AD1'), 'AD1'));
+    test('a trailing space nobody can see does not matter', () => assert.equal(matchTabTitle(tabs, 'Ad New 1'), 'Ad New 1 '));
+    test('nor do capitals or doubled spaces', () => assert.equal(matchTabTitle(tabs, 'ad  new 1'), 'Ad New 1 '));
+    test('no match is null', () => assert.equal(matchTabTitle(tabs, 'Ad New 2'), null));
 });

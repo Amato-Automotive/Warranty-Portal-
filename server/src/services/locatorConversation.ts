@@ -1,7 +1,7 @@
 import { readCarAnswer, exampleModels } from './carModels.js';
 import { extractPincode } from './storeLocator.js';
 import { normaliseProduct, type Product } from './productMatch.js';
-import type { MenuKey } from './storeLocatorMessages.js';
+import type { MenuKey, Vehicle } from './storeLocatorMessages.js';
 import {
     CAR_RETRY, PINCODE_QUESTION, INVALID_PINCODE_TEXT, NO_PINCODE_END,
     whichModelText, unknownPincodeText,
@@ -22,14 +22,15 @@ import {
  */
 
 /**
+ * vehicle        4-wheeler or 2-wheeler — the first question
  * product        the main menu is showing
  * product-other  the "Other Products" menu is showing
  * car, pincode   the questions after it
  */
-export type ChatStage = 'product' | 'product-other' | 'car' | 'pincode';
+export type ChatStage = 'vehicle' | 'product' | 'product-other' | 'car' | 'pincode';
 
 /** Every stage in which the chat is waiting for the customer. */
-export const OPEN_STAGES: ChatStage[] = ['product', 'product-other', 'car', 'pincode'];
+export const OPEN_STAGES: ChatStage[] = ['vehicle', 'product', 'product-other', 'car', 'pincode'];
 
 /** A question stage — the menus are handled by menuStep. */
 export interface ChatSession {
@@ -91,6 +92,42 @@ export async function nextStep(
     }
     if (wrong >= MAX_TRIES) return { kind: 'give-up', reply: NO_PINCODE_END };
     return { kind: 'retry', tries: wrong, reply: INVALID_PINCODE_TEXT };
+}
+
+/* ─── 4-wheeler or 2-wheeler ─────────────────────────────────────────────── */
+
+/*
+ * Typed instead of tapped. The whole answer is read, so "2" is a 2-wheeler but
+ * "2 seat covers" is not an answer. A car word means a 4-wheeler.
+ */
+const TWO_WHEELER = /^(2|two|do|2 ?-? ?w(heeler|heelar|hlr)?s?|two ?-? ?wheelers?|bike|bikes|scooty|scooter|scooters|motor ?cycle|motorbike|activa)$/i;
+const FOUR_WHEELER = /^(4|four|char|4 ?-? ?w(heeler|heelar|hlr)?s?|four ?-? ?wheelers?|car|cars|suv|sedan|hatchback|jeep)$/i;
+
+export function readVehicleAnswer(text: string): Vehicle | null {
+    const t = String(text ?? '').toLowerCase()
+        .replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim()
+        .replace(/^(it'?s |its |for |my |a |an |i have a |i have )+/, '')
+        .replace(/ (hai|he|h|please|pls|ji|sir)$/, '');
+    if (TWO_WHEELER.test(t)) return '2w';
+    if (FOUR_WHEELER.test(t)) return '4w';
+    return null;
+}
+
+export type VehicleStep =
+    | { kind: 'chosen'; vehicle: Vehicle; checked: boolean }
+    | { kind: 'retry'; tries: number };
+
+/**
+ * The answer to the vehicle question. Asked once more if it can't be read;
+ * after that the chat goes on as a 4-wheeler (the usual enquiry), marked
+ * unchecked so the auditor knows.
+ */
+export function vehicleStep(tries: number, input: { tap?: Vehicle; text?: string }): VehicleStep {
+    const v = input.tap ?? readVehicleAnswer(input.text ?? '');
+    if (v) return { kind: 'chosen', vehicle: v, checked: true };
+    const wrong = tries + 1;
+    if (wrong >= MAX_TRIES) return { kind: 'chosen', vehicle: '4w', checked: false };
+    return { kind: 'retry', tries: wrong };
 }
 
 /* ─── The product menu ───────────────────────────────────────────────────── */

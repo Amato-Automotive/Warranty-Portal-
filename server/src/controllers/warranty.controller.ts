@@ -475,9 +475,18 @@ export class WarrantyController {
               );
             }
             
-            // If email was provided but DB email is null/empty, update it
+            // If email was provided but DB email is null/empty, add it — only when no
+            // other profile has it. profiles.email is UNIQUE and stores reuse one
+            // address across customers; claiming a taken one failed the whole
+            // submission for returning customers. It stays on the warranty either way.
             if (customerEmail && (!existingUsers[0].email)) {
-              await db.execute('UPDATE profiles SET email = ? WHERE id = ?', [customerEmail, finalUserId]);
+              const [emailTaken]: any = await db.execute(
+                'SELECT id FROM profiles WHERE email = ? AND id <> ? LIMIT 1',
+                [customerEmail, finalUserId]
+              );
+              if (emailTaken.length === 0) {
+                await db.execute('UPDATE profiles SET email = ? WHERE id = ?', [customerEmail, finalUserId]);
+              }
             }
           } else {
             // Create new customer profile based on Phone (and Email if provided)
@@ -743,7 +752,6 @@ export class WarrantyController {
                 warrantyData.installerName || 'Franchise Partner',
                 warrantyData.customerName,
                 warrantyData.customerPhone,
-                warrantyData.registrationNumber,
                 productName,
                 warrantyId,
                 warrantyId
@@ -791,7 +799,6 @@ export class WarrantyController {
             warrantyData.customerPhone,
             warrantyData.customerName,
             productName,
-            warrantyData.registrationNumber,
             warrantyId,
             warrantyData.productType,
             warrantyData.purchaseDate,
@@ -1079,9 +1086,33 @@ export class WarrantyController {
         }
       });
 
+      /* For the franchise home: registered this calendar month and last, and
+         each day since the start of last month (the home's today / this week /
+         this month switch compares against the same days before). created_at
+         already reads in IST (the pool's session zone), so no conversion. */
+      const [[months]]: any = await db.execute(
+        `SELECT
+           COALESCE(SUM(created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')), 0) AS this_month,
+           COALESCE(SUM(created_at >= DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01')
+                    AND created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')), 0) AS last_month
+         FROM warranty_registrations ${whereClause}`,
+        params
+      );
+      const [days]: any = await db.execute(
+        `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day, COUNT(*) AS n
+           FROM warranty_registrations ${whereClause ? `${whereClause} AND` : 'WHERE'} created_at >= DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01')
+          GROUP BY day ORDER BY day`,
+        params
+      );
+
       res.json({
         success: true,
-        stats
+        stats: {
+          ...stats,
+          this_month: Number(months?.this_month ?? 0),
+          last_month: Number(months?.last_month ?? 0),
+          daily: days.map((d: any) => ({ day: d.day, n: Number(d.n) })),
+        }
       });
 
     } catch (error: any) {

@@ -447,7 +447,7 @@ export async function runReminderPass(mode: 'initial' | 'scheduled'): Promise<Re
         if (toCustomer && row.customer_phone) {
             try {
                 const ok = await WhatsAppService.sendWarrantyRejectReminderCustomer(
-                    row.customer_phone, row.customer_name, productName, row.registration_number,
+                    row.customer_phone, row.customer_name, productName,
                     row.uid, storeName, 'Not Approved', purchaseDate, warrantyType, reason, days
                 );
                 ok ? activeRun.sent++ : activeRun.failed++;
@@ -462,7 +462,7 @@ export async function runReminderPass(mode: 'initial' | 'scheduled'): Promise<Re
         if (toStore && row.store_phone) {
             try {
                 const ok = await WhatsAppService.sendWarrantyRejectReminderStore(
-                    row.store_phone, storeName, productName, row.registration_number,
+                    row.store_phone, storeName, productName,
                     row.uid, 'Not Approved', purchaseDate, warrantyType, reason, days
                 );
                 ok ? activeRun.sent++ : activeRun.failed++;
@@ -559,7 +559,7 @@ export async function sendTestReminder(phone: string, uid?: string): Promise<{
     const days = String(row.days_since_rejection ?? 0);
 
     const customerSent = await WhatsAppService.sendWarrantyRejectReminderCustomer(
-        phone, row.customer_name, productName, row.registration_number, row.uid,
+        phone, row.customer_name, productName, row.uid,
         storeName, 'Not Approved', purchaseDate, warrantyType, reason, days,
         TEST_CONTEXT_CUSTOMER
     );
@@ -567,7 +567,7 @@ export async function sendTestReminder(phone: string, uid?: string): Promise<{
     await sleep(SEND_SPACING_MS);
 
     const storeSent = await WhatsAppService.sendWarrantyRejectReminderStore(
-        phone, storeName, productName, row.registration_number, row.uid,
+        phone, storeName, productName, row.uid,
         'Not Approved', purchaseDate, warrantyType, reason, days,
         TEST_CONTEXT_STORE
     );

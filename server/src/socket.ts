@@ -3,6 +3,7 @@ import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import { isSessionToken, getSessionState } from './middleware/auth.js';
+import { APP_ORIGINS } from './config/appOrigins.js';
 
 dotenv.config();
 
@@ -13,7 +14,7 @@ export const initSocket = (server: HttpServer) => {
         cors: {
             // SBP-005: Use strict origin allowlist instead of wildcard
             // Must match the Express CORS allowedOrigins list in index.ts
-            origin: process.env.ALLOWED_ORIGINS
+            origin: [...(process.env.ALLOWED_ORIGINS
                 ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
                 : [
                     'http://localhost:5173',
@@ -22,7 +23,7 @@ export const initSocket = (server: HttpServer) => {
                     'http://localhost:8081',
                     'http://127.0.0.1:8080',
                     'https://warranty2.autoformindia.co.in'
-                  ],
+                  ]), ...APP_ORIGINS],
             methods: ["GET", "POST"],
             credentials: true
         }

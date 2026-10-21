@@ -1,4 +1,4 @@
-import db from '../config/database.js';
+import db, { type SqlValue } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
 import { WhatsAppService } from './whatsapp.service.js';
 import { findState } from './indianStates.js';
@@ -76,14 +76,20 @@ export interface StoreEnquiry {
 async function writeLead(existingId: string | undefined, newId: string, cols: Record<string, unknown>) {
     const names = Object.keys(cols);
     if (existingId) {
+        // Finishing a lead that already exists (a chat's, or an Instagram sheet
+        // lead the customer has now written to): its raw_payload is merged into,
+        // never replaced — a sheet lead keeps its Meta id, so it is not imported again.
+        const set = (n: string) => n === 'raw_payload'
+            ? 'raw_payload = JSON_MERGE_PATCH(COALESCE(raw_payload, JSON_OBJECT()), CAST(? AS JSON))'
+            : `${n} = ?`;
         await db.execute(
-            `UPDATE leads SET ${names.map(n => `${n} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
-            [...Object.values(cols), existingId]
+            `UPDATE leads SET ${names.map(set).join(', ')}, updated_at = NOW() WHERE id = ?`,
+            [...(Object.values(cols) as SqlValue[]), existingId]
         );
     } else {
         await db.execute(
             `INSERT INTO leads (id, ${names.join(', ')}) VALUES (?, ${names.map(() => '?').join(', ')})`,
-            [newId, ...Object.values(cols)]
+            [newId, ...(Object.values(cols) as SqlValue[])]
         );
     }
 }
@@ -222,6 +228,23 @@ export async function startStoreEnquiry(input: StoreEnquiry): Promise<EnquiryOut
         `${kind === 'stores' ? ` (${result.stores.length})` : ''}, reply ${raw.locator.reply} — lead ${leadId}`);
 
     /*
+     * The only store (or distributor) was sent straight to the customer: record
+     * it and alert it, as a tap would. After the write, because the alert is
+     * recorded on the lead row.
+     */
+    const only = sent ? onlyStore(result) : null;
+    const onlyDist = sent ? onlyDistributor(result) : null;
+    if (only || onlyDist) {
+        try {
+            const lead = await leadForAlert(leadId);
+            if (lead && only) await recordStorePick(lead, String(only.id), only.phone, only.store_name, settings.whatsapp_live, true);
+            if (lead && onlyDist) await recordDistributorPick(lead, String(onlyDist.id), onlyDist.phone, onlyDist.name, settings.whatsapp_live, true);
+        } catch (err: any) {
+            console.error('[Locator] recording the only store failed:', err?.message);
+        }
+    }
+
+    /*
      * Nobody near — no store, ASM or distributor — so customer support is the
      * one place this lead can go. The customer is shown the support number;
      * support is told about the customer, in the same alert a store gets, so
@@ -239,8 +262,30 @@ export async function startStoreEnquiry(input: StoreEnquiry): Promise<EnquiryOut
     return kind;
 }
 
+/*
+ * One store (or one distributor) near the customer: a list of one to tap is
+ * only a step in the way, so its details are sent straight away and the pick
+ * is recorded as if they had tapped it.
+ */
+const onlyStore = (r: LocatorResult) => (r.stores.length === 1 ? r.stores[0] : null);
+const onlyDistributor = (r: LocatorResult) =>
+    (!r.stores.length && r.fallback?.kind === 'distributor' && r.fallback.contacts.length === 1 ? r.fallback.contacts[0] : null);
+
 /** Send the customer what the locator found, at a given page of the list. */
 async function sendResult(phone: string, leadId: string, result: LocatorResult, page: number): Promise<boolean> {
+    const store = page === 1 ? onlyStore(result) : null;
+    if (store) {
+        const { support_phone } = await getLocatorSettings();
+        return reply(phone, 'Text', text(storeDetailsText({
+            store_name: store.store_name, address: store.address, city: store.city, pincode: store.pincode, phone: store.phone,
+        }, support_phone, true)), leadId);
+    }
+    const dist = page === 1 ? onlyDistributor(result) : null;
+    if (dist) {
+        const { support_phone } = await getLocatorSettings();
+        return reply(phone, 'Text', text(distributorDetailsText(dist, support_phone, true)), leadId);
+    }
+
     if (result.stores.length) {
         const msg = storeList(leadId, result.stores, page);
         return msg ? reply(phone, 'InteractiveList', msg as any, leadId) : false;
@@ -312,13 +357,7 @@ export async function handleLocatorReply(senderPhone: string, tap: LocatorReply)
             phone: store.phone_number,
         }, settings.support_phone)), lead.id);
 
-        // Recorded as the customer's own choice, not an admin's.
-        await db.execute(
-            `UPDATE leads SET store_id = ?, store_sent_at = NOW(), store_sent_by = 'customer' WHERE id = ?`,
-            [store.id, lead.id]
-        );
-        console.log(`[Locator] lead ${lead.id} picked ${store.store_name}`);
-        await notifyOnce(lead, `store:${store.id}`, store.phone_number, store.store_name, settings.whatsapp_live);
+        await recordStorePick(lead, store.id, store.phone_number, store.store_name, settings.whatsapp_live, false);
         return true;
     }
 
@@ -332,14 +371,45 @@ export async function handleLocatorReply(senderPhone: string, tap: LocatorReply)
     await reply(senderPhone, 'Text', text(distributorDetailsText({
         id: String(d.id), name: d.name, phone: d.phone_number, city: d.city,
     }, settings.support_phone)), lead.id);
+    await recordDistributorPick(lead, String(d.id), d.phone_number, d.name, settings.whatsapp_live, false);
+    return true;
+}
+
+/** The lead as the alerts need it, with what it has been alerted about so far. */
+async function leadForAlert(leadId: string) {
+    const [rows]: any = await db.execute(
+        `SELECT id, customer_phone, product, car_model,
+                JSON_EXTRACT(raw_payload, '$.locator.notified') AS notified
+           FROM leads WHERE id = ? LIMIT 1`,
+        [leadId]
+    );
+    return rows[0] ?? null;
+}
+
+/**
+ * The store the customer got — tapped, or `auto` when it was the only one —
+ * recorded as the customer's own choice, not an admin's, and the store alerted.
+ */
+async function recordStorePick(lead: any, storeId: string, storePhone: string | null, storeName: string, live: boolean, auto: boolean) {
+    await db.execute(
+        `UPDATE leads SET store_id = ?, store_sent_at = NOW(), store_sent_by = 'customer'
+                ${auto ? `, raw_payload = JSON_SET(COALESCE(raw_payload, JSON_OBJECT()), '$.locator.auto_picked', true)` : ''}
+          WHERE id = ?`,
+        [storeId, lead.id]
+    );
+    console.log(`[Locator] lead ${lead.id} ${auto ? 'sent the only store,' : 'picked'} ${storeName}`);
+    await notifyOnce(lead, `store:${storeId}`, storePhone, storeName, live);
+}
+
+async function recordDistributorPick(lead: any, id: string, phone: string | null, name: string, live: boolean, auto: boolean) {
     await db.execute(
         `UPDATE leads SET raw_payload = JSON_SET(COALESCE(raw_payload, JSON_OBJECT()),
-            '$.locator.picked_distributor', JSON_OBJECT('id', ?, 'name', ?)) WHERE id = ?`,
-        [String(d.id), d.name, lead.id]
+            '$.locator.picked_distributor', JSON_OBJECT('id', ?, 'name', ?)
+            ${auto ? `, '$.locator.auto_picked', true` : ''}) WHERE id = ?`,
+        [id, name, lead.id]
     );
-    console.log(`[Locator] lead ${lead.id} picked distributor ${d.name}`);
-    await notifyOnce(lead, `distributor:${d.id}`, d.phone_number, d.name, settings.whatsapp_live);
-    return true;
+    console.log(`[Locator] lead ${lead.id} ${auto ? 'sent the only distributor,' : 'picked distributor'} ${name}`);
+    await notifyOnce(lead, `distributor:${id}`, phone, name, live);
 }
 
 /**
@@ -391,23 +461,10 @@ export async function notifyOnce(lead: any, key: string, phone: string | null, n
     const enquired = lead.enquired_at ? new Date(lead.enquired_at) : null;
     const when = receivedAt(enquired && !Number.isNaN(enquired.getTime()) ? enquired : undefined);
 
-    /*
-     * Support has its own template, which adds where the customer is — they
-     * are the ones who must find them somewhere to go. Until Meta approves it
-     * the send fails, and support gets the store alert instead, so no lead
-     * goes unannounced in the meantime.
-     */
-    let ok = false;
-    if (key === 'support') {
-        ok = await WhatsAppService.sendSupportLead(
-            phone, lead.customer_phone, lead.location || '', lead.product, lead.car_model, when, leadNumber, lead.id,
-        ).catch(() => false);
-    }
-    if (!ok) {
-        ok = await WhatsAppService.sendStoreLead(
-            phone, name, lead.customer_phone, lead.product, lead.car_model, when, leadNumber, lead.id,
-        ).catch(() => false);
-    }
+    // Support gets the same alert as a store.
+    const ok = await WhatsAppService.sendStoreLead(
+        phone, name, lead.customer_phone, lead.product, lead.car_model, when, leadNumber, lead.id,
+    ).catch(() => false);
     if (!ok) return 'failed';
 
     await db.execute(
@@ -434,7 +491,7 @@ export async function handlePincodeMessage(senderPhone: string, body: string): P
     if (!/^[1-9][0-9]{5}$/.test(pincode)) return false;
 
     const [rows]: any = await db.execute(
-        `SELECT customer_name, product, car_model, source FROM leads
+        `SELECT id, customer_name, product, car_model, source, raw_area FROM leads
           WHERE phone_key = ? AND flow_id = ?
             AND created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)
           ORDER BY created_at DESC LIMIT 1`,
@@ -443,10 +500,322 @@ export async function handlePincodeMessage(senderPhone: string, body: string): P
     if (!rows.length) return false;
 
     const last = rows[0];
+    /*
+     * The pincode they were already answered for — typed again, as people do
+     * ("416006" after "Okay"). Same enquiry: the answer goes again on the same
+     * lead, so no second lead and no second alert. A different pincode is a
+     * new area, and a new enquiry.
+     */
+    const same = String(last.raw_area ?? '') === pincode;
+    if (same) console.log(`[Locator] ${phoneKey(senderPhone)} sent ${pincode} again — answering on lead ${last.id}`);
     await startStoreEnquiry({
+        ...(same ? { leadId: last.id } : {}),
         pincode, phone: senderPhone, name: last.customer_name, product: last.product, car: last.car_model,
         source: last.source === 'instagram' ? 'instagram' : 'whatsapp',
         rawPayload: { source: 'follow-up pincode' },
     });
+    return true;
+}
+
+/**
+ * A customer answered within the last day writes again with a general word
+ * ("Price please", "hi"): they get their answer again — their store, or the
+ * list to pick from, or the contact they were given — on the same lead,
+ * instead of a fresh menu and a second lead. Returns whether it was sent.
+ */
+export async function resendAnswer(senderPhone: string, product: string | null = null): Promise<boolean> {
+    const [rows]: any = await db.execute(
+        `SELECT id, flow_id, raw_area, store_id, product FROM leads
+          WHERE phone_key = ? AND created_at >= NOW() - INTERVAL 1 DAY
+            AND raw_area REGEXP '^[1-9][0-9]{5}$'
+            AND JSON_EXTRACT(raw_payload, '$.locator.offered') IS NOT NULL
+          ORDER BY created_at DESC LIMIT 1`,
+        [phoneKey(senderPhone)]
+    );
+    const lead = rows[0];
+    if (!lead) return false;
+    // Asking about another product ("mats" after seat covers) is a new enquiry: the chat starts it.
+    if (product && lead.product && normaliseProduct(product) !== lead.product) return false;
+    const settings = await getLocatorSettings();
+    if (!repliesTo(settings, senderPhone)) return false;
+
+    // A sheet lead the customer now writes to joins the chat's flow, so their taps on the list are taken.
+    if (lead.flow_id !== LOCATOR_FLOW_ID) {
+        await db.execute('UPDATE leads SET flow_id = ? WHERE id = ?', [LOCATOR_FLOW_ID, lead.id]);
+    }
+    if (lead.store_id) {
+        const [stores]: any = await db.execute(
+            `SELECT vd.store_name, vd.address, vd.city, vd.pincode, p.phone_number
+               FROM vendor_details vd LEFT JOIN profiles p ON p.id = vd.user_id WHERE vd.id = ? LIMIT 1`,
+            [lead.store_id]
+        );
+        const s = stores[0];
+        if (s) {
+            await reply(senderPhone, 'Text', text(storeDetailsText({
+                store_name: s.store_name, address: s.address, city: s.city, pincode: s.pincode, phone: s.phone_number,
+            }, settings.support_phone)), lead.id);
+            console.log(`[Locator] ${phoneKey(senderPhone)} wrote again — resent their store, lead ${lead.id}`);
+            return true;
+        }
+    }
+    const result = await findStoresForPincode(lead.raw_area);
+    await sendResult(senderPhone, lead.id, result, 1);
+    console.log(`[Locator] ${phoneKey(senderPhone)} wrote again — resent their answer for ${lead.raw_area}, lead ${lead.id}`);
+    return true;
+}
+
+/* ─── A lead an auditor adds by hand, by pincode ─────────────────────────── */
+
+export type ManualOutcome = 'stores' | 'asm' | 'distributor' | 'support';
+
+export interface ManualLeadInput {
+    pincode: string;
+    phone: string;
+    name: string | null;
+    product: string | null;
+    car: string | null;
+    /** The channel the auditor chose: one Add Lead offers (leadOptions). */
+    source: string;
+    enteredBy: string | null;
+    /** The auditor picked a store in the form; it is sent by the caller, and the chain stops there. */
+    storePicked: boolean;
+}
+
+/**
+ * Where a hand-added lead goes, by the same chain as WhatsApp: the stores near
+ * the pincode (the auditor picks one), else the ASM holding the area, else the
+ * nearest distributor, else customer support. Nothing is written or sent.
+ */
+export async function manualLeadPlan(pincode: string) {
+    const result = await findStoresForPincode(pincode);
+    const kind: ManualOutcome = result.stores.length ? 'stores' : (result.fallback?.kind ?? 'support');
+    const district = result.customer?.district && result.customer.district !== 'NA' ? titleCase(result.customer.district) : null;
+    const state = findState(String(result.customer?.state ?? ''))?.state ?? null;
+    const contact = kind === 'stores' ? null : (result.fallback?.contacts[0] ?? null);
+    return { result, kind, district, state, contact, found: result.found };
+}
+
+/**
+ * File the lead and, when no store is near (and the auditor did not pick one),
+ * hand it to the next in the chain: that contact gets the lead, and the
+ * customer gets that contact. With stores near, nothing is sent here — the
+ * auditor's pick sends the store's details and alerts the store.
+ */
+export async function createManualPincodeLead(input: ManualLeadInput): Promise<{ leadId: string; kind: ManualOutcome; sentTo: string | null }> {
+    const { result, kind, district, state, contact } = await manualLeadPlan(input.pincode);
+    const settings = await getLocatorSettings();
+    const leadId = uuidv4();
+    const phone = localPhone(input.phone) || String(input.phone).trim();
+    const place = district ? `${district} (${input.pincode})` : input.pincode;
+    const product = normaliseProduct(input.product);
+    const car = String(input.car || '').trim().slice(0, 80) || null;
+    const options = (result.stores.length
+        ? result.stores.map(s => ({ id: s.id, name: s.store_name, distance_km: s.distance_km }))
+        : (result.fallback?.contacts ?? []).map(c => ({ id: c.id, name: c.name })));
+
+    await db.execute(
+        `INSERT INTO leads
+           (id, source, product, car_model, state, customer_name, customer_phone, phone_key,
+            raw_area, matched_area, asm_id, flow_id, raw_payload, status, failure_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+        [
+            leadId, input.source, product, car, state,
+            input.name ? String(input.name).trim().slice(0, 255) : null,
+            phone, phoneKey(phone), input.pincode, district ? place : null,
+            kind === 'asm' ? contact?.id ?? null : null,
+            JSON.stringify({
+                entered_by: input.enteredBy, channel: input.source, pincode: input.pincode,
+                locator: { pincode: input.pincode, offered: kind, count: options.length, reply: 'none', via: 'manual', options: options.slice(0, 10) },
+            }),
+            kind === 'support' ? 'unmatched' : 'matched',
+            kind === 'support' ? 'No store, ASM or distributor near this pincode' : null,
+        ]
+    );
+
+    // Stores near, or the auditor chose one: the store is sent from the form.
+    if (kind === 'stores' || input.storePicked || !contact) return { leadId, kind, sentTo: null };
+
+    const sentTo = await deliverLead(
+        { id: leadId, phone, name: input.name, product, car, place },
+        result, { stores: 'auditor' }, settings.whatsapp_live,
+    );
+    console.log(`[Locator] manual lead ${leadId} at ${input.pincode} -> ${kind}${sentTo ? `, sent to ${sentTo}` : ''}`);
+    return { leadId, kind, sentTo };
+}
+
+/**
+ * A 2-wheeler enquiry added by hand. It never goes to a store: the Customer
+ * Executive (the support number in the locator settings) gets the support
+ * lead alert, with "2-Wheeler" as the vehicle. The customer is not messaged —
+ * outside WhatsApp's 24-hour window only a template could reach them, and the
+ * auditor taking the enquiry gives them the number.
+ */
+export async function createTwoWheelerLead(input: {
+    phone: string; name: string | null; product: string | null; car: string | null;
+    source: string; enteredBy: string | null; pincode: string | null; area: string | null;
+}): Promise<{ leadId: string; alert: AlertResult; sentTo: string | null }> {
+    const settings = await getLocatorSettings();
+    const leadId = uuidv4();
+    const phone = localPhone(input.phone) || String(input.phone).trim();
+    const product = normaliseProduct(input.product);
+    const typed = String(input.car || '').trim();
+    const car = (typed ? `${typed} (2-Wheeler)` : '2-Wheeler').slice(0, 80);
+    const where = String(input.area || '').trim() || input.pincode || '';
+
+    await db.execute(
+        `INSERT INTO leads
+           (id, source, product, car_model, customer_name, customer_phone, phone_key,
+            raw_area, flow_id, raw_payload, status, failure_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'matched', NULL)`,
+        [
+            leadId, input.source, product, car,
+            input.name ? String(input.name).trim().slice(0, 255) : null,
+            phone, phoneKey(phone), where ? where.slice(0, 255) : null,
+            JSON.stringify({
+                entered_by: input.enteredBy, channel: input.source, vehicle: '2w',
+                ...(input.pincode ? { pincode: input.pincode } : {}),
+                locator: { offered: 'support', via: 'manual', vehicle: '2w' },
+            }),
+        ]
+    );
+    const alert = await notifyOnce(
+        { id: leadId, customer_phone: phone, product, car_model: car, notified: null, location: where },
+        'support', settings.support_phone || null, settings.support_name, settings.whatsapp_live,
+    ).catch(() => 'failed' as const);
+    if (alert !== 'sent') {
+        await db.execute('UPDATE leads SET failure_reason = ? WHERE id = ?',
+            [`2-Wheeler enquiry: executive not alerted (${alert})`, leadId]);
+    }
+    console.log(`[Locator] manual 2-wheeler lead ${leadId} -> executive ${alert}`);
+    return { leadId, alert, sentTo: alert === 'sent' ? settings.support_name : null };
+}
+
+/**
+ * Hand a lead that has not written to us — added by hand, or filed from
+ * Meta's sheet — to whoever the chain gives it, and tell the customer who to
+ * call (the approved store-details template: outside WhatsApp's 24-hour reply
+ * window a free-form message cannot reach them).
+ *
+ *   stores near  → `stores`:
+ *                    'auditor' — nothing here; the auditor picks one (hand-added leads).
+ *                    'choose'  — one store: its details straight to the customer, the
+ *                                store alerted. Several: the af_choose_store_sheet
+ *                                template, whose "View stores" tap sends the list
+ *                                (handleChooseStoreTap) — once CHOOSE_STORE_LIVE is
+ *                                set, i.e. Meta has approved it; until then the auditor.
+ *   ASM          → the ASM's enquiry alert; the customer gets the ASM's number.
+ *   distributor  → the nearest distributor's alert; the customer gets its number.
+ *   support      → customer support's alert; the customer gets its number.
+ *
+ * Returns who got the lead, or null. Every alert goes through notifyOnce or is
+ * recorded on the lead, so running it twice does not alert anyone twice.
+ */
+export async function deliverLead(
+    l: { id: string; phone: string; name: string | null; product: string | null; car: string | null; place: string },
+    result: LocatorResult,
+    opts: { stores: 'auditor' | 'choose' },
+    live: boolean,
+): Promise<string | null> {
+    if (!live) return null;
+    const noteReply = (v: string) => db.execute(
+        `UPDATE leads SET raw_payload = JSON_SET(COALESCE(raw_payload, JSON_OBJECT()),
+                '$.locator', COALESCE(JSON_EXTRACT(raw_payload, '$.locator'), JSON_OBJECT()),
+                '$.locator.reply', ?) WHERE id = ?`,
+        [v, l.id]
+    );
+    const customerGets = async (name: string, address: string, phone: string) => {
+        const ok = await WhatsAppService.sendCustomerStoreDetails(l.phone, name, address, phone, l.id).catch(() => false);
+        await noteReply(ok ? 'sent' : 'failed');
+        return ok;
+    };
+
+    if (result.stores.length) {
+        if (opts.stores === 'auditor') return null;
+        // Several to choose from: the customer picks, once the template is approved.
+        if (result.stores.length > 1) {
+            if (process.env.CHOOSE_STORE_LIVE !== 'true') return null;
+            const ok = await WhatsAppService.sendChooseStore(l.phone, l.name, l.product, l.place, l.id).catch(() => false);
+            await noteReply(ok ? 'choose-sent' : 'failed');
+            return null;
+        }
+        const store = [...result.stores].sort((a, b) => a.distance_km - b.distance_km).find(s => s.phone);
+        if (!store) return null;
+        const address = [store.address, titleCase(store.city), store.pincode].map(p => String(p ?? '').trim()).filter(Boolean)
+            .filter((p, i, all) => i === 0 || !all[0].toLowerCase().includes(p.toLowerCase())).join(', ') || l.place;
+        await customerGets(store.store_name, address, store.phone!);
+        const lead = await leadForAlert(l.id);
+        if (lead) await recordStorePick(lead, String(store.id), store.phone, store.store_name, live, true);
+        return store.store_name;
+    }
+
+    const kind = result.fallback?.kind ?? 'support';
+    const contact = result.fallback?.contacts[0];
+    if (!contact) return null;
+    // The template's address line may not be empty: the contact's city, else the customer's area.
+    if (contact.phone) await customerGets(contact.name, titleCase(contact.city) || l.place, contact.phone);
+
+    if (kind === 'asm') {
+        if (!contact.phone) return null;
+        const ok = await WhatsAppService.sendAsmEnquiry(
+            contact.phone, contact.name, l.name || '', l.phone, l.place, receivedAt(), l.product, l.car,
+            contact.id ? await asmLeadNumber(contact.id).catch(() => undefined) : undefined,
+        ).catch(() => false);
+        await db.execute(`UPDATE leads SET status = ?, sent_at = ${ok ? 'NOW()' : 'NULL'} WHERE id = ?`, [ok ? 'sent' : 'failed', l.id]);
+        return ok ? contact.name : null;
+    }
+    const lead = { id: l.id, notified: null, customer_phone: l.phone, location: l.place, product: l.product, car_model: l.car };
+    const key = kind === 'distributor' ? `distributor:${contact.id}` : 'support';
+    const r = await notifyOnce(lead, key, contact.phone, contact.name, live).catch(() => 'failed' as const);
+    return r === 'sent' ? contact.name : null;
+}
+
+/**
+ * The customer tapped "View stores" on af_choose_store_sheet: their store list,
+ * as WhatsApp customers get it — tap a store, get its details, the store gets
+ * the lead. The tap opened the 24-hour window, so the interactive list can go.
+ *
+ * `leadId` comes from the button's callback ("choose_store_<lead id>"); without
+ * it (a typed "View stores", or a payload missing the callback) the customer's
+ * latest lead that was sent the template is used. The lead must belong to the
+ * number that tapped. Returns whether it was ours.
+ */
+const tapAnswered = new Map<string, number>();
+
+export async function handleChooseStoreTap(senderPhone: string, leadId: string | null): Promise<boolean> {
+    const key = phoneKey(senderPhone);
+    const [rows]: any = leadId
+        ? await db.execute(`SELECT id, flow_id, phone_key, raw_area FROM leads WHERE id = ? LIMIT 1`, [leadId])
+        : await db.execute(
+            `SELECT id, flow_id, phone_key, raw_area FROM leads
+              WHERE phone_key = ? AND created_at >= NOW() - INTERVAL 7 DAY
+                AND JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.locator.reply')) = 'choose-sent'
+              ORDER BY created_at DESC LIMIT 1`,
+            [key]
+        );
+    const lead = rows[0];
+    if (!lead) return false;
+    if (lead.phone_key !== key) {
+        console.warn(`[Locator] "View stores" for lead ${lead.id} from ${key} does not match — ignored`);
+        return true;
+    }
+    /* One tap reaches us twice — as a message and as a button click — and
+       each sent the list. The second, within two minutes, is the same tap. */
+    const last = tapAnswered.get(lead.id);
+    if (last && Date.now() - last < 120_000) return true;
+    tapAnswered.set(lead.id, Date.now());
+    if (tapAnswered.size > 500) tapAnswered.delete(tapAnswered.keys().next().value as string);
+
+    const settings = await getLocatorSettings();
+    if (!repliesTo(settings, senderPhone)) return true;
+
+    // The customer is in the chat now: their taps on the list are taken like any WhatsApp customer's.
+    if (lead.flow_id !== LOCATOR_FLOW_ID) await db.execute('UPDATE leads SET flow_id = ? WHERE id = ?', [LOCATOR_FLOW_ID, lead.id]);
+    const result = await findStoresForPincode(lead.raw_area);
+    const sent = await sendResult(senderPhone, lead.id, result, 1);
+    await db.execute(
+        `UPDATE leads SET raw_payload = JSON_SET(raw_payload, '$.locator.reply', ?) WHERE id = ?`,
+        [sent ? 'list-sent' : 'failed', lead.id]
+    );
+    console.log(`[Locator] ${key} tapped "View stores" — list for ${lead.raw_area} ${sent ? 'sent' : 'failed'}, lead ${lead.id}`);
     return true;
 }

@@ -118,6 +118,30 @@ export function spreadsheetId(urlOrId: string): string | null {
 }
 
 /**
+ * The tab's real title for the name we were given: exact if there is one,
+ * otherwise ignoring case and spaces. The October 2026 tab is "Ad New 1 ",
+ * with a trailing space no one can see — asked for as "Ad New 1", Google
+ * answered 400. Null when nothing matches.
+ */
+export function matchTabTitle(titles: string[], wanted: string): string | null {
+    if (titles.includes(wanted)) return wanted;
+    const norm = (s: string) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+    return titles.find(t => norm(t) === norm(wanted)) ?? null;
+}
+
+async function resolveTab(id: string, tabName: string, token: string): Promise<string> {
+    const res = await axios.get(`${SHEETS_API}/${id}`, {
+        params: { fields: 'sheets.properties.title' },
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 30_000,
+    });
+    const titles: string[] = (res.data?.sheets ?? []).map((s: any) => String(s?.properties?.title ?? ''));
+    const title = matchTabTitle(titles, tabName);
+    if (!title) throw new Error(`No tab named "${tabName}" — the sheet has: ${titles.map(t => `"${t}"`).join(', ')}`);
+    return title;
+}
+
+/**
  * Every row of a tab, as a grid of strings.
  *
  * UNFORMATTED_VALUE with a string render keeps what the sheet holds rather than
@@ -135,9 +159,10 @@ export async function fetchSheetRows(
     const id = spreadsheetId(urlOrId);
     if (!id) throw new Error('That does not look like a Google Sheet link or id');
 
+    const title = await resolveTab(id, tabName, token);
     // Quoted: a tab named like a cell ("AD1", Meta's own default) is otherwise
     // read as that cell, and Google answers with one empty value or a 400.
-    const range = encodeURIComponent(`'${String(tabName).replace(/'/g, "''")}'`);
+    const range = encodeURIComponent(`'${title.replace(/'/g, "''")}'`);
     const res = await axios.get(
         `${SHEETS_API}/${id}/values/${range}`,
         {

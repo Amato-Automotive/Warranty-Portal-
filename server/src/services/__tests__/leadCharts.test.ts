@@ -17,7 +17,7 @@ describe('buildLeadCharts', () => {
         ]);
         assert.equal(c.total, 4);
         assert.deepEqual(c.by_day.map(d => d.day), ['2026-09-29', '2026-09-30']);
-        assert.deepEqual(c.by_day[1], { day: '2026-09-30', whatsapp: 1, instagram: 0, ivr: 1, website: 0, other: 1 });
+        assert.deepEqual(c.by_day[1], { day: '2026-09-30', whatsapp: 1, instagram: 0, ivr: 1, website: 0, whatsapp_manual: 0, instagram_dm: 0, facebook_dm: 0, other: 1 });
     });
 
     test('products always list all three plus "not given"', () => {

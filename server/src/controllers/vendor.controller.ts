@@ -4,6 +4,9 @@ import { formatDateTimeIST } from '../utils/dateUtils.js';
 import { EmailService } from '../services/email.service.js';
 import { v4 as uuidv4 } from 'uuid';
 import { NotificationService } from '../services/notification.service.js';
+import { storeLeadView } from '../services/storeLeads.js';
+import { loadLeadOptions } from '../services/leadOptionsStore.js';
+import { storeGroupOf } from '../services/leadOptions.js';
 
 
 export class VendorController {
@@ -48,7 +51,7 @@ export class VendorController {
       // Find vendor by token
       const [verifications]: any = await db.execute(
         'SELECT * FROM vendor_verification WHERE verification_token = ?',
-        [token]
+        [String(token)]
       );
 
       if (verifications.length === 0) {
@@ -166,7 +169,7 @@ export class VendorController {
       // Update verification status
       await db.execute(
         'UPDATE vendor_verification SET is_verified = TRUE, verified_at = ? WHERE verification_token = ?',
-        [getISTTimestamp(), token]
+        [getISTTimestamp(), String(token)]
       );
 
       // Send confirmation email to vendor with login link
@@ -437,6 +440,51 @@ export class VendorController {
    * record carries a different number from the one it replied on would
    * otherwise see nothing.
    */
+  /**
+   * The store's own leads: those it was actually sent — the customer picked it
+   * on WhatsApp, or the team sent it from Lead Management — with the auditor's
+   * status. Never the auditor's reason or internal notes. Scoped by session:
+   * a store can only ever read its own.
+   */
+  static async getOwnLeads(req: Request, res: Response) {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+      const [[store]]: any = await db.execute(
+        'SELECT id, store_name FROM vendor_details WHERE user_id = ? LIMIT 1',
+        [userId]
+      );
+      if (!store) return res.status(404).json({ error: 'Store not found' });
+
+      /* Narrowed in SQL to the leads that name this store at all; storeLeadView
+         then applies the exact rule, so the two can never disagree. */
+      const [rows]: any = await db.execute(
+        `SELECT id, customer_name, customer_phone, product, car_model, raw_area, state,
+                store_id, store_sent_by, review_status, reviewed_at, raw_payload,
+                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS created_ist
+           FROM leads
+          WHERE store_id = ? COLLATE utf8mb4_0900_ai_ci
+             OR JSON_CONTAINS(JSON_EXTRACT(raw_payload, '$.locator.notified'), JSON_QUOTE(?))
+          ORDER BY created_at DESC
+          LIMIT 1000`,
+        [String(store.id), `store:${store.id}`]
+      );
+
+      // Each lead's group in My Leads (won, follow up, lost, no answer, not called), from the admin's outcomes.
+      const options = await loadLeadOptions();
+      const leads = rows
+        .map((r: any) => storeLeadView(r, String(store.id)))
+        .filter(Boolean)
+        .map((l: any) => ({ ...l, group: storeGroupOf(options, l.status) }));
+
+      res.json({ success: true, store: { id: store.id, name: store.store_name }, leads });
+    } catch (error: any) {
+      console.error('Get own leads error:', error);
+      res.status(500).json({ error: 'Could not load your leads' });
+    }
+  }
+
   static async getOwnAudits(req: Request, res: Response) {
     try {
       const userId = (req as any).user?.id;

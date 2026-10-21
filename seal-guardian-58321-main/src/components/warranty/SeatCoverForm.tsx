@@ -28,6 +28,7 @@ import { Upload, Loader2, HelpCircle, CheckCircle2, FileText, Building2, User, C
 import CameraCapture from "@/components/ui/CameraCapture";
 import { submitWarranty, updateWarranty } from "@/lib/warrantyApi";
 import { TermsModal } from "./TermsModal";
+import { WarrantyReviewDialog } from "./WarrantyReviewDialog";
 import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
 import exifr from 'exifr';
 import fpPromise from '@fingerprintjs/fingerprintjs';
@@ -102,6 +103,8 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
   const [products, setProducts] = useState<any[]>([]);
   const [manpowerList, setManpowerList] = useState<any[]>([]);
   const [termsModalOpen, setTermsModalOpen] = useState(false);
+  /* The "check your details" step between passing the checks and sending. */
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [uidHelpOpen, setUidHelpOpen] = useState(false);
   const [uidScannerOpen, setUidScannerOpen] = useState(false);
   const [uidScannerError, setUidScannerError] = useState("");
@@ -433,8 +436,9 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
   }, [formData.productName, products]);
 
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  /** Checks the form; then shows the review, and only `confirmed` from there sends it. */
+  const handleSubmit = async (e?: React.FormEvent, confirmed = false) => {
+    e?.preventDefault();
     setLoading(true);
 
     try {
@@ -648,6 +652,13 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
 
 
 
+      // Everything checks out: let them see it all once before it goes. The UID
+      // shown is the one the server settled on above.
+      if (!confirmed) {
+        setReviewOpen(true);
+        return;
+      }
+
       // Find selected manpower name
       const selectedManpower = manpowerList.find(mp => mp.id === formData.manpowerId);
       const manpowerName = selectedManpower ? selectedManpower.name : "";
@@ -750,6 +761,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
         });
       }
 
+      setReviewOpen(false);
       // Redirection Details
       const submissionDetails = {
         customerName: formData.customerName,
@@ -2051,6 +2063,62 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
           onAccept={() => setFormData(prev => ({ ...prev, termsAccepted: true }))}
         />
       </form>
+
+      {/* Modify closes this and leaves the form exactly as it was. */}
+      <WarrantyReviewDialog
+        open={reviewOpen}
+        loading={loading}
+        onModify={() => setReviewOpen(false)}
+        onConfirm={() => handleSubmit(undefined, true)}
+        sections={[
+          {
+            title: "Customer",
+            rows: [
+              ["Name", formData.customerName],
+              ["Mobile", formData.customerMobile],
+              ["Email", formData.customerEmail],
+            ],
+          },
+          {
+            title: "Product",
+            rows: [
+              ["UID", formData.uid],
+              ["Seat cover", formData.productName],
+              ["Warranty", formData.warrantyType],
+            ],
+          },
+          {
+            title: "Store",
+            rows: [
+              ["Store", formData.storeName],
+              ["Applicator", manpowerList.find(mp => mp.id === formData.manpowerId)?.name ?? ""],
+            ],
+          },
+          {
+            /* Only what the form asked: the QR page hides the registration
+               (it is filed as APPLIED-FOR), and the year is never asked. */
+            title: storeKnown ? "Purchase" : "Vehicle",
+            rows: [
+              ...(!storeKnown ? [["Registration no.", isBrandNew || formData.carReg === "APPLIED-FOR" ? "Applied for (new car)" : formData.carReg] as [string, string]] : []),
+              ["Purchase date", formData.purchaseDate
+                ? new Date(`${formData.purchaseDate}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+                : ""],
+            ],
+          },
+        ]}
+        photos={[
+          {
+            label: "Invoice / MRP sticker",
+            file: formData.invoiceFile,
+            url: (() => {
+              const f = initialData?.product_details?.invoiceFileName;
+              return f ? (String(f).startsWith("http") ? f : `${window.location.origin}/uploads/${f}`) : null;
+            })(),
+          },
+          { label: "Car exterior", file: formData.vehicleFile, url: initialData?.product_details?.photos?.vehicle },
+          { label: "Seat cover fitted", file: formData.seatCoverPhoto, url: initialData?.product_details?.photos?.seatCover },
+        ]}
+      />
     </div>
   );
 };

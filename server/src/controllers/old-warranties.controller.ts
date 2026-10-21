@@ -40,17 +40,21 @@ export class OldWarrantiesController {
             if (search && (search as string).trim()) {
                 const searchTerm = (search as string).trim();
 
-                // For full-text search, we need to handle it specially
-                // Also do LIKE search for partial matches on UID and mobile
+                /* Full-text matches whole words; the LIKEs catch partial UIDs, phones
+                   and emails. Boolean mode reads @ + - < > ( ) ~ " * as operators (an
+                   email search failed with a syntax error), so the full-text side
+                   gets only the words, every one required, each as a prefix; words
+                   under 3 letters are left to the LIKEs (the index skips them). */
+                const words = searchTerm.split(/[^\p{L}\p{N}_]+/u).filter(w => w.length >= 3).map(w => `+${w}*`).join(' ');
                 whereConditions.push(`(
-                    MATCH(uid, customer_name, customer_email, customer_mobile, store_name) AGAINST(? IN BOOLEAN MODE)
-                    OR uid LIKE ?
+                    ${words ? 'MATCH(uid, customer_name, customer_email, customer_mobile, store_name) AGAINST(? IN BOOLEAN MODE) OR' : ''}
+                    uid LIKE ?
                     OR customer_name LIKE ?
                     OR customer_email LIKE ?
                     OR customer_mobile LIKE ?
                     OR store_name LIKE ?
                 )`);
-                params.push(`*${searchTerm}*`);
+                if (words) params.push(words);
                 params.push(`%${searchTerm}%`);
                 params.push(`%${searchTerm}%`);
                 params.push(`%${searchTerm}%`);

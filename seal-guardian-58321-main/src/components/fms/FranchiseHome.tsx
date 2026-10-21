@@ -1,448 +1,774 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent } from "@/components/ui/card";
-import { Product } from '@/lib/catalogService';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import api from "@/lib/api";
+import { Product } from "@/lib/catalogService";
 import { Notification } from "@/contexts/NotificationContext";
-import {
-    Activity,
-    ShieldCheck,
-    Clock,
-    Users,
-    ArrowUpRight,
-    Star,
-    Sparkles,
-    ChevronRight,
-    ChevronLeft,
-    Play,
-    Megaphone,
-    AlertTriangle,
-    Info
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 import { useB2BCart } from "@/contexts/B2BCartContext";
+import { cn } from "@/lib/utils";
+import { ClubBadge } from "@/components/schemes/ClubBadge";
+import type { Club } from "@/lib/schemes";
+import type { LeadsView } from "@/components/fms/FranchiseLeads";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useLanguage } from "@/contexts/LanguageContext";
+import {
+    ShieldCheck, PhoneCall, Truck, ShoppingCart, BookOpen, Image as ImageIcon, MessageSquareWarning,
+    ArrowRight, CheckCircle2, Gift, Megaphone, ChevronDown, ChevronLeft, ChevronRight, Phone, HelpCircle,
+} from "lucide-react";
+
+/**
+ * The franchise's home (design "A · Workspace", agreed 7 Oct 2026, then made
+ * interactive the same day): the store's day, week or month at a glance —
+ * every number opens the list behind it — its scheme standing, what is
+ * waiting on it (opens right here, with a Call button per customer), quick
+ * ways into the other pages, its latest warranties and what is new from
+ * Autoform. English or Hindi, from the switch in the top bar.
+ *
+ * Colours and the sidebar are the app's own; nothing here registers a warranty
+ * (hidden from franchises on purpose).
+ */
+
+interface RecentWarranty {
+    time: string;
+    status: string;          // 'success' | 'warning' | 'primary'
+    customer?: string;
+    registration?: string | null;
+    car?: string | null;
+    product?: string | null;
+    created_at?: string;
+}
+
+/** Where a tap on the home leads. Days are IST "YYYY-MM-DD", both included. */
+export type HomeTarget =
+    | { module: "warranty"; tab?: string; from?: string; to?: string }
+    | { module: "leads"; view?: LeadsView }
+    | { module: string };
 
 interface FranchiseHomeProps {
-    stats: any;
-    recentActivity?: any[];
-    onNavigate: (module: any) => void;
+    stats: {
+        total: number; approved: number; pending: number; manpower: number;
+        this_month?: number; last_month?: number; daily?: { day: string; n: number }[];
+    };
+    recentActivity?: RecentWarranty[];
+    onOpen: (target: HomeTarget) => void;
     newProducts?: Product[];
     latestUpdates?: Notification[];
 }
 
-const StatCard = ({ title, value, icon: Icon, type, description }: any) => {
-    const isRed = type === 'red';
-    const isBlue = type === 'blue';
-    const isPurple = type === 'purple';
+interface HomeScheme {
+    id: string; title: string; state: string; joined: boolean; has_score: boolean;
+    open_window: { start: string; end: string } | null;
+    next_window: { start: string; end: string } | null;
+    achieved: { score: number; rank: number; of: number; club?: Club | null } | null;
+}
+interface HomeLead { id: string; customer_name: string | null; customer_phone: string | null; car: string | null; received: string | null; status: string; group?: string }
+interface PendingWarranty { id?: string; uid?: string; customer_name?: string; registration_number?: string; car_make?: string; car_model?: string }
+interface ShippedOrder { id: string; distributor_name?: string | null; total_amount?: number | string | null }
 
-    return (
-        <div className={cn(
-            "relative group flex flex-col p-6 rounded-[32px] border transition-all duration-500 hover:shadow-2xl overflow-hidden",
-            isRed ? "border-red-50 bg-gradient-to-br from-red-50 to-white" :
-                isBlue ? "border-blue-50 bg-gradient-to-br from-blue-50 to-white" :
-                    isPurple ? "border-purple-50 bg-gradient-to-br from-purple-50 to-white" :
-                        "border-slate-100 bg-gradient-to-br from-slate-50 to-white"
-        )}>
-            <div className="flex items-center justify-between mb-4">
-                <div className={cn(
-                    "w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-transform duration-500 group-hover:scale-110",
-                    isRed ? "bg-red-500 text-white" :
-                        isBlue ? "bg-blue-500 text-white" :
-                            isPurple ? "bg-purple-500 text-white" :
-                                "bg-slate-700 text-white"
-                )}>
-                    <Icon className="h-6 w-6" />
-                </div>
-                <div className="h-8 w-8 rounded-full bg-white flex items-center justify-center border border-slate-100 text-slate-400 group-hover:text-orange-500 transition-colors">
-                    <ArrowUpRight className="h-4 w-4" />
-                </div>
-            </div>
-            <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">{title}</p>
-                <h3 className="text-3xl font-black text-slate-900 tracking-tighter mb-1">{value}</h3>
-                <p className="text-[10px] font-bold text-slate-500 uppercase leading-tight opacity-70">{description}</p>
-            </div>
-        </div>
-    );
+/* ---------- Words, in English and Hindi ---------- */
+
+type Period = "today" | "week" | "month";
+
+const T = {
+    en: {
+        hello: (h: number, name: string) => `${h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"}${name ? `, ${name}` : ""}`,
+        periods: { today: "Today", week: "This week", month: "This month" } as Record<Period, string>,
+        heading: { today: "Today so far", week: "This week so far", month: (m: string) => `${m} so far` },
+        tapHint: "Tap a number to see the list",
+        warranties: "Warranties registered",
+        leads: "Customer leads",
+        won: "Leads won",
+        wonTip: "A lead is won when the customer bought from you. The % counts only the leads our team has already called.",
+        ofCalled: (r: number) => `${r}% of leads called`,
+        notCalled: "Once our team has called",
+        more: (n: number, ref: string) => `▲ ${n} more than ${ref}`,
+        fewer: (n: number, ref: string) => `▼ ${n} fewer than ${ref}`,
+        same: (ref: string) => `Same as ${ref}`,
+        ref: { today: "yesterday", week: "last week", month: (m: string) => `this time in ${m}` },
+        chartLabel: "Warranties each day",
+        points: "points",
+        pointsTip: "You earn points on every approved invoice. More points take you to a higher club and a bigger reward. Rank is your place among all stores in the scheme.",
+        rank: (r: number) => `Rank #${r}`,
+        openTill: (d: string) => `Open till ${d}`,
+        opens: (d: string) => `Opens ${d}`,
+        noPointsYet: "Your points show here once an invoice is approved.",
+        joinToEarn: "Join to start earning points on every invoice.",
+        submit: "Submit an invoice",
+        join: "Join the scheme",
+        waiting: "Waiting on you",
+        verifyTitle: (n: number) => `${n} warrant${n === 1 ? "y" : "ies"} to verify`,
+        verifyDetail: "Customers are waiting for your approval",
+        verifyAll: (n: number) => n === 1 ? "Verify it" : `Verify all ${n}`,
+        followTitle: (n: number) => `${n} customer${n === 1 ? "" : "s"} to call back`,
+        followDetail: "Our team spoke to them; they are still deciding",
+        seeAllFollow: "See them in My Leads",
+        orderTitle: (n: number, from: string | null) => n === 1 ? (from ? `Your order from ${from} is on its way` : "Your order is on its way") : `${n} orders are on their way`,
+        orderDetail: "Mark it received when it arrives",
+        track: "Track in Orders",
+        call: "Call",
+        caughtUp: "You're all caught up. Nothing is waiting on you right now.",
+        customer: "Customer",
+        quick: { orders: "Place an order", ecatalogue: "E-Catalogue", posm: "POSM request", grievances: "Raise an issue" },
+        recent: "Recent warranties",
+        viewAll: "View all",
+        cols: ["Customer", "Car · Product", "Registered", "Status"],
+        status: { success: "Approved", warning: "Needs correction", primary: "To verify" } as Record<string, string>,
+        noWarranties: "No warranties yet.",
+        fromAutoform: "From Autoform",
+        newLaunch: "New launch",
+        inStock: (n: string) => `${n} in stock with your distributor`,
+        askStock: "Ask your distributor for stock",
+        orderNow: "Order now",
+        updates: "Updates",
+        seeAll: "See all",
+        todayWord: "Today",
+        weekDays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    },
+    hi: {
+        hello: (_h: number, name: string) => `नमस्ते${name ? `, ${name}` : ""}`,
+        periods: { today: "आज", week: "इस हफ़्ते", month: "इस महीने" } as Record<Period, string>,
+        heading: { today: "आज अब तक", week: "इस हफ़्ते अब तक", month: (m: string) => `${m} में अब तक` },
+        tapHint: "लिस्ट देखने के लिए नंबर पर टैप करें",
+        warranties: "रजिस्टर हुई वारंटी",
+        leads: "ग्राहक लीड",
+        won: "पक्की हुई लीड",
+        wonTip: "लीड पक्की तब होती है जब ग्राहक ने आपसे खरीदा। % सिर्फ़ उन लीड का है जिन्हें हमारी टीम कॉल कर चुकी है।",
+        ofCalled: (r: number) => `कॉल की गई लीड का ${r}%`,
+        notCalled: "टीम के कॉल के बाद दिखेगा",
+        more: (n: number, ref: string) => `▲ ${ref} से ${n} ज़्यादा`,
+        fewer: (n: number, ref: string) => `▼ ${ref} से ${n} कम`,
+        same: (ref: string) => `${ref} जितनी`,
+        ref: { today: "कल", week: "पिछले हफ़्ते", month: (_m: string) => "पिछले महीने इन्हीं दिनों" },
+        chartLabel: "हर दिन की वारंटी",
+        points: "पॉइंट",
+        pointsTip: "हर मंज़ूर इनवॉइस पर पॉइंट मिलते हैं। ज़्यादा पॉइंट से ऊँचा क्लब और बड़ा इनाम। रैंक बताता है कि स्कीम के सभी स्टोर में आप कहाँ हैं।",
+        rank: (r: number) => `रैंक #${r}`,
+        openTill: (d: string) => `${d} तक खुला`,
+        opens: (d: string) => `${d} से खुलेगा`,
+        noPointsYet: "इनवॉइस मंज़ूर होते ही आपके पॉइंट यहाँ दिखेंगे।",
+        joinToEarn: "जुड़ें और हर इनवॉइस पर पॉइंट कमाएँ।",
+        submit: "इनवॉइस जमा करें",
+        join: "स्कीम से जुड़ें",
+        waiting: "आपके लिए काम",
+        verifyTitle: (n: number) => `${n} वारंटी वेरिफ़ाई करनी हैं`,
+        verifyDetail: "ग्राहक आपकी मंज़ूरी का इंतज़ार कर रहे हैं",
+        verifyAll: (n: number) => n === 1 ? "वेरिफ़ाई करें" : `सभी ${n} वेरिफ़ाई करें`,
+        followTitle: (n: number) => `${n} ग्राहकों को फिर से कॉल करें`,
+        followDetail: "हमारी टीम ने बात की है; वे अभी सोच रहे हैं",
+        seeAllFollow: "मेरी लीड में देखें",
+        orderTitle: (n: number, from: string | null) => n === 1 ? (from ? `${from} से आपका ऑर्डर रास्ते में है` : "आपका ऑर्डर रास्ते में है") : `${n} ऑर्डर रास्ते में हैं`,
+        orderDetail: "पहुँचने पर 'मिल गया' मार्क करें",
+        track: "ऑर्डर में देखें",
+        call: "कॉल करें",
+        caughtUp: "सब काम पूरा है। अभी कुछ बाकी नहीं।",
+        customer: "ग्राहक",
+        quick: { orders: "ऑर्डर करें", ecatalogue: "ई-कैटलॉग", posm: "POSM मंगाएँ", grievances: "शिकायत दर्ज करें" },
+        recent: "हाल की वारंटी",
+        viewAll: "सब देखें",
+        cols: ["ग्राहक", "कार · प्रोडक्ट", "तारीख", "स्थिति"],
+        status: { success: "मंज़ूर", warning: "सुधार ज़रूरी", primary: "वेरिफ़ाई बाकी" } as Record<string, string>,
+        noWarranties: "अभी कोई वारंटी नहीं।",
+        fromAutoform: "Autoform की ओर से",
+        newLaunch: "नया लॉन्च",
+        inStock: (n: string) => `${n} आपके डिस्ट्रीब्यूटर के पास स्टॉक में`,
+        askStock: "स्टॉक के लिए डिस्ट्रीब्यूटर से पूछें",
+        orderNow: "अभी ऑर्डर करें",
+        updates: "अपडेट",
+        seeAll: "सब देखें",
+        todayWord: "आज",
+        weekDays: ["सोम", "मंगल", "बुध", "गुरु", "शुक्र", "शनि", "रवि"],
+    },
 };
 
-const BANNERS = [
-    {
-        id: 1,
-        title: "Elevate Every Installation.",
-        subtitle: "Premium Partner Workspace",
-        description: "Manage your seat cover installations, floor mats, and accessories with precision. Scale your business with our premium tools.",
-        image: "https://res.cloudinary.com/dmwt4rg4m/image/upload/v1776409457/f663e415-d27e-412d-8253-a7ab1ebe76d5_p3lxbv.jpg",
-        cta: "Explore Catalogue",
-        accent: "orange"
-    },
-    {
-        id: 2,
-        title: "Car Floor Mats",
-        subtitle: "Spotlight",
-        description: "Discover our latest all-weather custom fit mats. Engineered for luxury, designed for durability.",
-        image: "https://images.unsplash.com/photo-1605559424843-9e4c228bf1c2?auto=format&fit=crop&q=80&w=1200",
-        cta: "Explore Catalogue",
-        accent: "blue"
-    },
-    {
-        id: 3,
-        title: "Premium Seat Covers",
-        subtitle: "Spotlight",
-        description: "The next generation of breathable seat covers. Update your sample kits and show your customers the premium difference.",
-        image: "https://images.unsplash.com/photo-1594787318286-3d835c1d207f?auto=format&fit=crop&q=80&w=1200",
-        cta: "View Collection",
-        accent: "purple"
+/* ---------- Dates: the store's clock is IST ---------- */
+
+const DAY = 86_400_000;
+const istNow = () => new Date(Date.now() + 5.5 * 3600_000);
+const istToday = () => istNow().toISOString().slice(0, 10);
+const addDays = (day: string, n: number) => new Date(Date.parse(day + "T00:00:00Z") + n * DAY).toISOString().slice(0, 10);
+const minDay = (a: string, b: string) => (a < b ? a : b);
+const monthName = (day: string, locale: string, style: "long" | "short" = "long") =>
+    new Date(`${day.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString(locale, { month: style, timeZone: "UTC" });
+const fmt = (n: number) => n.toLocaleString("en-IN");
+/* "2026-10-14T23:59" → "14 Oct" */
+const windowDay = (stamp: string, locale: string) =>
+    new Date(`${stamp.slice(0, 10)}T00:00:00Z`).toLocaleDateString(locale, { day: "numeric", month: "short", timeZone: "UTC" });
+/* "7 Oct" — or "Today" — for an update's date. */
+const updateDate = (iso: string | undefined, locale: string, todayWord: string) => {
+    if (!iso) return "";
+    const d = new Date(new Date(iso).getTime() + 5.5 * 3600_000);
+    return d.toISOString().slice(0, 10) === istToday()
+        ? todayWord
+        : d.toLocaleDateString(locale, { day: "numeric", month: "short", timeZone: "UTC" });
+};
+const productLabel = (p?: string | null) =>
+    !p ? null : p.toLowerCase() === "ev" ? "PPF" : p.replace(/-/g, " ").replace(/^\w/, c => c.toUpperCase());
+
+/** The chosen period and the same stretch just before it, both up to today. */
+function periodRanges(period: Period) {
+    const today = istToday();
+    if (period === "today") {
+        const y = addDays(today, -1);
+        return { cur: { start: today, end: today }, prev: { start: y, end: y } };
     }
-];
+    if (period === "week") {
+        const monday = addDays(today, -((new Date(today + "T00:00:00Z").getUTCDay() + 6) % 7));
+        return { cur: { start: monday, end: today }, prev: { start: addDays(monday, -7), end: addDays(today, -7) } };
+    }
+    const first = today.slice(0, 8) + "01";
+    const lastOfPrev = addDays(first, -1);
+    const prevFirst = lastOfPrev.slice(0, 8) + "01";
+    const sameDay = addDays(prevFirst, Number(today.slice(8)) - 1);
+    return { cur: { start: first, end: today }, prev: { start: prevFirst, end: minDay(sameDay, lastOfPrev) } };
+}
+const within = (day: string, r: { start: string; end: string }) => day >= r.start && day <= r.end;
 
-export const FranchiseHome = ({ stats, recentActivity = [], onNavigate, newProducts = [], latestUpdates = [] }: FranchiseHomeProps) => {
-    const { distributorStock } = useB2BCart();
-    const [currentBanner, setCurrentBanner] = useState(0);
-    const [currentProductIndex, setCurrentProductIndex] = useState(0);
+/* The greeting uses the owner's first name, but not a word like "Store" when
+   the login is named after the shop rather than a person. */
+const NOT_A_NAME = /^(store|shop|franchise|showroom|outlet|autoform|test|admin|car|cars|auto|the|m\/s|ms)$/i;
+const greetName = (full?: string | null) => {
+    const first = String(full ?? "").trim().split(/\s+/)[0] ?? "";
+    if (!first || NOT_A_NAME.test(first) || /\d/.test(first)) return "";
+    return first.charAt(0).toUpperCase() + first.slice(1);
+};
 
-    // Auto-play carousels
-    useEffect(() => {
-        const bannerTimer = setInterval(() => {
-            setCurrentBanner((prev) => (prev + 1) % BANNERS.length);
-        }, 6000);
+/* ---------- Pieces ---------- */
 
-        const productTimer = setInterval(() => {
-            if (newProducts.length > 0) {
-                setCurrentProductIndex((prev) => (prev + 1) % newProducts.length);
-            }
-        }, 2000);
+function Card({ children, className }: { children: ReactNode; className?: string }) {
+    return <section className={cn("rounded-2xl border border-slate-200 bg-white", className)}>{children}</section>;
+}
 
-        return () => {
-            clearInterval(bannerTimer);
-            clearInterval(productTimer);
-        };
-    }, [newProducts.length]);
-
-    const nextBanner = () => setCurrentBanner((prev) => (prev + 1) % BANNERS.length);
-    const prevBanner = () => setCurrentBanner((prev) => (prev - 1 + BANNERS.length) % BANNERS.length);
-
+/** A short "?" explanation that opens on tap — tooltips don't work on phones. */
+function Tip({ text, dark }: { text: string; dark?: boolean }) {
     return (
-        <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-1000">
+        <Popover>
+            <PopoverTrigger asChild>
+                <button type="button" aria-label="What does this mean?" onClick={e => e.stopPropagation()}
+                    className={cn("inline-grid h-7 w-7 place-items-center rounded-full", dark ? "text-slate-400 hover:text-white" : "text-slate-400 hover:text-orange-600")}>
+                    <HelpCircle className="h-4 w-4" />
+                </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 text-sm leading-relaxed text-slate-700" side="top">{text}</PopoverContent>
+        </Popover>
+    );
+}
 
-            {/* Hero Carousel Section - Light Theme */}
-            <section className="relative w-full rounded-[48px] overflow-hidden group min-h-[500px] md:min-h-[600px] bg-white border border-orange-100 shadow-sm">
-                {/* Background Grid & Effects (Shared) */}
-                <div className="absolute inset-0 z-0">
-                    <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-40" />
-                </div>
+/** One number for the period against the stretch before it; the whole tile opens its list. */
+function Figure({ label, value, diff, refWord, note, tip, onClick, divided, t }: {
+    label: string; value: number | null; diff?: number | null; refWord: string; note?: string; tip?: string;
+    onClick: () => void; divided?: boolean; t: typeof T["en"];
+}) {
+    return (
+        <div className={cn("relative min-w-0", divided && "sm:border-r sm:border-slate-100 sm:pr-4")}>
+            <button type="button" onClick={onClick}
+                className="w-full flex flex-col gap-1 rounded-xl p-2 -m-2 text-left hover:bg-orange-50/60 active:bg-orange-50 transition-colors group">
+                <span className="text-sm text-slate-500 pr-7">{label}</span>
+                <span className="flex items-center gap-1.5">
+                    <span className="text-4xl font-bold leading-none tabular-nums text-slate-900">{value === null ? "–" : fmt(value)}</span>
+                    <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-orange-500 transition-colors" />
+                </span>
+                {diff !== null && diff !== undefined ? (
+                    <span className={cn("text-sm font-semibold", diff > 0 ? "text-emerald-700" : diff < 0 ? "text-rose-600" : "text-slate-500")}>
+                        {diff > 0 ? t.more(diff, refWord) : diff < 0 ? t.fewer(-diff, refWord) : t.same(refWord)}
+                    </span>
+                ) : note ? <span className="text-sm font-semibold text-slate-500">{note}</span> : <span className="h-5" />}
+            </button>
+            {tip && <span className="absolute right-0 top-0 sm:right-4"><Tip text={tip} /></span>}
+        </div>
+    );
+}
 
-                {/* Carousel Content */}
-                {BANNERS.map((banner, index) => (
-                    <div
-                        key={banner.id}
-                        className={cn(
-                            "absolute inset-0 transition-all duration-1000 ease-in-out flex flex-col md:flex-row items-center px-6 md:px-10 py-10 md:py-24 gap-8 md:gap-12",
-                            index === currentBanner ? "opacity-100 translate-x-0 z-10" : "opacity-0 translate-x-20 z-0 pointer-events-none"
-                        )}
-                    >
-                        {/* Dynamic Background Glow */}
-                        <div className={cn(
-                            "absolute top-0 right-0 w-[600px] h-[600px] blur-[120px] rounded-full -mr-48 -mt-48 transition-all duration-1000",
-                            banner.accent === 'orange' ? "bg-orange-500/10" :
-                                banner.accent === 'blue' ? "bg-blue-500/10" : "bg-purple-500/10"
-                        )} />
+/* ---------- The home ---------- */
 
-                        <div className="flex-1 space-y-8 text-center md:text-left relative z-10">
-                            <div className={cn(
-                                "inline-flex items-center gap-2 px-4 py-2 rounded-full border text-xs font-black uppercase tracking-widest transition-all duration-700 delay-300",
-                                banner.accent === 'orange' ? "bg-orange-500/10 border-orange-500/20 text-orange-600" :
-                                    banner.accent === 'blue' ? "bg-blue-500/10 border-blue-500/20 text-blue-600" :
-                                        "bg-purple-500/10 border-purple-500/20 text-purple-600",
-                                index === currentBanner ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"
-                            )}>
-                                <Sparkles className="h-4 w-4" />
-                                {banner.subtitle}
-                            </div>
+export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts = [], latestUpdates = [] }: FranchiseHomeProps) => {
+    const { user } = useAuth();
+    const { distributorStock, isFranchise } = useB2BCart();
+    const { lang } = useLanguage();
+    const [period, setPeriod] = useState<Period>("month");
+    const [store, setStore] = useState<string | null>(null);
+    const [leads, setLeads] = useState<HomeLead[] | null>(null);
+    const [scheme, setScheme] = useState<HomeScheme | null | undefined>(undefined);
+    const [shipped, setShipped] = useState<ShippedOrder[]>([]);
+    const [toVerify, setToVerify] = useState<PendingWarranty[]>([]);
+    const [openTask, setOpenTask] = useState<string | null>(null);
+    const [launchIdx, setLaunchIdx] = useState(0);
+    const [paused, setPaused] = useState(false);
+    const touchX = useRef<number | null>(null);
 
-                            <h1 className={cn(
-                                "text-4xl sm:text-5xl md:text-7xl font-black text-slate-900 tracking-tighter leading-[0.9] transition-all duration-700 delay-500",
-                                index === currentBanner ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-                            )}>
-                                {banner.title.split('.').map((part, i) => (
-                                    <React.Fragment key={i}>
-                                        {part}
-                                        {i === 0 && <br />}
-                                    </React.Fragment>
-                                ))}
-                            </h1>
+    const t = T[lang];
+    const locale = lang === "hi" ? "hi-IN" : "en-IN";
 
-                            <p className={cn(
-                                "text-sm md:text-lg text-slate-500 font-medium max-w-xl leading-relaxed transition-all duration-700 delay-700",
-                                index === currentBanner ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-                            )}>
-                                {banner.description}
-                            </p>
+    // The next new launch every 4 seconds, unless the store is looking at one.
+    useEffect(() => {
+        if (paused || newProducts.length < 2) return;
+        const id = setInterval(() => setLaunchIdx(i => i + 1), 4000);
+        return () => clearInterval(id);
+    }, [paused, newProducts.length]);
 
-                            <div className={cn(
-                                "flex flex-col items-stretch md:flex-row md:items-center justify-center md:justify-start gap-3 pt-4 transition-all duration-700 [transition-delay:900ms] w-full max-w-[300px] mx-auto md:mx-0 md:max-w-none",
-                                index === currentBanner ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-                            )}>
-                                <Button
-                                    onClick={() => onNavigate('catalogue')}
-                                    className={cn(
-                                        "h-11 md:h-14 px-5 md:px-8 rounded-2xl text-white font-black uppercase tracking-widest shadow-xl group transition-all duration-300 text-[10px] md:text-xs w-full md:w-auto",
-                                        banner.accent === 'orange' ? "bg-orange-600 hover:bg-orange-700 shadow-orange-600/20" :
-                                            banner.accent === 'blue' ? "bg-blue-600 hover:bg-blue-700 shadow-blue-600/20" :
-                                                "bg-purple-600 hover:bg-purple-700 shadow-purple-600/20"
-                                    )}
-                                >
-                                    <span className="flex-1 text-center md:flex-none">{banner.cta}</span>
-                                    <ChevronRight className="ml-2 h-4 w-4 md:h-5 md:w-5 group-hover:translate-x-1 transition-transform" />
-                                </Button>
-                                <Button 
-                                    variant="outline" 
-                                    onClick={() => window.open('https://autoformindia.com/', '_blank')}
-                                    className="h-11 md:h-14 px-5 md:px-8 rounded-2xl border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest shadow-sm text-[10px] md:text-xs w-full md:w-auto"
-                                >
-                                    <span className="flex-1 text-center md:flex-none">Visit Website</span>
-                                    <ArrowUpRight className="ml-2 h-3 w-3 md:h-4 md:w-4 text-slate-700" />
-                                </Button>
-                            </div>
+    useEffect(() => {
+        let alive = true;
+        // Orders on their way: the distributor has shared a docket and the
+        // store hasn't marked it received yet. (Status stays "processing" until
+        // then — nothing in the app sets "shipped".)
+        api.get("/orders/my-orders").then(r => {
+            if (alive) setShipped((r.data.orders || []).filter((o: { status: string; docket_id?: string | null }) =>
+                o.status === "shipped" || (o.status === "processing" && Boolean(o.docket_id))));
+        }).catch(() => undefined);
+        if (!isFranchise) return () => { alive = false; };
+        api.get("/vendor/leads").then(r => {
+            if (!alive) return;
+            setLeads(r.data.leads || []);
+            setStore(r.data.store?.name ?? null);
+        }).catch(() => alive && setLeads([]));
+        api.get("/schemes").then(r => {
+            if (!alive) return;
+            const live: HomeScheme[] = (r.data.schemes || []).filter((s: HomeScheme) => s.state === "live");
+            setScheme(live.find(s => s.joined) ?? live[0] ?? null);
+        }).catch(() => alive && setScheme(null));
+        return () => { alive = false; };
+    }, [isFranchise]);
+
+    // The customers behind "to verify", for the list that opens on the home.
+    useEffect(() => {
+        if (!isFranchise || stats.pending < 1) { setToVerify([]); return; }
+        let alive = true;
+        api.get("/warranty?status=pending_vendor&page=1&limit=5")
+            .then(r => alive && setToVerify(r.data.warranties || []))
+            .catch(() => undefined);
+        return () => { alive = false; };
+    }, [isFranchise, stats.pending]);
+
+    const ranges = useMemo(() => periodRanges(period), [period]);
+    const today = istToday();
+    const refWord = period === "month" ? t.ref.month(monthName(ranges.prev.start, locale, "short")) : t.ref[period];
+
+    /* Warranties in the period and the stretch before, from the server's per-day counts. */
+    const warrantyFigures = useMemo(() => {
+        const daily = stats.daily ?? [];
+        const sum = (r: { start: string; end: string }) => daily.filter(d => within(d.day, r)).reduce((n, d) => n + d.n, 0);
+        const cur = sum(ranges.cur);
+        return { cur, diff: cur - sum(ranges.prev) };
+    }, [stats.daily, ranges]);
+
+    /* Leads by when they reached the store; won and follow-up are the auditor's outcomes. */
+    const leadFigures = useMemo(() => {
+        if (!leads) return null;
+        const day = (l: HomeLead) => String(l.received ?? "").slice(0, 10);
+        const cur = leads.filter(l => within(day(l), ranges.cur));
+        const called = cur.filter(l => l.status !== "pending");
+        const won = cur.filter(l => (l.group ?? (l.status === "closed_won" ? "won" : "")) === "won").length;
+        return {
+            count: cur.length,
+            diff: cur.length - leads.filter(l => within(day(l), ranges.prev)).length,
+            won,
+            rate: called.length ? Math.round((won / called.length) * 100) : null,
+            followUp: leads.filter(l => (l.group ?? (l.status === "follow_up" ? "follow" : "")) === "follow"),
+        };
+    }, [leads, ranges]);
+
+    /* The small bar chart: each day of the month, or each day of this week. */
+    const days = useMemo(() => {
+        const counts = new Map((stats.daily ?? []).map(d => [d.day, d.n]));
+        const out: { day: string; label: string; n: number; today: boolean; future: boolean }[] = [];
+        if (period === "month") {
+            for (let d = ranges.cur.start; d <= today; d = addDays(d, 1)) {
+                out.push({ day: d, label: String(Number(d.slice(8))), n: counts.get(d) ?? 0, today: d === today, future: false });
+            }
+        } else {
+            const monday = periodRanges("week").cur.start;
+            for (let i = 0; i < 7; i++) {
+                const d = addDays(monday, i);
+                out.push({ day: d, label: t.weekDays[i], n: counts.get(d) ?? 0, today: d === today, future: d > today });
+            }
+        }
+        return out;
+    }, [stats.daily, period, ranges, today, t]);
+    const maxDay = Math.max(1, ...days.map(d => d.n));
+
+    const leadsView = (status?: LeadsView["status"]): LeadsView =>
+        period === "month"
+            ? { period: "month", status }
+            : { period: "custom", from: ranges.cur.start, to: ranges.cur.end, status };
+
+    /* What is waiting on the store; each opens its own short list right here. */
+    type Task = { key: string; icon: typeof ShieldCheck; tone: string; title: string; detail: string; body: ReactNode };
+    const tasks: Task[] = [];
+    if (isFranchise && stats.pending > 0) tasks.push({
+        key: "verify", icon: ShieldCheck, tone: "bg-orange-50 text-orange-600",
+        title: t.verifyTitle(stats.pending), detail: t.verifyDetail,
+        body: (
+            <>
+                {toVerify.map((w, i) => (
+                    <button key={w.uid ?? w.id ?? i} type="button" onClick={() => onOpen({ module: "warranty", tab: "pending" })}
+                        className="w-full flex items-center gap-3 min-h-12 py-2 text-left border-t border-slate-100 first:border-t-0 hover:text-orange-700">
+                        <span className="flex-1 min-w-0">
+                            <span className="block font-medium text-slate-900 truncate">{w.customer_name || t.customer}</span>
+                            <span className="block text-xs text-slate-500 truncate">{[w.registration_number, [w.car_make, w.car_model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
+                    </button>
+                ))}
+                <TaskButton onClick={() => onOpen({ module: "warranty", tab: "pending" })}>{t.verifyAll(stats.pending)}</TaskButton>
+            </>
+        ),
+    });
+    if (leadFigures && leadFigures.followUp.length > 0) tasks.push({
+        key: "follow", icon: PhoneCall, tone: "bg-blue-50 text-blue-600",
+        title: t.followTitle(leadFigures.followUp.length),
+        detail: leadFigures.followUp.slice(0, 2).map(l => [l.customer_name || t.customer, l.car ? `(${l.car})` : ""].join(" ").trim()).join(" · ") || t.followDetail,
+        body: (
+            <>
+                {leadFigures.followUp.slice(0, 5).map(l => {
+                    const phone = String(l.customer_phone ?? "").replace(/\D/g, "");
+                    return (
+                        <div key={l.id} className="flex items-center gap-3 min-h-12 py-2 border-t border-slate-100 first:border-t-0">
+                            <span className="flex-1 min-w-0">
+                                <span className="block font-medium text-slate-900 truncate">{l.customer_name || t.customer}</span>
+                                <span className="block text-xs text-slate-500 truncate">{l.car || " "}</span>
+                            </span>
+                            {phone && (
+                                <a href={`tel:${phone}`}
+                                    className="shrink-0 inline-flex h-11 items-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700">
+                                    <Phone className="h-4 w-4" /> {t.call}
+                                </a>
+                            )}
                         </div>
-
-                        <div className={cn(
-                            "flex-1 relative transition-all duration-1000 delay-500 w-full md:w-auto",
-                            index === currentBanner ? "opacity-100 scale-100" : "opacity-0 scale-90"
-                        )}>
-                            <div className="relative w-full aspect-[4/3] md:aspect-video rounded-[24px] md:rounded-[32px] overflow-hidden border border-slate-100 shadow-2xl group/img bg-slate-50">
-                                <img
-                                    src={banner.image}
-                                    alt={banner.title}
-                                    className="w-full h-full object-cover transition-transform [transition-duration:2s] group-hover/img:scale-110"
-                                />
-                                <div className="absolute inset-0 bg-gradient-to-t from-white/80 via-transparent to-transparent" />
-
-                                <div className="absolute bottom-4 md:bottom-6 left-4 md:left-6 p-3 md:p-4 rounded-xl md:rounded-2xl bg-white/80 backdrop-blur-xl border border-white flex items-center gap-3 md:gap-4 shadow-xl">
-                                    <div className={cn(
-                                        "h-10 w-10 md:h-12 md:w-12 rounded-lg md:rounded-xl flex items-center justify-center text-white shadow-lg",
-                                        banner.accent === 'orange' ? "bg-orange-500" :
-                                            banner.accent === 'blue' ? "bg-blue-500" : "bg-purple-500"
-                                    )}>
-                                        <Star className="h-5 w-5 md:h-6 md:w-6 fill-white" />
-                                    </div>
-                                    <div>
-                                        <p className="text-[8px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Premium Selection</p>
-                                        <p className="text-xs md:text-sm font-black text-slate-900 uppercase tracking-tight">Luxury Collections</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                    );
+                })}
+                <TaskButton onClick={() => onOpen({ module: "leads", view: { period: "all", status: "follow" } })}>{t.seeAllFollow}</TaskButton>
+            </>
+        ),
+    });
+    if (shipped.length > 0) tasks.push({
+        key: "order", icon: Truck, tone: "bg-emerald-50 text-emerald-600",
+        title: t.orderTitle(shipped.length, shipped[0]?.distributor_name ?? null), detail: t.orderDetail,
+        body: (
+            <>
+                {shipped.slice(0, 5).map(o => (
+                    <div key={o.id} className="flex items-center justify-between gap-3 min-h-12 py-2 border-t border-slate-100 first:border-t-0 text-sm">
+                        <span className="text-slate-900 truncate">{o.distributor_name || "—"}</span>
+                        {o.total_amount != null && <span className="shrink-0 tabular-nums text-slate-500">₹{fmt(Number(o.total_amount))}</span>}
                     </div>
                 ))}
+                <TaskButton onClick={() => onOpen({ module: "orders" })}>{t.track}</TaskButton>
+            </>
+        ),
+    });
+    // With one thing waiting, it is already open.
+    const shownTask = openTask ?? (tasks.length === 1 ? tasks[0].key : null);
 
-                {/* Carousel Controls - Repositioned for mobile */}
-                <div className="absolute bottom-8 right-6 md:right-20 z-20 flex items-center gap-4 md:gap-6">
-                    <div className="hidden sm:flex gap-2">
-                        {BANNERS.map((_, i) => (
-                            <button
-                                key={i}
-                                onClick={() => setCurrentBanner(i)}
-                                className={cn(
-                                    "h-1.5 transition-all duration-500 rounded-full",
-                                    i === currentBanner ? "w-8 bg-orange-500" : "w-1.5 bg-slate-200 hover:bg-slate-300"
-                                )}
-                            />
-                        ))}
-                    </div>
-                    <div className="flex gap-2">
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={prevBanner}
-                            className="h-8 w-8 md:h-9 md:w-9 rounded-full border-white/40 bg-white/40 backdrop-blur-md hover:bg-white/60 text-slate-800 shadow-lg transition-all active:scale-95"
-                        >
-                            <ChevronLeft className="h-4 w-4 md:h-5 md:w-5" />
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={nextBanner}
-                            className="h-8 w-8 md:h-9 md:w-9 rounded-full border-white/40 bg-white/40 backdrop-blur-md hover:bg-white/60 text-slate-800 shadow-lg transition-all active:scale-95"
-                        >
-                            <ChevronRight className="h-4 w-4 md:h-5 md:w-5" />
-                        </Button>
-                    </div>
-                </div>
-            </section>
+    const quick = [
+        { label: t.quick.orders, icon: ShoppingCart, go: "orders" },
+        { label: t.quick.ecatalogue, icon: BookOpen, go: "ecatalogue" },
+        ...(isFranchise ? [{ label: t.quick.posm, icon: ImageIcon, go: "posm" }] : []),
+        { label: t.quick.grievances, icon: MessageSquareWarning, go: "grievances" },
+    ];
 
-            {/* Quick Stats Banner */}
-            <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-                <StatCard
-                    title="Total Applications"
-                    value={stats.total || "0"}
-                    icon={Activity}
-                    description="Successfully processed warranties"
-                />
-                <StatCard
-                    title="Active Approvals"
-                    value={stats.approved || "0"}
-                    icon={ShieldCheck}
-                    type="red"
-                    description="Secured premium installations"
-                />
-                <StatCard
-                    title="Pending Review"
-                    value={stats.pending || "0"}
-                    icon={Clock}
-                    type="blue"
-                    description="Awaiting your verification"
-                />
-                <StatCard
-                    title="Team Size"
-                    value={stats.manpower || "0"}
-                    icon={Users}
-                    type="purple"
-                    description="Trained field applicators"
-                />
-            </div>
+    const stockOf = (id: string) => distributorStock.filter(i => i.product_id === id).reduce((n, i) => n + (i.stock_quantity || 0), 0);
+    /* New launches rotate in the box, in-stock ones first; hovering or a finger on it holds the current one. */
+    const launches = useMemo(
+        () => [...newProducts].sort((a, b) => Number(stockOf(b.id) > 0) - Number(stockOf(a.id) > 0)),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [newProducts, distributorStock],
+    );
+    const launchAt = launches.length ? ((launchIdx % launches.length) + launches.length) % launches.length : 0;
+    const launch = launches.length ? launches[launchAt] : null;
+    const step = (n: number) => setLaunchIdx(launchAt + n);
+    /* The latest five updates as one line each; the full message is on the News page. */
+    const updates = latestUpdates.slice(0, 5);
 
-            {/* New Product Spotlight Row */}
-            <div className="grid gap-8 grid-cols-1 lg:grid-cols-2">
-                <section className="space-y-6">
-                    <div className="flex items-center justify-between px-2">
-                        <div>
-                            <h2 className="text-2xl font-black text-slate-800 tracking-tight uppercase">New Arrivals</h2>
-                            <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-widest">Latest from our design studio</p>
+    const now = istNow();
+    const firstName = greetName(user?.name);
+    const dateLine = now.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+    const heading = period === "month" ? t.heading.month(monthName(today, locale)) : t.heading[period];
+
+    return (
+        <div className="flex flex-col gap-6 animate-in fade-in duration-500">
+            {/* Greeting */}
+            <header className="flex flex-col gap-1.5 min-w-0">
+                <span className="text-xs font-semibold uppercase tracking-[0.08em] text-orange-600">{dateLine}</span>
+                <h1 className="text-3xl font-bold tracking-tight text-slate-900">{t.hello(now.getUTCHours(), firstName)}</h1>
+                {store && <span className="text-[15px] text-slate-500">{store}</span>}
+            </header>
+
+            {/* Row 1: the period, and the scheme */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <Card className={cn("p-5 sm:p-6 flex flex-col gap-5", isFranchise && scheme !== null ? "lg:col-span-2" : "lg:col-span-3")}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-col">
+                            <h2 className="text-lg font-bold text-slate-900">{heading}</h2>
+                            <span className="text-xs text-slate-400">{t.tapHint}</span>
                         </div>
-                        <Button
-                            variant="ghost"
-                            onClick={() => onNavigate('catalogue')}
-                            className="text-xs font-black text-orange-600 uppercase tracking-widest hover:bg-orange-50"
-                        >
-                            View All
-                        </Button>
-                    </div>
-
-                    <div className="relative h-[340px] rounded-[40px] bg-gradient-to-br from-slate-50 to-orange-50/30 border border-orange-100 overflow-hidden group">
-                        {newProducts.length > 0 ? (
-                            <>
-                                {/* Swinging NEW Tag */}
-                                <div className="hanging-tag z-20">
-                                    <div className="hanging-tag-body"></div>
-                                </div>
-
-                                {newProducts.map((product, index) => (
-                                    <div
-                                        key={product.id}
-                                        className={cn(
-                                            "absolute inset-0 transition-all duration-700 ease-in-out flex items-center",
-                                            index === currentProductIndex ? "opacity-100 translate-x-0 z-10" : "opacity-0 translate-x-10 z-0 pointer-events-none"
-                                        )}
-                                    >
-                                        <div className="absolute inset-x-8 bottom-8 top-auto md:inset-0 md:p-8 flex flex-col justify-end z-10 bg-gradient-to-t from-white via-transparent to-transparent">
-                                            <div className="inline-flex w-fit px-3 py-1 rounded-full bg-orange-500 text-white text-[9px] font-black uppercase tracking-widest mb-3">New Arrival</div>
-                                            <h3 className="text-3xl font-black text-slate-900 mb-2 leading-none uppercase">{product.name}</h3>
-                                            <p className="text-xs font-bold text-slate-500 max-w-xs mb-6 uppercase tracking-tight line-clamp-2">
-                                                {Array.isArray(product.description) ? product.description[0] : product.description}
-                                            </p>
-                                            {(() => {
-                                                const stockItems = distributorStock.filter(item => item.product_id === product.id);
-                                                const totalStock = stockItems.reduce((acc, item) => acc + (item.stock_quantity || 0), 0);
-                                                return (
-                                                    <div className="flex items-baseline gap-2 mb-6">
-                                                        <div className="px-4 py-1.5 bg-orange-50 border border-orange-100 rounded-full">
-                                                            <span className="text-[10px] font-black uppercase text-orange-600 tracking-wider">
-                                                                {totalStock > 0 ? `${totalStock} units in stock` : 'Out of Stock'}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })()}
-                                            <Button
-                                                onClick={() => onNavigate('catalogue')}
-                                                className="w-fit h-11 px-6 rounded-xl bg-slate-900 text-white font-black uppercase tracking-widest text-[10px]"
-                                            >
-                                                Learn More
-                                            </Button>
-                                        </div>
-                                        <div className="absolute right-0 top-0 h-full w-2/3 flex items-center justify-center p-4">
-                                            <img
-                                                src={product.images[0]}
-                                                alt={product.name}
-                                                className="h-full w-full object-contain group-hover:scale-110 transition-transform duration-700"
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {/* Product Carousel Dots */}
-                                <div className="absolute top-8 right-8 z-20 flex gap-1.5 px-3 py-1.5 rounded-full bg-white/50 backdrop-blur-sm border border-white/50">
-                                    {newProducts.map((_, i) => (
-                                        <button
-                                            key={i}
-                                            onClick={() => setCurrentProductIndex(i)}
-                                            className={cn(
-                                                "h-1 transition-all duration-500 rounded-full",
-                                                i === currentProductIndex ? "w-4 bg-orange-500" : "w-1 bg-slate-300 hover:bg-slate-400"
-                                            )}
-                                        />
-                                    ))}
-                                </div>
-                            </>
-                        ) : (
-                            <div className="h-full w-full flex items-center justify-center p-8 bg-slate-50">
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No new arrivals found</p>
-                            </div>
-                        )}
-                    </div>
-                </section>
-
-                {latestUpdates && latestUpdates.length > 0 && (
-                    <section className="space-y-6">
-                        <div className="flex items-center justify-between px-2">
-                            <div>
-                                <h2 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Platform Updates</h2>
-                                <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-widest">Stay ahead of the curve</p>
-                            </div>
-                            <Button
-                                variant="ghost"
-                                onClick={() => onNavigate('news')}
-                                className="text-xs font-black text-orange-600 uppercase tracking-widest hover:bg-orange-50"
-                            >
-                                See News
-                            </Button>
-                        </div>
-
-                        <div className="space-y-4">
-                            {latestUpdates.map((update) => (
-                                <Card
-                                    key={update.id}
-                                    onClick={() => onNavigate('news')}
-                                    className="rounded-[32px] border-orange-50 bg-white hover:border-orange-200 transition-all cursor-pointer group shadow-sm"
-                                >
-                                    <CardContent className="p-6 flex items-center gap-6">
-                                        <div className={cn(
-                                            "h-16 w-16 rounded-2xl flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform",
-                                            update.type === 'product' ? "bg-purple-50 text-purple-600" :
-                                                update.type === 'alert' ? "bg-amber-50 text-amber-600" : "bg-blue-50 text-blue-600"
-                                        )}>
-                                            {update.type === 'product' ? <Megaphone className="h-8 w-8" /> :
-                                                update.type === 'alert' ? <AlertTriangle className="h-8 w-8" /> : <Info className="h-8 w-8" />}
-                                        </div>
-                                        <div className="min-w-0 flex-1">
-                                            <p className={cn(
-                                                "text-[10px] font-black uppercase tracking-widest mb-1",
-                                                update.type === 'product' ? "text-purple-500" :
-                                                    update.type === 'alert' ? "text-amber-500" : "text-blue-500"
-                                            )}>
-                                                {update.type === 'product' ? 'Product Launch' :
-                                                    update.type === 'alert' ? 'Important Alert' : 'System Update'}
-                                            </p>
-                                            <h4 className="text-lg font-black text-slate-800 uppercase tracking-tight leading-none truncate">{update.title}</h4>
-                                            <p className="text-xs font-bold text-slate-400 mt-2 uppercase tracking-tighter line-clamp-1">{update.message}</p>
-                                        </div>
-                                    </CardContent>
-                                </Card>
+                        <div className="inline-flex rounded-xl bg-slate-100 p-1" role="group" aria-label="Period">
+                            {(["today", "week", "month"] as Period[]).map(p => (
+                                <button key={p} type="button" onClick={() => setPeriod(p)} aria-pressed={period === p}
+                                    className={cn("h-10 rounded-lg px-3.5 text-sm font-semibold transition-colors",
+                                        period === p ? "bg-white text-orange-700 shadow-sm" : "text-slate-600 hover:text-slate-900")}>
+                                    {t.periods[p]}
+                                </button>
                             ))}
                         </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 sm:gap-4">
+                        <Figure t={t} label={t.warranties} value={warrantyFigures.cur} diff={warrantyFigures.diff} refWord={refWord} divided={isFranchise}
+                            onClick={() => onOpen({ module: "warranty", tab: "all", from: ranges.cur.start, to: ranges.cur.end })} />
+                        {isFranchise && <Figure t={t} label={t.leads} value={leadFigures?.count ?? null} diff={leadFigures?.diff ?? null} refWord={refWord} divided
+                            onClick={() => onOpen({ module: "leads", view: leadsView() })} />}
+                        {isFranchise && <Figure t={t} label={t.won} value={leadFigures?.won ?? null} refWord={refWord} tip={t.wonTip}
+                            note={leadFigures?.rate !== null && leadFigures?.rate !== undefined ? t.ofCalled(leadFigures.rate) : t.notCalled}
+                            onClick={() => onOpen({ module: "leads", view: leadsView("won") })} />}
+                    </div>
+                    {/* Warranties each day */}
+                    <div className="flex flex-col gap-2" aria-label={t.chartLabel}>
+                        <div className="flex items-end gap-1.5 h-[72px]">
+                            {days.map(d => (
+                                <div key={d.day} title={`${d.label}: ${d.n}`}
+                                    className={cn("flex-1 rounded-t",
+                                        d.future ? "bg-slate-100" : d.today ? "bg-orange-500" : within(d.day, ranges.cur) ? "bg-orange-300" : "bg-orange-100")}
+                                    style={{ height: `${d.future ? 3 : Math.max(d.n ? 8 : 3, (d.n / maxDay) * 100)}%` }} />
+                            ))}
+                        </div>
+                        <div className="flex gap-1.5 text-[11px] text-slate-400 tabular-nums">
+                            {days.map(d => (
+                                <span key={d.day} className={cn("flex-1 text-center truncate", d.today && "font-semibold text-orange-700")}>
+                                    {d.today ? t.todayWord : period === "month" && days.length > 16 && Number(d.label) % 5 !== 1 ? "" : d.label}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                </Card>
+
+                {isFranchise && scheme !== null && (
+                    <section className="rounded-2xl bg-slate-900 text-white p-6 flex flex-col gap-4">
+                        {scheme === undefined ? (
+                            <div className="flex-1 rounded-xl bg-slate-800 animate-pulse min-h-[180px]" />
+                        ) : (
+                            <>
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-orange-300 truncate">{scheme.title}</span>
+                                    {scheme.open_window ? (
+                                        <span className="shrink-0 text-xs rounded-full bg-slate-800 px-2.5 py-1 text-slate-200">{t.openTill(windowDay(scheme.open_window.end, locale))}</span>
+                                    ) : scheme.next_window ? (
+                                        <span className="shrink-0 text-xs rounded-full bg-slate-800 px-2.5 py-1 text-slate-200">{t.opens(windowDay(scheme.next_window.start, locale))}</span>
+                                    ) : null}
+                                </div>
+                                {scheme.joined && scheme.achieved ? (
+                                    <>
+                                        {scheme.has_score && (
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-6xl font-extrabold leading-none tabular-nums">{fmt(scheme.achieved.score)}</span>
+                                                <span className="text-slate-300">{t.points}</span>
+                                                <Tip text={t.pointsTip} dark />
+                                            </div>
+                                        )}
+                                        <div className="flex flex-wrap gap-2">
+                                            {scheme.achieved.club && <ClubBadge club={scheme.achieved.club} />}
+                                            {scheme.has_score && <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">{t.rank(scheme.achieved.rank)}</span>}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <p className="text-sm text-slate-300">{scheme.joined ? t.noPointsYet : t.joinToEarn}</p>
+                                )}
+                                <button type="button" onClick={() => onOpen({ module: "offers" })}
+                                    className="mt-auto h-12 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold text-sm flex items-center justify-center gap-2 transition-colors">
+                                    {scheme.joined ? t.submit : t.join} <ArrowRight className="h-4 w-4" />
+                                </button>
+                            </>
+                        )}
                     </section>
+                )}
+            </div>
+
+            {/* Row 2: waiting on you, and quick actions */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <Card className="lg:col-span-2 px-5 sm:px-6 py-2">
+                    <h2 className="text-lg font-bold text-slate-900 mt-4 mb-2">{t.waiting}</h2>
+                    {tasks.length ? tasks.map(w => {
+                        const open = shownTask === w.key;
+                        return (
+                            <div key={w.key} className="border-t border-slate-100">
+                                <button type="button" onClick={() => setOpenTask(open ? "" : w.key)} aria-expanded={open}
+                                    className="w-full flex items-center gap-3.5 py-3.5 text-left group">
+                                    <span className={cn("h-11 w-11 shrink-0 rounded-xl grid place-items-center", w.tone)}><w.icon className="h-5 w-5" /></span>
+                                    <span className="flex-1 min-w-0">
+                                        <span className="block font-semibold text-slate-900">{w.title}</span>
+                                        <span className="block text-sm text-slate-500 truncate">{w.detail}</span>
+                                    </span>
+                                    <ChevronDown className={cn("h-5 w-5 shrink-0 text-slate-400 transition-transform group-hover:text-orange-600", open && "rotate-180")} />
+                                </button>
+                                {open && (
+                                    <div className="mb-3 ml-0 sm:ml-[58px] rounded-xl bg-slate-50 px-4 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                                        {w.body}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    }) : (
+                        <div className="flex items-center gap-3 border-t border-slate-100 py-4 mb-2 text-sm text-slate-600">
+                            <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                            {t.caughtUp}
+                        </div>
+                    )}
+                    <div className="h-2" />
+                </Card>
+
+                <div className="grid grid-cols-2 gap-3 content-start">
+                    {quick.map(q => (
+                        <button key={q.go} type="button" onClick={() => onOpen({ module: q.go })}
+                            className="rounded-2xl border border-slate-200 bg-white p-4 min-h-[104px] flex flex-col justify-between gap-3 text-left hover:border-orange-300 hover:bg-orange-50/40 active:bg-orange-50 transition-colors">
+                            <q.icon className="h-[22px] w-[22px] text-orange-600" />
+                            <span className="text-sm font-semibold text-slate-900">{q.label}</span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Row 3: recent warranties, and news from Autoform */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <Card className={cn("px-5 sm:px-6 py-5 min-w-0", (launch || updates.length) ? "lg:col-span-2" : "lg:col-span-3")}>
+                    <div className="flex items-baseline justify-between mb-2">
+                        <h2 className="text-lg font-bold text-slate-900">{t.recent}</h2>
+                        <button type="button" onClick={() => onOpen({ module: "warranty", tab: "all" })} className="h-10 text-sm font-semibold text-orange-600 hover:text-orange-700">{t.viewAll}</button>
+                    </div>
+                    {recentActivity.length ? (
+                        <>
+                            {/* Phones: one line per customer */}
+                            <ul className="sm:hidden divide-y divide-slate-100">
+                                {recentActivity.map((w, i) => (
+                                    <li key={i} className="py-3 flex items-start justify-between gap-3">
+                                        <span className="min-w-0">
+                                            <span className="block font-semibold text-slate-900 truncate">{w.customer || t.customer}</span>
+                                            <span className="block text-xs text-slate-500 truncate">{[w.car, productLabel(w.product)].filter(Boolean).join(" · ") || w.registration || "—"}</span>
+                                            <span className="block text-xs text-slate-400">{w.time}</span>
+                                        </span>
+                                        <StatusPill status={w.status} label={t.status[w.status] ?? t.status.primary} />
+                                    </li>
+                                ))}
+                            </ul>
+                            {/* Wider screens: the table */}
+                            <div className="hidden sm:block overflow-x-auto">
+                                <table className="w-full text-sm min-w-[520px]">
+                                    <thead>
+                                        <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                                            <th className="py-2.5 pr-3 font-medium">{t.cols[0]}</th>
+                                            <th className="py-2.5 pr-3 font-medium">{t.cols[1]}</th>
+                                            <th className="py-2.5 pr-3 font-medium">{t.cols[2]}</th>
+                                            <th className="py-2.5 font-medium text-right">{t.cols[3]}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {recentActivity.map((w, i) => (
+                                            <tr key={i} className="align-middle">
+                                                <td className="py-3 pr-3">
+                                                    <span className="block font-semibold text-slate-900">{w.customer || t.customer}</span>
+                                                    {w.registration && <span className="block text-xs text-slate-400">{w.registration}</span>}
+                                                </td>
+                                                <td className="py-3 pr-3 text-slate-700">{[w.car, productLabel(w.product)].filter(Boolean).join(" · ") || "—"}</td>
+                                                <td className="py-3 pr-3 text-slate-500 whitespace-nowrap">{w.time}</td>
+                                                <td className="py-3 text-right"><StatusPill status={w.status} label={t.status[w.status] ?? t.status.primary} /></td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    ) : (
+                        <p className="py-8 text-center text-sm text-slate-500">{t.noWarranties}</p>
+                    )}
+                </Card>
+
+                {(launch || updates.length > 0) && (
+                    <div className="flex flex-col gap-3 min-w-0">
+                        <h2 className="text-lg font-bold text-slate-900 mt-1">{t.fromAutoform}</h2>
+                        {launch && (
+                            <div className="relative rounded-2xl border border-slate-200 bg-white overflow-hidden hover:border-orange-300 transition-colors"
+                                onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}
+                                onTouchStart={e => { touchX.current = e.touches[0].clientX; setPaused(true); }}
+                                onTouchEnd={e => {
+                                    const dx = touchX.current === null ? 0 : e.changedTouches[0].clientX - touchX.current;
+                                    touchX.current = null;
+                                    if (Math.abs(dx) > 40) step(dx < 0 ? 1 : -1);
+                                    setPaused(false);
+                                }}>
+                                <button type="button" onClick={() => onOpen({ module: "orders" })} className="block w-full text-left">
+                                    <div className="h-40 bg-slate-50 flex items-center justify-center p-3">
+                                        {launch.images?.[0]
+                                            ? <img key={launch.id} src={launch.images[0]} alt={launch.name} className="h-full w-full object-contain animate-in fade-in duration-500" draggable={false} />
+                                            : <Gift className="h-8 w-8 text-slate-300" />}
+                                    </div>
+                                    <div className="px-4 pt-4 pb-2 flex flex-col gap-1">
+                                        <span className="text-xs font-bold uppercase tracking-[0.08em] text-orange-600">{t.newLaunch}</span>
+                                        <span className="font-bold text-slate-900 truncate">{launch.name}</span>
+                                        <span className={cn("text-sm", stockOf(launch.id) > 0 ? "text-emerald-700" : "text-slate-500")}>
+                                            {stockOf(launch.id) > 0 ? t.inStock(fmt(stockOf(launch.id))) : t.askStock}
+                                        </span>
+                                        <span className="mt-1 text-sm font-semibold text-orange-600">{t.orderNow} →</span>
+                                    </div>
+                                </button>
+                                {launches.length > 1 && (
+                                    <>
+                                        {/* Arrows for a mouse; a finger swipes */}
+                                        <button type="button" onClick={() => step(-1)} aria-label="Previous"
+                                            className="absolute left-2 top-[68px] hidden sm:grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow text-slate-600 hover:text-orange-600">
+                                            <ChevronLeft className="h-5 w-5" />
+                                        </button>
+                                        <button type="button" onClick={() => step(1)} aria-label="Next"
+                                            className="absolute right-2 top-[68px] hidden sm:grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow text-slate-600 hover:text-orange-600">
+                                            <ChevronRight className="h-5 w-5" />
+                                        </button>
+                                        {/* One dot per product: the box moves on by itself, or jump to one. */}
+                                        <div className="flex justify-center gap-1 pb-2">
+                                            {launches.map((p, i) => (
+                                                <button key={p.id} type="button" onClick={() => setLaunchIdx(i)} aria-label={`Show ${p.name}`}
+                                                    className="grid h-6 place-items-center px-0.5">
+                                                    <span className={cn("block h-1.5 rounded-full transition-all", i === launchAt ? "w-5 bg-orange-500" : "w-1.5 bg-slate-300")} />
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
+                        {updates.length > 0 && (
+                            <Card className="px-4 py-3">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-sm font-bold text-slate-900">{t.updates}</span>
+                                    <button type="button" onClick={() => onOpen({ module: "news" })} className="h-9 text-sm font-semibold text-orange-600 hover:text-orange-700">{t.seeAll}</button>
+                                </div>
+                                <ul className="divide-y divide-slate-100">
+                                    {updates.map(u => (
+                                        <li key={u.id}>
+                                            <button type="button" onClick={() => onOpen({ module: "news" })} className="w-full flex items-center gap-2.5 min-h-11 py-2 text-left group">
+                                                <Megaphone className="h-3.5 w-3.5 text-orange-600 shrink-0" />
+                                                <span className="flex-1 min-w-0 truncate text-sm text-slate-800 group-hover:text-orange-700">{u.title}</span>
+                                                <span className="shrink-0 text-xs text-slate-400">{updateDate(u.created_at, locale, t.todayWord)}</span>
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </Card>
+                        )}
+                    </div>
                 )}
             </div>
         </div>
     );
 };
+
+function TaskButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+    return (
+        <button type="button" onClick={onClick}
+            className="mt-1 mb-1 w-full h-11 rounded-xl border border-orange-200 bg-white text-sm font-semibold text-orange-700 hover:bg-orange-50 flex items-center justify-center gap-1.5">
+            {children} <ArrowRight className="h-4 w-4" />
+        </button>
+    );
+}
+
+function StatusPill({ status, label }: { status: string; label: string }) {
+    return (
+        <span className={cn("shrink-0 inline-block rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap",
+            status === "success" ? "bg-emerald-50 text-emerald-700"
+                : status === "warning" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800")}>
+            {label}
+        </span>
+    );
+}

@@ -254,7 +254,20 @@ describe('planSheetImport — the live sheet into Lead Management', () => {
         assert.equal(planSheetImport([row], known, null)[0].action, 'same-enquiry');
         // A month later it is a new enquiry.
         const later = lead({ leadId: '222', createdAt: '2026-10-29T10:00:00-05:00' });
-        assert.equal(planSheetImport([later], known, null)[0].action, 'insert');
+        assert.equal(planSheetImport([later], known, null, at('2026-11-01T00:00:00Z'))[0].action, 'insert');
+    });
+
+    test('a different number is a different lead, even under the same name', () => {
+        // Decided 6 Oct 2026: only the same number is the same enquiry.
+        const row = lead({ leadId: '333', name: 'Mohd Sarwar', phone: '+919000008418', pincode: 'z:134116', createdAt: '2026-10-06T04:05:00-05:00' });
+        const known = { ...none(), instagramAt: new Map([['9000002562', [at('2026-10-06T09:05:30Z')]]]) };
+        assert.equal(planSheetImport([row], known, null, at('2026-10-07T00:00:00Z'))[0].action, 'insert');
+    });
+
+    test('a row under ten minutes old waits, so a WhatsApp copy can arrive first', () => {
+        const row = lead({ leadId: '444', createdAt: '2026-10-06T05:58:00-05:00' });
+        assert.equal(planSheetImport([row], none(), null, at('2026-10-06T11:03:00Z'))[0].action, 'wait');
+        assert.equal(planSheetImport([row], none(), null, at('2026-10-06T11:09:00Z'))[0].action, 'insert');
     });
 
     test('two rows for one person days apart: the first is kept', () => {

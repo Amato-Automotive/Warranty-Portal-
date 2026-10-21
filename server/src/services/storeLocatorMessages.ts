@@ -208,7 +208,7 @@ function nearbyList(
     return list(page === 1 ? LIST_BODY : LIST_BODY_MORE, 'View stores', 'Stores near you', rows);
 }
 
-/** The stores near the customer, alphabetical as the locator returned them. */
+/** The stores near the customer, in the locator's order: their city first, then A to Z. */
 export function storeList(leadId: string, stores: ListStore[], page = 1): InteractiveList | null {
     return nearbyList(leadId, 'store', stores.map(s => ({ id: s.id, name: s.store_name, city: s.city })), page);
 }
@@ -254,11 +254,15 @@ function helplineLines(helpline: string | null | undefined): string[] {
 }
 
 /** The store the customer picked. */
-export function storeDetailsText(s: StoreDetails, helpline?: string | null): string {
+/**
+ * The store's details: the one the customer picked, or — `only` — the one store
+ * near them, sent straight away instead of a list of one to tap.
+ */
+export function storeDetailsText(s: StoreDetails, helpline?: string | null, only = false): string {
     return [
-        'Thank you for choosing Autoform! 🙏',
+        only ? 'Thank you for reaching out to Autoform! 🙏' : 'Thank you for choosing Autoform! 🙏',
         '',
-        "Here are your store's details:",
+        only ? 'Here is the Autoform store nearest to you:' : "Here are your store's details:",
         '',
         card(s.store_name, addressLine(s.address, s.city, s.pincode), s.phone),
         '',
@@ -270,8 +274,8 @@ export function storeDetailsText(s: StoreDetails, helpline?: string | null): str
 }
 
 /** The distributor the customer picked — told as a store, like the list they picked from. */
-export function distributorDetailsText(d: ListContact, helpline?: string | null): string {
-    return storeDetailsText({ store_name: d.name, address: null, city: d.city ?? null, pincode: null, phone: d.phone }, helpline);
+export function distributorDetailsText(d: ListContact, helpline?: string | null, only = false): string {
+    return storeDetailsText({ store_name: d.name, address: null, city: d.city ?? null, pincode: null, phone: d.phone }, helpline, only);
 }
 
 /** The ASM, when no store is near: one contact, sent straight away. */
@@ -348,8 +352,16 @@ const MAIN_MENU_BODY = [
     '💬 Tap *Choose a product* and let us know what you are looking for! 😊',
 ].join('\n');
 
-export function productMenu(leadId: string): InteractiveList {
-    return list(MAIN_MENU_BODY, 'Choose a product', 'Our products', [
+/* After the 4-wheeler / 2-wheeler question the customer has been greeted already. */
+const MAIN_MENU_BODY_AFTER_VEHICLE = [
+    '🚘 We offer a wide range of car seat covers, car mats, and other car accessories.',
+    '',
+    '💬 Tap *Choose a product* and let us know what you are looking for! 😊',
+].join('\n');
+
+/** `greet: false` once the vehicle question has said hello. */
+export function productMenu(leadId: string, greet = true): InteractiveList {
+    return list(greet ? MAIN_MENU_BODY : MAIN_MENU_BODY_AFTER_VEHICLE, 'Choose a product', 'Our products', [
         { id: menuRowId(leadId, 'seat'), title: 'Seat Covers', description: 'Custom-fit seat covers for your car' },
         { id: menuRowId(leadId, 'mats'), title: 'Car Mats', description: 'Floor and boot mats' },
         { id: menuRowId(leadId, 'acc'), title: 'Accessories', description: 'Car accessories' },
@@ -367,6 +379,90 @@ export function otherProductsMenu(leadId: string): InteractiveList {
 }
 
 export const MENU_RETRY = 'Please tap *Choose a product* above and pick one of the options. 🙏';
+
+/*
+ * The first question: a 4-wheeler goes on to the product menu as before; a
+ * 2-wheeler is given the Customer Executive's number, and the executive is
+ * alerted. Two reply buttons (WhatsApp allows three, titles up to 20
+ * characters); a tap comes back as `vt:<lead id>:4w|2w`.
+ */
+export type Vehicle = '4w' | '2w';
+
+const VEHICLE_PREFIX = 'vt';
+export const vehicleButtonId = (leadId: string, v: Vehicle) => `${VEHICLE_PREFIX}:${leadId}:${v}`;
+
+/** An Interakt InteractiveButton message's `data` block. */
+export interface InteractiveButtons {
+    message: {
+        type: 'button';
+        body: { text: string };
+        action: { buttons: { type: 'reply'; reply: { id: string; title: string } }[] };
+    };
+}
+
+export const BUTTON_TITLE_MAX = 20;
+
+const VEHICLE_BODY = [
+    '🎉 Hello! Thanks for reaching out to us at Autoform India.',
+    '',
+    'Is your enquiry for a *4-Wheeler* 🚗 or a *2-Wheeler* 🏍️?',
+].join('\n');
+
+export function vehicleQuestion(leadId: string): InteractiveButtons {
+    const button = (v: Vehicle, title: string) =>
+        ({ type: 'reply' as const, reply: { id: vehicleButtonId(leadId, v).slice(0, LIMITS.rowId), title: fit(title, BUTTON_TITLE_MAX) } });
+    return {
+        message: {
+            type: 'button',
+            body: { text: fitBody(VEHICLE_BODY, LIMITS.body) },
+            action: { buttons: [button('4w', '🚗 4-Wheeler'), button('2w', '🏍️ 2-Wheeler')] },
+        },
+    };
+}
+
+/** The same question as plain text, if the buttons could not be sent. */
+export const VEHICLE_TEXT = [
+    '🎉 Hello! Thanks for reaching out to us at Autoform India.',
+    '',
+    'Is your enquiry for a 4-Wheeler 🚗 or a 2-Wheeler 🏍️?',
+    '',
+    'Reply *4* for 4-Wheeler or *2* for 2-Wheeler.',
+].join('\n');
+
+export const VEHICLE_RETRY = 'Please tap *4-Wheeler* or *2-Wheeler* above, or reply *4* or *2*. 🙏';
+
+/** A tap on the vehicle buttons, out of a message_received webhook; null for anything else. */
+export function vehicleTapFromWebhook(message: any): { leadId: string; vehicle: Vehicle } | null {
+    let body: any = message?.message;
+    if (typeof body === 'string') {
+        try { body = JSON.parse(body); } catch { return null; }
+    }
+    const parts = String(body?.button_reply?.id ?? body?.list_reply?.id ?? '').split(':');
+    if (parts.length !== 3 || parts[0] !== VEHICLE_PREFIX || !parts[1] || !['4w', '2w'].includes(parts[2])) return null;
+    return { leadId: parts[1], vehicle: parts[2] as Vehicle };
+}
+
+/** A 2-wheeler enquiry: the Customer Executive's number to call or WhatsApp; the executive is alerted too. */
+export function twoWheelerText(helpline: string | null | undefined): string {
+    if (!helpline) {
+        return [
+            'Thank you for reaching out to Autoform India! 🙏',
+            '',
+            'Our Customer Executive will call you shortly to help you with products for your 2-wheeler. 🏍️',
+        ].join('\n');
+    }
+    const ten = String(helpline).replace(/\D/g, '').slice(-10);
+    return [
+        'Thank you for reaching out to Autoform India! 🙏',
+        '',
+        'For 2-wheeler products, our Customer Executive will help you. Call or WhatsApp them:',
+        '',
+        `📞 Call: ${formatPhone(helpline)}`,
+        `💬 WhatsApp: https://wa.me/91${ten}`,
+        '',
+        "They'll be happy to help, and may also call you shortly. 🏍️",
+    ].join('\n');
+}
 
 export const CAR_QUESTION =
     'Which car do you have? 🚗\n\nPlease type the model, for example Creta, Nexon or Thar.';

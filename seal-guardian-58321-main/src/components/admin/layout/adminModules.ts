@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+    Activity,
     Archive,
     BellRing,
     BookOpen,
@@ -8,6 +9,7 @@ import {
     ClipboardCheck,
     FileText,
     Flag,
+    Gift,
     HardHat,
     History,
     Layers,
@@ -32,6 +34,7 @@ import {
 export type AdminModule =
     | 'overview'
     | 'vendors'
+    | 'portal-activity'
     | 'distributors'
     | 'manpower'
     | 'customers'
@@ -48,6 +51,7 @@ export type AdminModule =
     | 'announcements'
     | 'notification-settings'
     | 'posm'
+    | 'schemes'
     | 'uid-management'
     | 'ppf-rolls'
     | 'ecatalogue'
@@ -71,6 +75,7 @@ const moduleToPermKey: Record<string, string> = {
     'ppf-rolls': 'warranties',
     'warranty-form': 'warranty_form',
     'vendors': 'vendors',
+    'portal-activity': 'vendors',
     'manpower': 'vendors',
     'customers': 'customers',
     'products': 'products',
@@ -78,6 +83,7 @@ const moduleToPermKey: Record<string, string> = {
     'notification-settings': 'announcements',
     'grievances': 'grievances',
     'posm': 'posm',
+    'schemes': 'schemes',
     'ecatalogue': 'ecatalogue',
     'terms': 'terms',
     'old-warranties': 'old_warranties',
@@ -138,9 +144,11 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
         label: "Franchise Network",
         items: [
             { id: 'vendors', label: "Franchises", icon: Store, keywords: ['vendors', 'stores', 'dealers'] },
+            { id: 'portal-activity', label: "Portal Activity", icon: Activity, keywords: ['franchise activity', 'distributor activity', 'time spent', 'logins', 'usage', 'inactive'] },
             { id: 'manpower', label: "Manpower", icon: HardHat, keywords: ['staff', 'installers', 'team'] },
             { id: 'audits', label: "Store Audits", icon: ClipboardCheck, keywords: ['audit & compliance', 'compliance'] },
             { id: 'posm', label: "POSM Requests", icon: Flag, keywords: ['posm requirements', 'marketing material', 'branding'] },
+            { id: 'schemes', label: "Offers & Schemes", icon: Gift, keywords: ['schemes', 'offers', 'incentives', 'leaderboard', 'contest', 'rewards'] },
             { id: 'grievances', label: "Grievances", icon: MessageSquareWarning, keywords: ['complaints', 'tickets'] },
             { id: 'asm-management', label: "ASM Management", icon: BriefcaseBusiness, keywords: ['asm', 'area sales manager', 'sales team'] },
             { id: 'asm-expenses', label: "ASM Expenses", icon: Receipt, keywords: ['expense claims', 'reimbursement', 'hr', 'travel', 'conveyance', 'paid'] },

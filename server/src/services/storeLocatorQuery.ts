@@ -3,7 +3,6 @@ import { findAsmForPincode } from './asmTerritoryQuery.js';
 import { findState } from './indianStates.js';
 import {
     storesToOffer,
-    distributorsToOffer,
     isTestAccount,
     parseCoordinate,
     isPincode,
@@ -46,6 +45,12 @@ export interface LocatorSettings {
     whatsapp_live: boolean;
     /** Last ten digits of the phones that get replies while not live. */
     test_numbers: string[];
+    /**
+     * Stores never offered to customers, whatever their warranty count — our
+     * own Autoform Brand Store, which appeared once the minimum was set to 0.
+     * An admin can still send one from Lead Management.
+     */
+    hidden_stores: string[];
 }
 
 /** At most this many test numbers — it is for a handful of people's phones. */
@@ -60,7 +65,14 @@ const DEFAULTS: LocatorSettings = {
     support_name: 'Autoform Customer Support',
     whatsapp_live: false,
     test_numbers: [],
+    hidden_stores: [],
 };
+
+/** Store ids, de-duplicated; at most 50 — it is for a handful of our own stores. */
+function cleanStoreIds(raw: unknown): string[] {
+    const list = Array.isArray(raw) ? raw : String(raw ?? '').split(/[\s,;]+/);
+    return [...new Set(list.map(v => String(v ?? '').trim()).filter(v => /^[\w-]{6,64}$/.test(v)))].slice(0, 50);
+}
 
 /** The ten digits a phone is compared on: country code and formatting dropped. */
 const tenDigits = (raw: unknown) => String(raw ?? '').replace(/\D/g, '').slice(-10);
@@ -83,7 +95,7 @@ export function repliesTo(settings: LocatorSettings, phone: string): boolean {
  */
 const CACHE_MS = 30_000;
 let cached: { at: number; value: LocatorSettings } | null = null;
-const copy = (v: LocatorSettings): LocatorSettings => ({ ...v, test_numbers: [...v.test_numbers] });
+const copy = (v: LocatorSettings): LocatorSettings => ({ ...v, test_numbers: [...v.test_numbers], hidden_stores: [...v.hidden_stores] });
 
 export async function getLocatorSettings(): Promise<LocatorSettings> {
     if (cached && Date.now() - cached.at < CACHE_MS) return copy(cached.value);
@@ -111,6 +123,7 @@ async function readLocatorSettings(): Promise<LocatorSettings> {
             // Only a stored true switches it on: anything unreadable stays off.
             whatsapp_live: stored.whatsapp_live === true,
             test_numbers: cleanTestNumbers(stored.test_numbers ?? []),
+            hidden_stores: cleanStoreIds(stored.hidden_stores ?? []),
         };
     } catch (error) {
         // An unreadable setting must not take the locator down with it.
@@ -157,6 +170,9 @@ export async function saveLocatorSettings(
         const bad = given.map(String).filter(n => n.trim() && tenDigits(n).length !== 10);
         if (bad.length) throw new Error(`Not a 10-digit mobile number: ${bad.join(', ')}`);
         next.test_numbers = cleanTestNumbers(given);
+    }
+    if (changes.hidden_stores !== undefined) {
+        next.hidden_stores = cleanStoreIds(changes.hidden_stores);
     }
 
     await db.execute(
@@ -240,59 +256,12 @@ async function warrantyCounts(): Promise<Map<string, number>> {
 }
 
 /**
- * Every active distributor in the customer's state, alphabetically.
- *
- * Only distributors on the admin Distributors list: a row in `distributors`
- * whose linked store account is flagged is_distributor. The table also holds
- * rows that were never switched on — "Autoform Brand Store", set up against an
- * internal number, and MAHAVEER in Jaisalmer — and a lead handed to either goes
- * nowhere. The same rule as getAllDistributors, so the two screens agree.
- *
- * States are compared through findState rather than as text: the distributors
- * table writes "punjab", "PUNJAB" and "J&K" where pincode_geo writes "PUNJAB"
- * and "JAMMU AND KASHMIR".
- */
-async function distributorsInState(
-    customer: { lat: number; lng: number; state: string | null },
-): Promise<Contact[]> {
-    const customerState = findState(String(customer.state ?? ''))?.state;
-    if (!customerState) return [];
-
-    const [rows]: any = await db.execute(
-        `SELECT d.id, d.name, d.phone_number, d.city, d.state, pg.lat, pg.lng
-           FROM distributors d
-           JOIN vendor_details vd ON vd.user_id = d.profile_id
-           LEFT JOIN pincode_geo pg ON pg.pincode = d.pincode
-          WHERE d.profile_id IS NOT NULL
-            AND vd.is_distributor = TRUE`
-    );
-
-    interface DistributorPoint {
-        id: string; name: string; phone_number: string; city: string | null; lat: number; lng: number;
-    }
-    const inState: DistributorPoint[] = rows
-        .filter((r: any) => !isTestAccount(r.name))
-        .filter((r: any) => r.phone_number)
-        .filter((r: any) => findState(String(r.state ?? ''))?.state === customerState)
-        .map((r: any) => ({ ...r, lat: Number(r.lat), lng: Number(r.lng) }));
-
-    return distributorsToOffer(customer, inState).map(({ distributor, distanceKm }) => ({
-        id: String(distributor.id),
-        name: String(distributor.name).trim(),
-        phone: distributor.phone_number,
-        city: distributor.city || null,
-        distance_km: distanceKm === null ? null : Number(distanceKm.toFixed(2)),
-        distance_label: distanceKm === null ? null : formatDistance(distanceKm),
-    }));
-}
-
-/**
  * Who a customer is put in touch with when no store qualifies.
  *
  * The ASM whose territory holds their pincode first — their state, their
  * district, or the pincode itself: a person who knows the area and can place
- * them with a store further out. Then the state's distributors, for the
- * customer to choose from. Customer support only when the state has neither.
+ * them with a store further out. Otherwise customer support (the company
+ * executive). Distributors are not part of the chain (7 Oct 2026).
  */
 async function fallbackFor(
     pincode: string,
@@ -305,9 +274,8 @@ async function fallbackFor(
         if (asm?.phone_number) {
             return { kind: 'asm', contacts: [{ id: asm.id, name: asm.name, phone: asm.phone_number }] };
         }
-
-        const distributors = await distributorsInState(customer).catch(() => [] as Contact[]);
-        if (distributors.length) return { kind: 'distributor', contacts: distributors };
+        // No distributor step (7 Oct 2026): with no store and no ASM, customer
+        // support takes the lead. Leads already sent to a distributor keep it.
     }
 
     return {
@@ -357,8 +325,11 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
     ]);
 
     const stores: (LocatableStore & { row: any })[] = [];
+    const hidden = new Set(settings.hidden_stores);
     for (const row of storeRows) {
         if (isTestAccount(row.store_name)) continue;
+        // Our own stores are never offered to a customer.
+        if (hidden.has(String(row.id))) continue;
         const lat = parseCoordinate(row.latitude);
         const lng = parseCoordinate(row.longitude);
         if (lat === null || lng === null) continue;
@@ -372,10 +343,40 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
         });
     }
 
+    /*
+     * The customer's city, to list its stores first: the district each store's
+     * own pincode belongs to, against the customer's. Delhi is one city — the
+     * directory splits it into eleven districts, and Karol Bagh is as much
+     * "Delhi" to a Lajpat Nagar customer as Lajpat Nagar is. A store whose
+     * pincode we cannot place falls back to its typed city.
+     */
+    const cityKey = (district: unknown, state: unknown) => {
+        const s = String(state ?? '').trim().toUpperCase();
+        if (s.includes('DELHI')) return 'DELHI';
+        const d = String(district ?? '').trim().toUpperCase();
+        return d && d !== 'NA' ? `${d}|${s}` : null;
+    };
+    const customerCity = cityKey(customer.district, customer.state);
+    const storePins = [...new Set(stores.map(s => String(s.row.pincode ?? '').trim()).filter(isPincode))];
+    const pinCity = new Map<string, string | null>();
+    if (customerCity && storePins.length) {
+        const [geo]: any = await db.query(
+            'SELECT pincode, district, state FROM pincode_geo WHERE pincode IN (?)', [storePins]);
+        for (const g of geo) if (!pinCity.has(String(g.pincode))) pinCity.set(String(g.pincode), cityKey(g.district, g.state));
+    }
+    const customerDistrict = String(customer.district ?? '').trim().toUpperCase();
+    const inCity = (s: { row: any }) => {
+        if (!customerCity) return false;
+        const placed = pinCity.get(String(s.row.pincode ?? '').trim());
+        if (placed !== undefined) return placed === customerCity;
+        const typed = String(s.row.city ?? '').trim().toUpperCase();
+        return Boolean(typed) && (typed === customerDistrict || (customerCity === 'DELHI' && typed.includes('DELHI')));
+    };
+
     const offered = storesToOffer(customer, stores, {
         radiusKm: settings.radius_km,
         minWarranties: settings.min_warranties,
-    });
+    }, inCity);
 
     return {
         pincode,

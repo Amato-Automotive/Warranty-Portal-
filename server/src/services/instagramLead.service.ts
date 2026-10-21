@@ -2,6 +2,49 @@ import { parseLeadForm } from './instagramLeadParser.js';
 import { startConversation } from './locatorConversation.service.js';
 import { startStoreEnquiry } from './storeLocatorChat.js';
 import { extractPincode } from './storeLocator.js';
+import { sheetCar, SAME_ENQUIRY_DAYS } from './leadSheetSync.js';
+import { phoneKey } from './leadIdentity.js';
+import { SHEET_FLOW_ID } from './leadSheetImport.service.js';
+import db from '../config/database.js';
+
+/*
+ * The same form can reach us twice: as this WhatsApp message, and as a row in
+ * Meta's lead sheet that the import files every few minutes. Usually the
+ * message comes first and the import skips the row. When the row was filed
+ * first, this message finishes that lead instead of starting a second one —
+ * the auditor may already be working on it.
+ */
+/*
+ * The same form sent again from the same number within a day — a double tap,
+ * or "did it go through?". It is the same enquiry: the customer gets their
+ * answer again, but the lead is reused, so the store is not alerted twice
+ * (alerts are recorded on the lead, once per store).
+ */
+async function recentFormLead(phone: string): Promise<string | null> {
+    const key = phoneKey(phone);
+    if (!key) return null;
+    const [rows]: any = await db.execute(
+        `SELECT id FROM leads
+          WHERE source = 'instagram' AND phone_key = ? AND created_at >= NOW() - INTERVAL 1 DAY
+            AND JSON_EXTRACT(raw_payload, '$.locator.session') IS NULL
+          ORDER BY created_at DESC LIMIT 1`,
+        [key]
+    );
+    return rows[0]?.id ?? null;
+}
+
+// The sheet lead for this WhatsApp number — the same number only; a different number is a different lead.
+async function sheetLeadFor(phone: string): Promise<string | null> {
+    const key = phoneKey(phone);
+    if (!key) return null;
+    const [rows]: any = await db.execute(
+        `SELECT id FROM leads
+          WHERE flow_id = ? AND phone_key = ? AND created_at >= NOW() - INTERVAL ? DAY
+          ORDER BY created_at DESC LIMIT 1`,
+        [SHEET_FLOW_ID, key, SAME_ENQUIRY_DAYS]
+    );
+    return rows[0]?.id ?? null;
+}
 
 /* Re-exported so callers and tests can reach the parser through either
    module; the reading itself has no database import. */
@@ -58,14 +101,22 @@ export async function handleInstagramLead(
     // A pincode form, whether or not the answer holds one: the locator either
     // runs, or asks the customer for the pincode and keeps the lead meanwhile.
     if (pincode || lead.pincode !== null || !lead.city) {
+        const fromSheet = await sheetLeadFor(senderPhone);
+        const repeat = fromSheet ? null : await recentFormLead(senderPhone);
+        const existing = fromSheet ?? repeat;
+        if (fromSheet) console.log(`[Instagram] ${phoneKey(senderPhone)} already filed from the sheet — finishing lead ${fromSheet}`);
+        if (repeat) console.log(`[Instagram] ${phoneKey(senderPhone)} sent the form again — reusing lead ${repeat}, nobody alerted twice`);
         await startStoreEnquiry({
+            ...(existing ? { leadId: existing } : {}),
             pincode: pincode ?? lead.pincode ?? '',
             phone: senderPhone,
             name: lead.name,
             product: lead.product,
-            car: lead.car,
+            // "Hyundai exter (2025)": the year the form asked for, kept with the car.
+            car: sheetCar(lead),
             source: 'instagram',
-            rawPayload: payload,
+            // The phone typed in the form, when it is not this WhatsApp number: the sheet row carries that one.
+            rawPayload: { ...(typeof payload === 'object' ? payload : { text }), instagram: { form_phone: lead.phone ?? null } },
         });
         return true;
     }

@@ -22,11 +22,13 @@ import catalogRoutes from './routes/catalog.routes.js';
 import grievanceRoutes from './routes/grievance.routes.js';
 import assignmentRoutes from './routes/assignment.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
+import pushRoutes from './routes/push.routes.js';
 import analyticsRoutes from './routes/analytics.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import oldWarrantiesRoutes from './routes/old-warranties.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import posmRoutes from './routes/posm.routes.js';
+import schemeRoutes from './routes/scheme.routes.js';
 import uidRoutes from './routes/uid.routes.js';
 import orderRoutes from './routes/order.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
@@ -36,12 +38,15 @@ import { AssignmentSchedulerService } from './services/assignment-scheduler.serv
 import { WarrantyReminderScheduler } from './services/warrantyReminder.service.js';
 import { startAnalyticsRepairSchedule } from './services/analyticsEvents.service.js';
 import { startLeadSheetSchedule } from './services/leadSheetImport.service.js';
+import { runSchemeReminders } from './controllers/scheme.controller.js';
 import { initSocket } from './socket.js';
 import { getISTTimestamp } from './utils/dateUtils.js';
 import pool, { getDbRetryStats, pingDatabase } from './config/database.js';
 import { ensureCustomerMobileLimitTable } from './utils/customerMobileLimits.js';
 import { ensureAsmExpenseTables } from './controllers/asmExpense.controller.js';
 import { backfillWarrantyStores } from './services/warrantyStore.js';
+import { PORTAL_ACTIVITY_TABLE } from './services/portalActivity.service.js';
+import { APP_ORIGINS } from './config/appOrigins.js';
 
 // Keep the process alive on stray async errors. A single unhandled promise
 // rejection (e.g. a transient DB error in a background task) would otherwise
@@ -267,6 +272,151 @@ async function runMigrations() {
     }
 
     await ensureAsmExpenseTables();
+
+    // Phones running the Android app that accepted push notifications
+    // (push.service.ts). user_id matches profiles.id, collation included.
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS push_devices (
+         token VARCHAR(512) CHARACTER SET ascii NOT NULL PRIMARY KEY,
+         user_id VARCHAR(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+         platform VARCHAR(16) NOT NULL DEFAULT 'android',
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         KEY idx_push_devices_user (user_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+    );
+
+    // Offers & Schemes. Only created when missing; nothing is changed if they exist.
+    const schemeTables = [
+      `CREATE TABLE IF NOT EXISTS schemes (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         title VARCHAR(160) NOT NULL,
+         category VARCHAR(20) NOT NULL,
+         summary VARCHAR(500) NULL,
+         banner_url VARCHAR(500) NULL,
+         instructions TEXT NULL,
+         terms TEXT NULL,
+         starts_on DATE NOT NULL,
+         ends_on DATE NOT NULL,
+         submit_until DATE NULL,
+         eligibility JSON NOT NULL,
+         fields JSON NOT NULL,
+         entries_per_store VARCHAR(8) NOT NULL DEFAULT 'many',
+         score_rule JSON NOT NULL,
+         rewards JSON NOT NULL,
+         leaderboard JSON NOT NULL,
+         status VARCHAR(12) NOT NULL DEFAULT 'draft',
+         created_by CHAR(36) NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         published_at TIMESTAMP NULL,
+         deleted_at TIMESTAMP NULL,
+         KEY idx_schemes_status (status, ends_on)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      `CREATE TABLE IF NOT EXISTS scheme_participants (
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         PRIMARY KEY (scheme_id, store_id),
+         KEY idx_sp_store (store_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      `CREATE TABLE IF NOT EXISTS scheme_entries (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         answers JSON NOT NULL,
+         files JSON NOT NULL,
+         score DECIMAL(12,2) NOT NULL DEFAULT 0,
+         status VARCHAR(12) NOT NULL DEFAULT 'pending',
+         review_note VARCHAR(500) NULL,
+         reviewed_by CHAR(36) NULL,
+         reviewed_at TIMESTAMP NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         KEY idx_se_scheme_store (scheme_id, store_id),
+         KEY idx_se_scheme_status (scheme_id, status)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      `CREATE TABLE IF NOT EXISTS scheme_adjustments (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         points DECIMAL(12,2) NOT NULL,
+         note VARCHAR(300) NULL,
+         created_by CHAR(36) NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         KEY idx_sa_scheme (scheme_id, store_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      `CREATE TABLE IF NOT EXISTS scheme_payouts (
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         reward VARCHAR(160) NULL,
+         note VARCHAR(300) NULL,
+         paid_at TIMESTAMP NULL,
+         paid_by CHAR(36) NULL,
+         PRIMARY KEY (scheme_id, store_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    ];
+    for (const sql of schemeTables) await pool.query(sql);
+    // Franchise & distributor portal activity (time spent, pages opened).
+    await pool.query(PORTAL_ACTIVITY_TABLE);
+    // Time windows on a scheme, and the product lines an admin reads off an entry.
+    const [winCol]: any = await pool.query("SHOW COLUMNS FROM schemes LIKE 'windows'");
+    if (winCol.length === 0) await pool.query('ALTER TABLE schemes ADD COLUMN windows JSON NULL AFTER submit_until');
+    const [clubsCol]: any = await pool.query("SHOW COLUMNS FROM schemes LIKE 'clubs'");
+    if (clubsCol.length === 0) await pool.query('ALTER TABLE schemes ADD COLUMN clubs JSON NULL AFTER leaderboard');
+    // Contact card; what a store claims on its invoice; where an entry came from;
+    // reward delivery; and the reminders already sent for each window.
+    const addColumn = async (table: string, col: string, ddl: string) => {
+      const [c]: any = await pool.query(`SHOW COLUMNS FROM ${table} LIKE '${col}'`);
+      if (c.length === 0) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+    };
+    await addColumn('schemes', 'contact', 'contact JSON NULL');
+    await addColumn('scheme_entries', 'claimed_lines', 'claimed_lines JSON NULL');
+    await addColumn('scheme_entries', 'source', "source VARCHAR(10) NOT NULL DEFAULT 'store'");
+    await addColumn('scheme_entries', 'invoice_no', 'invoice_no VARCHAR(80) NULL');
+    await addColumn('scheme_entries', 'invoices', 'invoices JSON NULL');
+    await addColumn('scheme_entries', 'import_key', 'import_key VARCHAR(200) NULL, ADD INDEX idx_se_import (scheme_id, import_key)');
+    await addColumn('scheme_payouts', 'delivery', 'delivery VARCHAR(12) NULL');
+    await addColumn('scheme_payouts', 'dispatched_at', 'dispatched_at TIMESTAMP NULL');
+    await addColumn('scheme_payouts', 'delivered_at', 'delivered_at TIMESTAMP NULL');
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_reminders (
+         scheme_id CHAR(36) NOT NULL,
+         window_start VARCHAR(16) NOT NULL,
+         sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         stores INT NOT NULL DEFAULT 0,
+         PRIMARY KEY (scheme_id, window_start)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    const [linesCol]: any = await pool.query("SHOW COLUMNS FROM scheme_entries LIKE 'lines'");
+    if (linesCol.length === 0) await pool.query('ALTER TABLE scheme_entries ADD COLUMN `lines` JSON NULL AFTER score');
+
+    // POSM requests as item lines (posmCatalog), with dispatch and delivery
+    // details; the item lists the stores pick from, edited by the admin.
+    await addColumn('posm_requests', 'items', 'items JSON NULL');
+    await addColumn('posm_requests', 'dispatch', 'dispatch JSON NULL');
+    await addColumn('posm_requests', 'delivery', 'delivery JSON NULL');
+    await addColumn('posm_requests', 'history', 'history JSON NULL');
+    await pool.query(`CREATE TABLE IF NOT EXISTS posm_settings (
+         id TINYINT NOT NULL PRIMARY KEY,
+         catalog JSON NOT NULL,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    // Lead Management's lists the admin keeps (review outcomes, channels), and
+    // the two outcome columns as text, so an outcome the admin adds can be stored.
+    await pool.query(`CREATE TABLE IF NOT EXISTS lead_options (
+         id TINYINT NOT NULL PRIMARY KEY,
+         options JSON NOT NULL,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    for (const col of ['review_status', 'lead_status']) {
+      const [c]: any = await pool.query(`SHOW COLUMNS FROM leads LIKE '${col}'`);
+      if (c[0] && String(c[0].Type).startsWith('enum(')) {
+        await pool.query(`ALTER TABLE leads MODIFY ${col} VARCHAR(40) NULL DEFAULT NULL`);
+        console.log(`✅ Migration: leads.${col} is now text (outcomes are admin-managed).`);
+      }
+    }
+
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');
   } catch (error: any) {
@@ -320,6 +470,11 @@ if (process.env.DISABLE_SCHEDULERS === '1') {
 
   // The Instagram lead-ad sheet into Lead Management (off without LEAD_SHEET_URL).
   startLeadSheetSchedule();
+
+  // The day before each scheme window opens, the stores it is for are reminded (in-app).
+  const remind = () => runSchemeReminders().catch(err => console.error('[Schemes] reminders failed:', err?.message));
+  setTimeout(remind, 90_000);
+  setInterval(remind, 60 * 60 * 1000).unref?.();
 }
 
 // Get current directory for ES modules
@@ -376,6 +531,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
     'http://127.0.0.1:8080',
     'https://warranty2.autoformindia.co.in'
   ];
+allowedOrigins.push(...APP_ORIGINS.filter(o => !allowedOrigins.includes(o)));
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -452,10 +608,12 @@ app.use('/api/catalog', generalApiLimiter, catalogRoutes);
 app.use('/api/grievance', generalApiLimiter, grievanceRoutes);
 app.use('/api/assignment', generalApiLimiter, assignmentRoutes);
 app.use('/api/notifications', generalApiLimiter, notificationRoutes);
+app.use('/api/push', generalApiLimiter, pushRoutes);
 app.use('/api/upload', generalApiLimiter, uploadRoutes);
 app.use('/api/admin/old-warranties', generalApiLimiter, oldWarrantiesRoutes);
 app.use('/api/settings', generalApiLimiter, settingsRoutes);
 app.use('/api/posm', generalApiLimiter, posmRoutes);
+app.use('/api/schemes', generalApiLimiter, schemeRoutes);
 app.use('/api/uid', generalApiLimiter, uidRoutes);
 app.use('/api/orders', generalApiLimiter, orderRoutes);
 

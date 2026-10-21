@@ -6,6 +6,7 @@ import { ModuleLayout } from "@/components/fms/ModuleLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { LogOut, X } from "lucide-react";
+import { Tx } from "@/contexts/LanguageContext";
 import { menuGroups, SidebarItem } from "@/components/fms/DashboardSidebar";
 
 const VendorPortalLayout = () => {
@@ -55,6 +56,7 @@ const VendorPortalLayout = () => {
         const titles: Record<string, string> = {
             home: "Channel Partner Home",
             warranty: "Warranty Management",
+            leads: "My Leads",
             manpower: "Manpower Control",
             catalogue: "Product Catalogue",
             news: "News & Alerts",
@@ -102,7 +104,7 @@ const VendorPortalLayout = () => {
                             {menuGroups.map((group) => (
                                 <div key={group.label} className="space-y-3">
                                     <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                                        {group.label}
+                                        <Tx>{group.label}</Tx>
                                     </h2>
                                     <div className="space-y-1">
                                         {group.items.map((item) => (
@@ -133,7 +135,7 @@ const VendorPortalLayout = () => {
                                 }}
                             >
                                 <LogOut className="h-5 w-5" />
-                                <span className="font-bold text-sm">Sign Out</span>
+                                <span className="font-bold text-sm"><Tx>Sign Out</Tx></span>
                             </Button>
                         </div>
                     </SheetContent>

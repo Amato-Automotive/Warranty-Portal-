@@ -33,9 +33,11 @@ const AdminAnnouncements = lazy(() => import("../modules/AdminAnnouncements").th
 const AdminNotificationSettings = lazy(() => import("../modules/AdminNotificationSettings").then(({ AdminNotificationSettings }) => ({ default: AdminNotificationSettings })));
 const AdminFranchiseDistributorMap = lazy(() => import("../modules/AdminFranchiseDistributorMap").then(({ AdminFranchiseDistributorMap }) => ({ default: AdminFranchiseDistributorMap })));
 const AdminAudits = lazy(() => import("../modules/AdminAudits").then(({ AdminAudits }) => ({ default: AdminAudits })));
+const AdminPortalActivity = lazy(() => import("../modules/AdminPortalActivity").then(({ AdminPortalActivity }) => ({ default: AdminPortalActivity })));
 const AdminOldWarranties = lazy(() => import("../modules/AdminOldWarranties").then(({ AdminOldWarranties }) => ({ default: AdminOldWarranties })));
 const AdminWarrantyProducts = lazy(() => import("../modules/AdminWarrantyProducts").then(({ AdminWarrantyProducts }) => ({ default: AdminWarrantyProducts })));
 const AdminPOSM = lazy(() => import("../modules/AdminPOSM").then(({ AdminPOSM }) => ({ default: AdminPOSM })));
+const AdminSchemes = lazy(() => import("../modules/AdminSchemes").then(({ AdminSchemes }) => ({ default: AdminSchemes })));
 const AdminECatalogue = lazy(() => import("../modules/AdminECatalogue").then(({ AdminECatalogue }) => ({ default: AdminECatalogue })));
 const AdminUIDManagement = lazy(() => import("../modules/AdminUIDManagement"));
 const AdminPPFRolls = lazy(() => import("../modules/AdminPPFRolls"));
@@ -79,6 +81,7 @@ export const AdminLayout = () => {
             case 'analytics': return <AdminAnalytics onNavigate={setActiveModule} />;
             case 'warranties': return <AdminWarranties />;
             case 'vendors': return <AdminVendors />;
+            case 'portal-activity': return <AdminPortalActivity />;
             case 'distributors': return <AdminDistributors />;
             case 'manpower': return <AdminManpower />;
             case 'customers': return <AdminCustomers />;
@@ -111,6 +114,8 @@ export const AdminLayout = () => {
                 return <AdminAsmExpenses />;
             case 'posm':
                 return <AdminPOSM />;
+            case 'schemes':
+                return <AdminSchemes />;
             case 'uid-management':
                 return <AdminUIDManagement />;
             case 'ppf-rolls':

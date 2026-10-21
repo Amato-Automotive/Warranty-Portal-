@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { useLanguage } from "@/contexts/LanguageContext";
 import { Badge } from "@/components/ui/badge";
 import {
     Loader2, ClipboardCheck, MessageCircle, Phone, ChevronDown, ChevronUp, Clock, CheckCircle2
@@ -40,6 +41,7 @@ const fmt = (d: string | null) =>
 
 export const FranchiseAudits = () => {
     const { toast } = useToast();
+    const { t, tr } = useLanguage();
     const [audits, setAudits] = useState<AuditRow[]>([]);
     const [pending, setPending] = useState<{ round_name: string; sent_at: string } | null>(null);
     const [loading, setLoading] = useState(true);
@@ -58,20 +60,20 @@ export const FranchiseAudits = () => {
             .catch(error => {
                 if (cancelled) return;
                 toast({
-                    title: "Could not load your audits",
-                    description: getErrorMessage(error, "Please try again in a moment"),
+                    title: t("Could not load your audits"),
+                    description: getErrorMessage(error, t("Please try again in a moment")),
                     variant: "destructive",
                 });
             })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
-    }, [toast]);
+    }, [toast, t]);
 
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-[400px] gap-3 text-slate-400">
                 <Loader2 className="h-5 w-5 animate-spin text-orange-500" />
-                <span className="text-sm font-medium">Loading your audits…</span>
+                <span className="text-sm font-medium">{t("Loading your audits…")}</span>
             </div>
         );
     }
@@ -79,9 +81,9 @@ export const FranchiseAudits = () => {
     return (
         <div className="space-y-5">
             <div>
-                <h2 className="text-2xl font-black tracking-tight text-slate-800 uppercase">Audit &amp; Compliance</h2>
+                <h2 className="text-2xl font-black tracking-tight text-slate-800 uppercase">{t("Audit & Compliance")}</h2>
                 <p className="text-sm text-slate-500 mt-1">
-                    The store audits you have completed, and what you answered.
+                    {t("The store audits you have completed, and what you answered.")}
                 </p>
             </div>
 
@@ -93,10 +95,10 @@ export const FranchiseAudits = () => {
                         <Clock className="h-5 w-5 text-amber-600" />
                     </div>
                     <div className="min-w-0">
-                        <p className="text-sm font-black text-amber-800 uppercase tracking-tight">Audit pending</p>
+                        <p className="text-sm font-black text-amber-800 uppercase tracking-tight">{t("Audit pending")}</p>
                         <p className="text-[13px] text-amber-700/90 mt-1 leading-relaxed">
-                            An audit was sent to your WhatsApp on {fmt(pending.sent_at)} and has not been
-                            answered yet. Open the message and complete the form — it takes a couple of minutes.
+                            {tr(`An audit was sent to your WhatsApp on ${fmt(pending.sent_at)} and has not been answered yet. Open the message and complete the form — it takes a couple of minutes.`,
+                                `${fmt(pending.sent_at)} को आपके WhatsApp पर एक ऑडिट भेजा गया था, जिसका जवाब अभी नहीं दिया गया। मैसेज खोलें और फ़ॉर्म भरें — इसमें बस दो मिनट लगते हैं।`)}
                         </p>
                     </div>
                 </div>
@@ -108,11 +110,10 @@ export const FranchiseAudits = () => {
                         <ClipboardCheck className="h-9 w-9 text-orange-500 opacity-80" />
                     </div>
                     <h3 className="text-xl font-black tracking-tight text-slate-800 uppercase mb-2">
-                        No audits yet
+                        {t("No audits yet")}
                     </h3>
                     <p className="text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
-                        When you complete a store audit on WhatsApp, your answers will appear here so you
-                        always have a record of what was submitted.
+                        {t("When you complete a store audit on WhatsApp, your answers will appear here so you always have a record of what was submitted.")}
                     </p>
                 </div>
             ) : (
@@ -132,18 +133,18 @@ export const FranchiseAudits = () => {
                                         </div>
                                         <div className="min-w-0">
                                             <p className="text-sm font-black text-slate-800 truncate">
-                                                {a.round_name || "Store audit"}
+                                                {a.round_name || t("Store audit")}
                                             </p>
                                             <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-400 font-medium">
                                                 <span className="flex items-center gap-1">
                                                     {a.channel === "call"
-                                                        ? <><Phone className="h-3 w-3" /> By phone</>
+                                                        ? <><Phone className="h-3 w-3" /> {t("By phone")}</>
                                                         : <><MessageCircle className="h-3 w-3" /> WhatsApp</>}
                                                 </span>
                                                 <span>·</span>
                                                 <span>{fmt(a.submitted_at)}</span>
                                                 {a.channel === "call" && a.audited_by_name && (
-                                                    <><span>·</span><span>with {a.audited_by_name}</span></>
+                                                    <><span>·</span><span>{tr(`with ${a.audited_by_name}`, `${a.audited_by_name} के साथ`)}</span></>
                                                 )}
                                             </div>
                                         </div>
@@ -153,7 +154,7 @@ export const FranchiseAudits = () => {
                                             const sc = scoreAudit(a);
                                             return (
                                                 <span
-                                                    title={`${sc.earned} of ${sc.total}`}
+                                                    title={`${sc.earned} / ${sc.total}`}
                                                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-black tabular-nums ${BAND_META[sc.band].cls}`}
                                                 >
                                                     <span className={`h-1.5 w-1.5 rounded-full ${BAND_META[sc.band].dot}`} />
@@ -162,7 +163,7 @@ export const FranchiseAudits = () => {
                                             );
                                         })()}
                                         <Badge variant="secondary" className="hidden sm:inline-flex bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-black uppercase">
-                                            Submitted
+                                            {t("Submitted")}
                                         </Badge>
                                         {open
                                             ? <ChevronUp className="h-4 w-4 text-slate-400" />
@@ -180,7 +181,7 @@ export const FranchiseAudits = () => {
                                             return (
                                                 <div className={`rounded-2xl border p-4 ${BAND_META[sc.band].cls}`}>
                                                     <p className="text-[10px] font-black uppercase tracking-widest opacity-70">
-                                                        Your score
+                                                        {t("Your score")}
                                                     </p>
                                                     <p className="text-3xl font-black tabular-nums leading-tight mt-1">
                                                         {sc.earned}<span className="text-lg opacity-50"> / {sc.total}</span>
@@ -188,7 +189,7 @@ export const FranchiseAudits = () => {
                                                     {lost.length > 0 ? (
                                                         <div className="mt-3">
                                                             <p className="text-[11px] font-bold opacity-75 mb-1.5">
-                                                                Marks lost on:
+                                                                {t("Marks lost on:")}
                                                             </p>
                                                             <div className="flex flex-wrap gap-1.5">
                                                                 {lost.map(b => (
@@ -200,7 +201,7 @@ export const FranchiseAudits = () => {
                                                         </div>
                                                     ) : (
                                                         <p className="text-[12px] font-bold opacity-80 mt-2">
-                                                            Full marks on every question.
+                                                            {t("Full marks on every question.")}
                                                         </p>
                                                     )}
                                                 </div>

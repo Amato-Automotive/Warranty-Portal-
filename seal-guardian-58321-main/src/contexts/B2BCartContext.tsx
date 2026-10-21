@@ -23,9 +23,10 @@ export interface CartItem {
 
 interface B2BCartContextType {
   cartItems: CartItem[];
-  addToCart: (item: Omit<CartItem, 'quantity'>, quantity?: number) => void;
-  removeFromCart: (productId: string, variationId: string | null) => void;
-  updateQuantity: (productId: string, variationId: string | null, quantity: number) => void;
+  /* silent: no toast — for the order page's steppers, which change the cart on every tap. */
+  addToCart: (item: Omit<CartItem, 'quantity'>, quantity?: number, silent?: boolean) => void;
+  removeFromCart: (productId: string, variationId: string | null, silent?: boolean) => void;
+  updateQuantity: (productId: string, variationId: string | null, quantity: number, silent?: boolean) => void;
   updateCustomization: (productId: string, variationId: string | null, needsCustomization: boolean, customizationRemarks: string) => void;
   clearCart: () => void;
   distributorStock: any[];
@@ -155,7 +156,7 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  const addToCart = (item: Omit<CartItem, 'quantity'>, quantity = 1) => {
+  const addToCart = (item: Omit<CartItem, 'quantity'>, quantity = 1, silent = false) => {
     setCartItems((prevItems) => {
       const existingItemIndex = prevItems.findIndex(
         (i) => i.productId === item.productId && i.variationId === item.variationId
@@ -167,13 +168,13 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         const updated = [...prevItems];
         updated[existingItemIndex] = { ...existingItem, quantity: newQty };
-        toast({
+        if (!silent) toast({
           title: 'Cart Updated',
           description: `Increased quantity of ${item.productName} in your order.`,
         });
         return updated;
       } else {
-        toast({
+        if (!silent) toast({
           title: 'Added to Order',
           description: `${item.productName} added to your cart.`,
         });
@@ -182,17 +183,17 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
   };
 
-  const removeFromCart = (productId: string, variationId: string | null) => {
+  const removeFromCart = (productId: string, variationId: string | null, silent = false) => {
     setCartItems((prev) => prev.filter((i) => !(i.productId === productId && i.variationId === variationId)));
-    toast({
+    if (!silent) toast({
       title: 'Item Removed',
       description: 'Item removed from your order cart.',
     });
   };
 
-  const updateQuantity = (productId: string, variationId: string | null, quantity: number) => {
+  const updateQuantity = (productId: string, variationId: string | null, quantity: number, silent = false) => {
     if (quantity <= 0) {
-      removeFromCart(productId, variationId);
+      removeFromCart(productId, variationId, silent);
       return;
     }
 

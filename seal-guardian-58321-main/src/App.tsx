@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { B2BCartProvider } from "./contexts/B2BCartContext";
+import { LanguageProvider } from "./contexts/LanguageContext";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -54,6 +55,7 @@ const App = () => (
     <AuthProvider>
       <B2BCartProvider>
         <NotificationProvider>
+        <LanguageProvider>
         <TooltipProvider>
           <Toaster />
           <Sonner />
@@ -98,6 +100,7 @@ const App = () => (
             </Suspense>
           </BrowserRouter>
         </TooltipProvider>
+        </LanguageProvider>
       </NotificationProvider>
       </B2BCartProvider>
     </AuthProvider>

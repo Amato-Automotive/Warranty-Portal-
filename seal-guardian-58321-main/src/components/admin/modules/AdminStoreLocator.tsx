@@ -7,17 +7,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
     Loader2, Minus, Plus, MapPin, Phone, Search, Store as StoreIcon,
-    UserRound, Truck, Headset, MessageCircle,
+    UserRound, Truck, Headset, MessageCircle, X,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { Combobox } from "@/components/ui/combobox";
 
 /**
  * The rules deciding what a customer is offered from their pincode.
  *
  *   stores within the radius      → a list, the customer picks one
  *   else the ASM for the state    → one person, who gets the lead
- *   else the state's distributors → a list, the customer picks one
- *   else customer support         → one number
+ *   else customer support         → the customer executive's number
  *
  * The radius and the minimum-warranties threshold live here so the team can
  * tighten or loosen them without a release, as does the customer support number that ends
@@ -33,7 +33,11 @@ interface Settings {
     support_name: string;
     whatsapp_live: boolean;
     test_numbers: string[];
+    /** Stores never offered to customers — e.g. our own Autoform Brand Store. */
+    hidden_stores: string[];
 }
+
+interface StoreOption { id: string; store_name: string; city: string | null; state: string | null }
 
 /** "98765 43210, +91 91234-56789" → ["9876543210", "9123456789"]; bad entries kept to flag. */
 const parseNumbers = (text: string) =>
@@ -84,7 +88,7 @@ const STEP = {
     },
     support: {
         label: "Customer Support", icon: Headset,
-        says: "No store, ASM or distributor in this state, so the lead goes to customer support.",
+        says: "No store and no ASM for this area, so the lead goes to customer support.",
     },
 } as const;
 
@@ -122,8 +126,9 @@ export const AdminStoreLocator = () => {
 
     const [saved, setSaved] = useState<Settings | null>(null);
     const [form, setForm] = useState<Settings>({
-        min_warranties: 1, radius_km: 15, support_phone: "", support_name: "", whatsapp_live: false, test_numbers: [],
+        min_warranties: 1, radius_km: 15, support_phone: "", support_name: "", whatsapp_live: false, test_numbers: [], hidden_stores: [],
     });
+    const [allStores, setAllStores] = useState<StoreOption[]>([]);
     // Typed freely, turned into test_numbers on save.
     const [testText, setTestText] = useState("");
     const [loading, setLoading] = useState(true);
@@ -134,15 +139,19 @@ export const AdminStoreLocator = () => {
     const [previewing, setPreviewing] = useState(false);
 
     const load = (s: Settings) => {
-        setSaved(s);
-        setForm(s);
+        const withHidden = { ...s, hidden_stores: s.hidden_stores || [] };
+        setSaved(withHidden);
+        setForm(withHidden);
         setTestText((s.test_numbers || []).join(", "));
     };
 
     useEffect(() => {
         api.get("/asm/locator-settings")
             .then(res => {
-                if (res.data?.success) load(res.data.settings);
+                if (res.data?.success) {
+                    load(res.data.settings);
+                    setAllStores(res.data.stores || []);
+                }
             })
             .catch(() => toast({ title: "Could not load the locator settings", variant: "destructive" }))
             .finally(() => setLoading(false));
@@ -159,7 +168,12 @@ export const AdminStoreLocator = () => {
         || saved.support_name !== form.support_name
         || saved.whatsapp_live !== form.whatsapp_live
         || (saved.test_numbers || []).join(",") !== testNumbers.join(",")
+        || [...saved.hidden_stores].sort().join(",") !== [...form.hidden_stores].sort().join(",")
     );
+
+    const storeLabel = (s: StoreOption) => [s.store_name, s.city].filter(Boolean).join(" · ");
+    const hiddenStores = form.hidden_stores.map(id => allStores.find(s => s.id === id) ?? { id, store_name: "Store (no longer listed)", city: null, state: null });
+    const hideOptions = allStores.filter(s => !form.hidden_stores.includes(s.id)).map(s => ({ value: s.id, label: storeLabel(s) }));
 
     const phoneDigits = form.support_phone.replace(/\D/g, "");
     const phoneError = phoneDigits && (phoneDigits.length < 10 || phoneDigits.length > 12)
@@ -226,10 +240,8 @@ export const AdminStoreLocator = () => {
                                 detail="Alphabetical, with at least the warranties set below. The customer picks one." />
                             <ChainStep n={2} title="Else the ASM"
                                 detail="The ASM covering the customer's state gets the lead." />
-                            <ChainStep n={3} title="Else the distributors"
-                                detail="Every active distributor in the state, alphabetical. The customer picks one." />
-                            <ChainStep n={4} title="Else customer support"
-                                detail="The number set below." />
+                            <ChainStep n={3} title="Else customer support"
+                                detail="The customer executive's number set below." />
                         </ol>
                     </div>
 
@@ -305,6 +317,48 @@ export const AdminStoreLocator = () => {
                         </p>
                     </div>
 
+                    {/* Stores customers must never be sent to — our own brand store, a
+                        store under review — whatever their warranties. Admins can still
+                        send one from Lead Management. */}
+                    <div className="border-t border-slate-100 pt-4 space-y-2">
+                        <Label className="text-xs">Hidden from customers</Label>
+                        <Combobox
+                            options={hideOptions}
+                            value=""
+                            onChange={id => { if (id) setForm(f => ({ ...f, hidden_stores: [...new Set([...f.hidden_stores, id])] })); }}
+                            placeholder="Add a store to hide…"
+                            searchPlaceholder="Type a store or city…"
+                            emptyMessage="No store matches."
+                            className="h-9 w-full font-normal text-sm"
+                        />
+                        {hiddenStores.length > 0 ? (
+                            <ul className="space-y-1.5">
+                                {hiddenStores.map(s => (
+                                    <li key={s.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                                        <span className="min-w-0">
+                                            <span className="block text-sm font-semibold text-slate-800 truncate">{s.store_name}</span>
+                                            <span className="block text-[11px] text-slate-400 truncate">{[s.city, s.state].filter(Boolean).join(", ")}</span>
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setForm(f => ({ ...f, hidden_stores: f.hidden_stores.filter(x => x !== s.id) }))}
+                                            className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-white hover:text-rose-600"
+                                            aria-label={`Show ${s.store_name} to customers again`}
+                                            title="Show to customers again"
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : null}
+                        <p className="text-[11px] text-slate-400 leading-snug">
+                            {hiddenStores.length
+                                ? `${hiddenStores.length} store${hiddenStores.length === 1 ? " is" : "s are"} never offered to customers on WhatsApp or the Instagram flow. Admins can still send ${hiddenStores.length === 1 ? "it" : "them"} from Lead Management.`
+                                : "Stores added here are never offered to customers, whatever their warranties — for example our own brand store."}
+                        </p>
+                    </div>
+
                     <div className="border-t border-slate-100 pt-4 space-y-3">
                         <h3 className="text-sm font-black text-slate-800">Customer support</h3>
 
@@ -330,9 +384,9 @@ export const AdminStoreLocator = () => {
                                 <p className="text-[11px] text-red-600">{phoneError}</p>
                             ) : !form.support_phone ? (
                                 /* Allowed, but it is the one number a customer with no
-                                   store, ASM or distributor would be given. */
+                                   store or ASM would be given. */
                                 <p className="text-[11px] text-amber-700 leading-snug">
-                                    Not set — a customer with no store, ASM or distributor is given no number to call.
+                                    Not set — a customer with no store or ASM is given no number to call.
                                 </p>
                             ) : null}
                         </div>

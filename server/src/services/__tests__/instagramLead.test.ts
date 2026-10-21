@@ -29,6 +29,24 @@ Can you share the car model year?: 2024`
         assert.equal(lead?.phone, '+917307388011');
     });
 
+    test('reads "Post code" and the car year — the October 2026 form', () => {
+        // The first live lead on this form was filed "No valid pincode given":
+        // "Post code" was not a pincode label, and the year was dropped.
+        const lead = parseLeadForm(
+            `Hello! I filled in your form and would like to know more about your business.
+
+For which car do you need the seat cover?: Hyundai exter
+Can you share the car model year?: 2025
+Full name: Test Customer
+Phone number: +919876543210
+Post code: 143001`
+        );
+        assert.equal(lead?.pincode, '143001');
+        assert.equal(lead?.car, 'Hyundai exter');
+        assert.equal(lead?.carYear, '2025');
+        assert.deepEqual(lead?.unmapped, {});
+    });
+
     test('accepts "filled out", the other wording Meta sends', () => {
         // Both appear in real messages; only "filled in" was handled at first,
         // which silently dropped two of three leads.
@@ -131,14 +149,15 @@ City: Delhi`
         assert.equal(lead?.car, 'Creta');
     });
 
-    test('the year is kept as an unmapped field rather than dropped', () => {
+    test('the year is read into its own field, not left unmapped', () => {
         const lead = parseLeadForm(
             `Hello! I filled in your form and would like to know more about your business.
 
 City: Delhi
 Can you share the car model year?: 2020`
         );
-        assert.deepEqual(Object.keys(lead?.unmapped ?? {}), ['Can you share the car model year']);
+        assert.equal(lead?.carYear, '2020');
+        assert.deepEqual(lead?.unmapped, {});
     });
 });
 
@@ -256,4 +275,53 @@ describe('normaliseProduct', () => {
             assert.equal(normaliseProduct(input), expected);
         });
     }
+});
+
+/*
+ * Every ad words its questions its own way. Each label below must land in the
+ * right field — including typos and the underscore style of Meta's sheet.
+ */
+describe('parseLeadForm — any wording of a question', () => {
+    const form = (label: string, value: string) => parseLeadForm(
+        `Hello! I filled in your form and would like to know more about your business.\n\n${label}: ${value}\nFull name: Test Customer`);
+
+    for (const label of [
+        'Post code', 'Postcode', 'post_code', 'POSTAL CODE', 'Pincode', 'Pin code', 'PIN', 'Pin Code?',
+        'Your area pincode?', 'Enter your pin code', 'Zip', 'Zip code', 'Picode', 'Pincod', 'Area code', 'Pin no',
+    ]) {
+        test(`"${label}" is the pincode`, () => {
+            const lead = form(label, '143001');
+            assert.equal(lead?.pincode, '143001');
+            assert.equal(lead?.city, null);
+        });
+    }
+
+    for (const [label, field] of [
+        ['Car model year', 'carYear'], ['Manufacturing year', 'carYear'], ['Model Year?', 'carYear'],
+        ['Which vehicle do you drive?', 'car'], ['Car name', 'car'], ['Car Model', 'car'], ['Vehical', 'car'],
+        ['Mobile No', 'phone'], ['WhatsApp number', 'phone'], ['Moblie number', 'phone'], ['Contact no', 'phone'],
+        ['Which city are you in?', 'city'], ['Location', 'city'], ['District', 'city'], ['Your city', 'city'],
+    ] as const) {
+        test(`"${label}" is the ${field}`, () => {
+            const lead = form(label, 'x');
+            assert.equal(lead?.[field], 'x');
+        });
+    }
+
+    test('"Your name" and "Name" are the name', () => {
+        const lead = parseLeadForm(`Hello! I filled in your form and would like to know more about your business.\n\nYour name: A B`);
+        assert.equal(lead?.name, 'A B');
+    });
+
+    test('a pincode under a label nobody planned for is still found', () => {
+        const lead = form('Where should we reach you?', '143 001');
+        assert.equal(extractPincode(lead?.pincode), '143001');
+        assert.deepEqual(lead?.unmapped, {});
+    });
+
+    test('the phone number is never taken for a pincode', () => {
+        const lead = parseLeadForm(`Hello! I filled in your form and would like to know more about your business.\n\nPhone number: +919876543210\nCity: Delhi`);
+        assert.equal(lead?.pincode, null);
+        assert.equal(lead?.phone, '+919876543210');
+    });
 });

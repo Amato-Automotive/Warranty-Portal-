@@ -9,6 +9,7 @@ import InstallerDetails from "./steps/InstallerDetails";
 import CustomerDetails from "./steps/CustomerDetails";
 import CarDetails from "./steps/CarDetails";
 import ProductInfo from "./steps/ProductInfo";
+import { WarrantyReviewDialog } from "./WarrantyReviewDialog";
 import { Check, ShieldCheck } from "lucide-react";
 import { getISTTodayISO, formatToISTDateISO } from "@/lib/utils";
 import { getRollsError, toRollPayload } from "@/lib/ppfRolls";
@@ -119,6 +120,8 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
   const [loading, setLoading] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
   const [vendorOwnerName, setVendorOwnerName] = useState<string>("");
+  /* The "check your details" step between passing the checks and sending. */
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const [formData, setFormData] = useState<EVFormData>({
     storeName: "",
@@ -315,7 +318,8 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
     }
   };
 
-  const handleSubmit = async () => {
+  /** Checks the form; then shows the review, and only `confirmed` from there sends it. */
+  const handleSubmit = async (confirmed = false) => {
     // === Step 1: Installer Details Validation (skip for public mode) ===
     if (!isPublic) {
       if (!formData.storeName) {
@@ -408,6 +412,12 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
     // === Terms Validation ===
     if (!formData.termsAccepted) {
       toast({ title: "Terms Required", description: "Please accept the terms and conditions", variant: "destructive" });
+      return;
+    }
+
+    // Everything checks out: let them see it all once before it goes.
+    if (!confirmed) {
+      setReviewOpen(true);
       return;
     }
 
@@ -536,6 +546,7 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
         });
       }
 
+      setReviewOpen(false);
       // Redirect or callback
       if (onSuccess) {
         // Embedded in admin panel — just call the callback, no navigation
@@ -718,7 +729,7 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
                   formData={formData}
                   updateFormData={updateFormData}
                   onPrev={handlePrev}
-                  onSubmit={handleSubmit}
+                  onSubmit={() => handleSubmit()}
                   loading={loading}
                   existingPhotos={isEditing && initialData?.product_details?.photos ? initialData.product_details.photos : undefined}
                 />
@@ -727,6 +738,65 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
           </div>
         </CardContent>
       </Card>
+
+      {/* Modify closes this and leaves the form as it was; Edit jumps to that step. */}
+      <WarrantyReviewDialog
+        open={reviewOpen}
+        loading={loading}
+        onModify={() => setReviewOpen(false)}
+        onConfirm={() => handleSubmit(true)}
+        sections={[
+          ...(!isPublic ? [{
+            title: "Store & installer",
+            onEdit: () => { setReviewOpen(false); setCurrentStep(1); },
+            rows: [
+              ["Store", formData.storeName],
+              ["Installer", formData.installerName],
+            ] as [string, string][],
+          }] : []),
+          {
+            title: "Customer",
+            onEdit: () => { setReviewOpen(false); setCurrentStep(2); },
+            rows: [
+              ["Name", `${formData.customerFname} ${formData.customerLname}`.trim()],
+              ["Mobile", formData.customerMobile],
+              ["Email", formData.customerEmail],
+            ],
+          },
+          {
+            title: "Vehicle",
+            onEdit: () => { setReviewOpen(false); setCurrentStep(3); },
+            rows: [
+              ["Installation date", formData.installationDate
+                ? new Date(`${formData.installationDate}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+                : ""],
+              ["Make & model", [formData.carMake, formData.carModel].filter(Boolean).join(" ")],
+              ["Registration no.", formData.carReg],
+              ["Year", formData.carYear],
+              ["Colour", formData.carColour],
+            ],
+          },
+          {
+            title: "Product",
+            onEdit: () => { setReviewOpen(false); setCurrentStep(4); },
+            rows: [
+              ["Product", formData.product],
+              ["Warranty", formData.warrantyType],
+              ...formData.rolls.map((r, i) => [
+                formData.rolls.length > 1 ? `Roll ${i + 1}` : "Roll",
+                [r.serial, r.sqft ? `${r.sqft} sq.ft` : "", r.installArea].filter(Boolean).join(" · "),
+              ] as [string, string]),
+            ],
+          },
+        ]}
+        photos={[
+          { label: "Left side", file: formData.lhsPhoto, url: initialData?.product_details?.photos?.lhs },
+          { label: "Right side", file: formData.rhsPhoto, url: initialData?.product_details?.photos?.rhs },
+          { label: "Front with number plate", file: formData.frontRegPhoto, url: initialData?.product_details?.photos?.frontReg },
+          { label: "Back with number plate", file: formData.backRegPhoto, url: initialData?.product_details?.photos?.backReg },
+          { label: "Invoice", file: formData.warrantyPhoto, url: initialData?.product_details?.photos?.warranty },
+        ]}
+      />
     </div>
   );
 };

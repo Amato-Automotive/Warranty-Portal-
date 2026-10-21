@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Navigate, useOutletContext } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePortalActivity } from "@/hooks/usePortalActivity";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { Loader2, X, ChevronRight, Search, Hash } from "lucide-react";
@@ -8,9 +9,10 @@ import { cn, formatToIST, getISTTodayISO } from "@/lib/utils";
 import { fetchProducts, Product, fetchCategories, Category } from '@/lib/catalogService';
 import { useNotifications } from "@/contexts/NotificationContext";
 
+import { Tx, useLanguage } from "@/contexts/LanguageContext";
 import { DashboardSidebar, FmsModule, menuGroups, SidebarItem } from "@/components/fms/DashboardSidebar";
 import { ModuleLayout } from "@/components/fms/ModuleLayout";
-import { FranchiseHome } from "@/components/fms/FranchiseHome";
+import { FranchiseHome, type HomeTarget } from "@/components/fms/FranchiseHome";
 import { WarrantyManagement } from "@/components/fms/WarrantyManagement";
 import { StaffManagement } from "@/components/fms/StaffManagement";
 import VendorCatalog from "@/components/eshop/VendorCatalog";
@@ -18,6 +20,8 @@ import CatalogHeader from "@/components/eshop/CatalogHeader";
 import { NewsAlerts } from "@/components/fms/NewsAlerts";
 import { ComingSoon } from "@/components/fms/ComingSoon";
 import { FranchiseAudits } from "@/components/fms/FranchiseAudits";
+import { FranchiseLeads, type LeadsView } from "@/components/fms/FranchiseLeads";
+import { FranchiseSchemes } from "@/components/fms/FranchiseSchemes";
 import VendorGrievances from "@/components/fms/VendorGrievances";
 import POSMModule from "@/components/fms/POSMModule";
 import ECatalogue from "@/components/fms/ECatalogue";
@@ -54,6 +58,7 @@ const FranchiseDashboard = () => {
     const { user, logout, loading: authLoading } = useAuth();
     const { toast } = useToast();
     const { fullHistory } = useNotifications();
+    const { tr } = useLanguage();
     const { isDistributor, isFranchise, loadingProfile } = useB2BCart();
     const context = useOutletContext<DashboardContext>();
     const [localActiveModule, setLocalActiveModule] = useState<FmsModule>('home');
@@ -61,13 +66,15 @@ const FranchiseDashboard = () => {
     // Use context state if available (from Layout), otherwise fallback to local state
     const activeModule = context?.activeModule || localActiveModule;
     const setActiveModule = context?.setActiveModule || setLocalActiveModule;
+    // What is open and for how long, for the admin's Portal Activity screens.
+    usePortalActivity(activeModule, user?.role === 'vendor');
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
     const filteredMenuGroups = menuGroups.map(group => {
         if (isDistributor && !isFranchise) {
             const filteredItems = group.items.filter(item => {
-                const franchiseOnly = ['warranty', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets'];
+                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets'];
                 return !franchiseOnly.includes(item.id);
             });
             return { ...group, items: filteredItems };
@@ -92,7 +99,10 @@ const FranchiseDashboard = () => {
     const [pastManpowerPagination, setPastManpowerPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, limit: 10, hasNextPage: false, hasPrevPage: false });
 
     // Stats State
-    const [dashboardStats, setDashboardStats] = useState({
+    const [dashboardStats, setDashboardStats] = useState<{
+        pending_vendor: number; pending: number; validated: number; rejected: number;
+        this_month?: number; last_month?: number; daily?: { day: string; n: number }[];
+    }>({
         pending_vendor: 0,
         pending: 0,
         validated: 0,
@@ -106,11 +116,38 @@ const FranchiseDashboard = () => {
     const [selectedModel, setSelectedModel] = useState<string>('all');
     const [dateRange, setDateRange] = useState<any | undefined>();
     const [activeStatusTab, setActiveStatusTab] = useState<string>('all');
+    // A tap on the home opens Warranties or My Leads already filtered to what was tapped.
+    const [leadsView, setLeadsView] = useState<LeadsView | undefined>();
+    const homeFilteredWarranties = useRef(false);
     const [viewingProductId, setViewingProductId] = useState<string | null>(null);
     const [viewingCategoryId, setViewingCategoryId] = useState<string | null>(null);
     const [expandedMobileCategory, setExpandedMobileCategory] = useState<string | null>(null);
     const [isMobileSearchActive, setIsMobileSearchActive] = useState(false);
     const [exportDialogOpen, setExportDialogOpen] = useState(false);
+
+    /* The home's filters last only while that page is open: leaving it (or
+       opening it from the sidebar) shows everything again. */
+    useEffect(() => {
+        if (activeModule !== 'leads') setLeadsView(undefined);
+        if (activeModule !== 'warranty' && homeFilteredWarranties.current) {
+            homeFilteredWarranties.current = false;
+            setActiveStatusTab('all');
+            setDateRange(undefined);
+        }
+    }, [activeModule]);
+
+    const openFromHome = (target: HomeTarget) => {
+        if (target.module === 'warranty' && 'tab' in target) {
+            setActiveStatusTab(target.tab ?? 'all');
+            // IST days, both included.
+            setDateRange(target.from && target.to
+                ? { from: new Date(`${target.from}T00:00:00+05:30`), to: new Date(`${target.to}T23:59:59+05:30`) }
+                : undefined);
+            homeFilteredWarranties.current = true;
+        }
+        if (target.module === 'leads' && 'view' in target) setLeadsView(target.view);
+        setActiveModule(target.module as FmsModule);
+    };
 
     useEffect(() => {
         const scrollContainer = document.getElementById('main-dashboard-content-area');
@@ -566,7 +603,11 @@ const FranchiseDashboard = () => {
             total: (dashboardStats.pending_vendor || 0) + (dashboardStats.validated || 0) + (dashboardStats.rejected || 0),
             approved: dashboardStats.validated || 0,
             pending: dashboardStats.pending_vendor || 0,
-            manpower: manpowerPagination.totalCount || manpowerList.length
+            manpower: manpowerPagination.totalCount || manpowerList.length,
+            // For the home's "this month" card.
+            this_month: dashboardStats.this_month ?? 0,
+            last_month: dashboardStats.last_month ?? 0,
+            daily: dashboardStats.daily ?? [],
         };
 
         const recentActivityData = warranties
@@ -583,7 +624,13 @@ const FranchiseDashboard = () => {
                         w.status === 'rejected' ? 'Needs Correction' : 'New Registration',
                     sub: `${w.registration_number || 'N/A'} • ${toTitleCase(w.customer_name)}`,
                     status: w.status === 'validated' ? 'success' :
-                        w.status === 'rejected' ? 'warning' : 'primary'
+                        w.status === 'rejected' ? 'warning' : 'primary',
+                    // The home's recent-warranties table.
+                    customer: toTitleCase(w.customer_name) || 'Customer',
+                    registration: w.registration_number || null,
+                    car: [w.car_make, w.car_model].filter(Boolean).join(' ') || null,
+                    product: w.product_type || null,
+                    created_at: w.created_at,
                 };
             });
 
@@ -593,18 +640,18 @@ const FranchiseDashboard = () => {
             ? markedNewArrivals.slice(0, 8)
             : [...products].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 8);
 
-        // Platform Updates: Latest 3 alert/system/product notifications (Hidden for Phase 1)
+        // Platform Updates: the latest 5 alert/system/product notifications, one line each on the home
         const latestUpdates = fullHistory
             .filter(n => n.type === 'alert' || n.type === 'system' || n.type === 'product')
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-            .slice(0, 3);
+            .slice(0, 5);
 
         switch (activeModule) {
             case 'home':
                 return <FranchiseHome
                     stats={homeStats}
                     recentActivity={recentActivityData}
-                    onNavigate={setActiveModule}
+                    onOpen={openFromHome}
                     newProducts={newProducts}
                     latestUpdates={latestUpdates}
                 />;
@@ -799,11 +846,21 @@ const FranchiseDashboard = () => {
             case 'orders':
                 return <B2BOrderManagement />;
             case 'offers':
-                return <ComingSoon title="Offers & Schemes" />;
+                return (
+                    <div className="-mt-8 md:-mt-14">
+                        <FranchiseSchemes />
+                    </div>
+                );
             case 'audit':
                 return (
                     <div className="-mt-8 md:-mt-14">
                         <FranchiseAudits />
+                    </div>
+                );
+            case 'leads':
+                return (
+                    <div className="-mt-8 md:-mt-14">
+                        <FranchiseLeads key={JSON.stringify(leadsView ?? {})} initial={leadsView} />
                     </div>
                 );
             case 'targets':
@@ -826,7 +883,7 @@ const FranchiseDashboard = () => {
                         <FranchiseHome
                             stats={homeStats}
                             recentActivity={recentActivityData}
-                            onNavigate={setActiveModule}
+                            onOpen={openFromHome}
                             newProducts={newProducts}
                             latestUpdates={latestUpdates}
                         />
@@ -911,7 +968,7 @@ const FranchiseDashboard = () => {
                             onClick={logout}
                         >
                             <LogOut className="w-4 h-4 mr-2" />
-                            Sign Out
+                            <Tx>Sign Out</Tx>
                         </Button>
                     </div>
                 </div>
@@ -934,7 +991,7 @@ const FranchiseDashboard = () => {
             <div className="flex-1 flex flex-col overflow-hidden relative">
                 <ModuleLayout
                     title={getModuleTitle()}
-                    description={activeModule === 'home' ? `Welcome back, ${user.name}` : undefined}
+                    description={activeModule === 'home' ? tr(`Welcome back, ${user.name}`, `वापसी पर स्वागत है, ${user.name}`) : undefined}
                     isCollapsed={isCollapsed}
                     actions={getModuleActions()}
                     onNavigate={setActiveModule}
@@ -1056,7 +1113,7 @@ const FranchiseDashboard = () => {
                             {filteredMenuGroups.map((group) => (
                                 <div key={group.label} className="space-y-3">
                                     <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                                        {group.label}
+                                        <Tx>{group.label}</Tx>
                                     </h2>
                                     <div className="space-y-1">
                                         {group.items.map((item) => (
@@ -1067,11 +1124,13 @@ const FranchiseDashboard = () => {
                                                     active={activeModule === item.id}
                                                     onClick={() => {
                                                         setActiveModule(item.id);
-                                                        if (item.id !== 'catalogue') setIsMobileMenuOpen(false);
+                                                        if ((item.id as string) !== 'catalogue') setIsMobileMenuOpen(false);
                                                     }}
-                                                    comingSoon={item.comingSoon}
+                                                    comingSoon={'comingSoon' in item ? item.comingSoon : undefined}
                                                 />
-                                                {item.id === 'catalogue' && activeModule === 'catalogue' && (
+                                                {/* No menu item is 'catalogue' now (the e-catalogue is 'ecatalogue'),
+                                                    so this sub-list does not show; kept for when it returns. */}
+                                                {(item.id as string) === 'catalogue' && (activeModule as string) === 'catalogue' && (
                                                     <div className="pl-12 py-1 space-y-1 animate-in slide-in-from-top-2 duration-300">
                                                         <button
                                                             onClick={() => {
@@ -1170,7 +1229,7 @@ const FranchiseDashboard = () => {
                                 }}
                             >
                                 <LogOut className="h-5 w-5" />
-                                <span className="font-bold text-sm">Sign Out</span>
+                                <span className="font-bold text-sm"><Tx>Sign Out</Tx></span>
                             </Button>
                         </div>
                     </SheetContent>

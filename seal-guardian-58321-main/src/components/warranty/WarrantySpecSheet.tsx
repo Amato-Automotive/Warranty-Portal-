@@ -77,7 +77,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
     const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
     /** Which image slot is mid-upload, so only that thumbnail shows a spinner. */
     const [uploadingField, setUploadingField] = useState<string | null>(null);
-    const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | null>(null);
+    const [actionLoading, setActionLoading] = useState<'approve' | 'reject' | 'pending' | null>(null);
 
     useEffect(() => {
         if (!isOpen) setIsEditing(false);

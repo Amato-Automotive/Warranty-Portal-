@@ -2043,7 +2043,6 @@ export class AdminController {
                                                 warrantyData.customer_phone,
                                                 warrantyData.customer_name,
                                                 productName,
-                                                warrantyData.registration_number || 'N/A',
                                                 warrantyData.uid,
                                                 warrantyData.store_name || warrantyData.installer_name || 'Autoform Store',
                                                 'Active',
@@ -2098,7 +2097,6 @@ export class AdminController {
                                                 warrantyData.customer_phone,
                                                 warrantyData.customer_name,
                                                 productName,
-                                                warrantyData.registration_number || 'N/A',
                                                 warrantyData.uid,
                                                 warrantyData.store_name || warrantyData.installer_name || 'Autoform Store',
                                                 'Not Approved',
@@ -2200,10 +2198,11 @@ export class AdminController {
                             // counted without ever being messaged.
                             //
                             // Compared on the IST calendar date to match the gate
-                            // exactly — created_at is stored UTC, so it is shifted
-                            // before truncating, or a warranty registered between
-                            // 00:00 and 05:30 IST lands on the previous day and the
-                            // two rules disagree at the window's edges.
+                            // exactly. The pool's sessions run at +05:30, so
+                            // created_at already reads in IST; shifting it again
+                            // with CONVERT_TZ put every warranty after 18:30 on
+                            // the next day, and the two rules disagreed at the
+                            // window's edges.
                             let totalApproved = 0;
                             let tallyFailed = false;
                             try {
@@ -2212,7 +2211,7 @@ export class AdminController {
 
                                 const params: any[] = [warrantyData.manpower_id];
                                 let dateClause = '';
-                                const istRegDate = "DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))";
+                                const istRegDate = "DATE(created_at)";
                                 if (win?.startDate) { dateClause += ` AND ${istRegDate} >= ?`; params.push(win.startDate); }
                                 if (win?.endDate) { dateClause += ` AND ${istRegDate} <= ?`; params.push(win.endDate); }
 
@@ -2336,7 +2335,6 @@ export class AdminController {
                                                     vendorPhone[0].phone_number,
                                                     vendorName ?? 'Franchise Partner',
                                                     productName,
-                                                    warrantyData.registration_number || 'N/A',
                                                     warrantyData.uid,
                                                     'Not Approved',
                                                     purchaseDate,
@@ -2958,7 +2956,7 @@ export class AdminController {
                         WHERE car_make = ? AND car_model IS NOT NULL AND car_model != ''
                         ORDER BY car_model ASC
                         LIMIT 250
-                    `, [make])
+                    `, [String(make)])
                     : Promise.resolve([[]])
             ]);
             const totalCount = countResult[0].total;

@@ -1,19 +1,20 @@
-import db from '../config/database.js';
+import db, { type SqlValue } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
 import { WhatsAppService } from './whatsapp.service.js';
 import { phoneKey, normaliseProduct } from './asmRouting.service.js';
 import { getLocatorSettings, repliesTo } from './storeLocatorQuery.js';
-import { LOCATOR_FLOW_ID, startStoreEnquiry } from './storeLocatorChat.js';
+import { LOCATOR_FLOW_ID, startStoreEnquiry, resendAnswer, notifyOnce } from './storeLocatorChat.js';
 import { readCarAnswer } from './carModels.js';
 import { localPhone } from './storeLocator.js';
 import { hasAutoReplyContent } from './autoReply.js';
 import {
-    nextStep, menuStep, isRestart, isCancel, isIdle, OPEN_STAGES, type StartWord,
+    nextStep, menuStep, vehicleStep, isRestart, isCancel, isIdle, OPEN_STAGES, type StartWord,
     type ChatStage, type MenuStep,
 } from './locatorConversation.js';
 import {
     CAR_QUESTION, PINCODE_QUESTION, PLEASE_TYPE_TEXT, CANCELLED_TEXT, SORRY_TEXT, MENU_RETRY,
-    productMenu, otherProductsMenu, menuTapFromWebhook, type InteractiveList,
+    VEHICLE_TEXT, VEHICLE_RETRY, twoWheelerText, vehicleQuestion, vehicleTapFromWebhook,
+    productMenu, otherProductsMenu, menuTapFromWebhook, type InteractiveList, type Vehicle,
 } from './storeLocatorMessages.js';
 
 /**
@@ -37,7 +38,8 @@ import {
  * Each chat message is logged under its own tag ("chat:car-question"…), so the
  * lead's WhatsApp history can say exactly what was asked (leadMessages).
  */
-type ChatTag = 'product-menu' | 'other-menu' | 'product-retry' | 'car-question' | 'pincode-question'
+type ChatTag = 'vehicle-question' | 'vehicle-retry' | 'two-wheeler'
+    | 'product-menu' | 'other-menu' | 'product-retry' | 'car-question' | 'pincode-question'
     | 'car-retry' | 'pincode-retry' | 'please-type' | 'cancelled' | 'gave-up' | 'error';
 
 const send = (phone: string, body: string, leadId: string, tag: ChatTag) =>
@@ -45,6 +47,18 @@ const send = (phone: string, body: string, leadId: string, tag: ChatTag) =>
 
 const sendList = (phone: string, list: InteractiveList, leadId: string, tag: ChatTag) =>
     WhatsAppService.sendSessionMessage(phone, 'InteractiveList', list as any, `chat:${tag}`, leadId);
+
+/*
+ * The 4-wheeler / 2-wheeler buttons. If WhatsApp refuses the buttons, the same
+ * question goes as text ("reply 4 or 2"), so the customer always gets it.
+ */
+const askVehicle = async (phone: string, leadId: string) => {
+    // VEHICLE_BUTTONS=false in .env sends the text version only.
+    const ok = process.env.VEHICLE_BUTTONS !== 'false' && await WhatsAppService.sendSessionMessage(
+        phone, 'InteractiveButton', vehicleQuestion(leadId) as any, 'chat:vehicle-question', leadId,
+    ).catch(() => false);
+    if (!ok) await send(phone, VEHICLE_TEXT, leadId, 'vehicle-question');
+};
 
 const nowIso = () => new Date().toISOString();
 
@@ -65,7 +79,7 @@ async function saveSession(leadId: string, session: Record<string, unknown>, ext
                 ${cols.map(c => `, ${c} = ?`).join('')},
                 updated_at = NOW()
           WHERE id = ?`,
-        [JSON.stringify(session), ...Object.values(extra), leadId]
+        [JSON.stringify(session), ...(Object.values(extra) as SqlValue[]), leadId]
     );
 }
 
@@ -90,14 +104,42 @@ export async function startConversation(input: {
 
     const started = Date.now();
     const givenCar = carText ? readCarAnswer(carText) : null;
-    const stage: ChatStage = !productText ? 'product' : givenCar?.ok ? 'pincode' : 'car';
-    const leadId = uuidv4();
+    /* A car given (an Instagram form) is a 4-wheeler already: straight to the
+       pincode. Otherwise the first question is 4-wheeler or 2-wheeler. */
+    const stage: ChatStage = givenCar?.ok ? 'pincode' : 'vehicle';
+    /* Same number, a chat that never got anywhere a moment ago: start again on
+       that lead rather than leave an empty "replaced" lead behind for each
+       "hi" or old-menu tap (one customer had five in two minutes). */
+    const reuse = await reusableChatLead(phone);
+    const leadId = reuse ?? uuidv4();
     const session = { stage: canReply ? stage : 'held', tries: 0, at: nowIso(), choice: productText };
 
     // A new start replaces any chat still open for this number — before the
     // insert, or it would close the new chat too.
     const write = (async () => {
         await endOpenChats(phone, 'replaced');
+        if (reuse) {
+            const { locator: _old, ...extra } = (input.rawPayload && typeof input.rawPayload === 'object' ? input.rawPayload : {}) as any;
+            await db.execute(
+                `UPDATE leads
+                    SET source = ?, product = ?, car_model = ?, customer_name = COALESCE(?, customer_name),
+                        raw_payload = JSON_SET(JSON_MERGE_PATCH(COALESCE(raw_payload, JSON_OBJECT()), CAST(? AS JSON)),
+                                               '$.locator.session', CAST(? AS JSON)),
+                        failure_reason = ?, updated_at = NOW()
+                  WHERE id = ?`,
+                [
+                    input.source ?? 'whatsapp',
+                    normaliseProduct(productText),
+                    givenCar?.ok ? givenCar.car : (carText ? carText.slice(0, 80) : null),
+                    given(input.name)?.slice(0, 255) ?? null,
+                    JSON.stringify({ ...extra, locator: {} }),
+                    JSON.stringify(session),
+                    canReply ? null : 'Store locator not live for this number: details not asked',
+                    reuse,
+                ]
+            );
+            return;
+        }
         await db.execute(
             `INSERT INTO leads
                (id, source, product, car_model, customer_name, customer_phone, phone_key, flow_id, raw_payload, status, failure_reason)
@@ -129,11 +171,30 @@ export async function startConversation(input: {
     // The first question goes out while the lead is written: the customer
     // cannot answer it before the row exists, and does not wait for it.
     const ask = input.announce === false ? Promise.resolve()
-        : stage === 'product' ? sendList(phone, productMenu(leadId), leadId, 'product-menu')
-            : send(phone, stage === 'car' ? CAR_QUESTION : PINCODE_QUESTION, leadId, stage === 'car' ? 'car-question' : 'pincode-question');
+        : stage === 'vehicle' ? askVehicle(phone, leadId)
+            : send(phone, PINCODE_QUESTION, leadId, 'pincode-question');
     await Promise.all([write, ask]);
     console.log(`[Chat] ${phoneKey(phone)} started at ${stage} in ${Date.now() - started} ms — lead ${leadId}`);
     return { result: 'asked', leadId };
+}
+
+/*
+ * The lead of a chat from this number in the last two hours that never got a
+ * pincode, a store or a review — open, or already replaced by a restart. A new
+ * start goes on it instead of filing another empty lead.
+ */
+async function reusableChatLead(phone: string): Promise<string | null> {
+    const stages = [...OPEN_STAGES, 'replaced', 'restarted'];
+    const [rows]: any = await db.execute(
+        `SELECT id FROM leads
+          WHERE flow_id = ? AND phone_key = ?
+            AND created_at >= NOW() - INTERVAL 2 HOUR
+            AND status = 'unmatched' AND raw_area IS NULL AND store_id IS NULL AND review_status IS NULL
+            AND JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.locator.session.stage')) IN (${stages.map(() => '?').join(', ')})
+          ORDER BY created_at DESC LIMIT 1`,
+        [LOCATOR_FLOW_ID, phoneKey(phone), ...stages]
+    );
+    return rows[0]?.id ?? null;
 }
 
 async function endOpenChats(phone: string, how: 'replaced' | 'restarted') {
@@ -213,6 +274,12 @@ export function startFromMessage(phone: string, name: string | null, start: Star
             return false;
         }
         const product = start.kind === 'word' ? start.product : null;
+        /*
+         * "Price please" from someone answered within the day: their answer
+         * again, on their lead — not a fresh menu and a second lead. "Heyy",
+         * or another product, still starts a new enquiry.
+         */
+        if (start.kind === 'word' && await resendAnswer(phone, product)) return true;
         await startConversation({ phone, name, product, rawPayload: { source: start.kind === 'heyy' ? 'heyy' : 'start-word' } });
         return true;
     });
@@ -245,6 +312,12 @@ async function isTeamNumber(phone: string): Promise<boolean> {
  * a backup for when the message webhook is late or missed.
  */
 export function startFromHandoff(input: Parameters<typeof startConversation>[0]): Promise<void> {
+    /* A hand-off with no usable number (an unmapped workflow variable) cannot
+       be answered: starting a chat only made sends to "+91" fail. */
+    if (!/^\d{10}$/.test(localPhone(input.phone) || '')) {
+        console.log(`[Chat] hand-off ignored — no valid phone number ("${String(input.phone ?? '')}")`);
+        return Promise.resolve();
+    }
     return inOrder(phoneKey(input.phone), async () => {
         if (await chatStartedWithin(input.phone, 120, false)) {
             console.log(`[Chat] ${phoneKey(input.phone)} hand-off — chat already running`);
@@ -297,18 +370,32 @@ export async function handleConversationMessage(senderPhone: string, message: an
     const key = phoneKey(senderPhone);
     const type = String(message.message_content_type ?? '');
     const tap = menuTapFromWebhook(message);
-    if (/Reply$/.test(type) && !tap) return false;      // a store-list tap, not ours
+    const vtap = vehicleTapFromWebhook(message);
+    if (/Reply$/.test(type) && !tap && !vtap) return false;      // a store-list tap, not ours
 
     return inOrder(key, async () => {
         const started = Date.now();
         // Read inside the queue: a quick second message must see what the first one saved.
         let chat = await openChat(senderPhone);
-        if (!chat && !tap) return false;
+        if (!chat && !tap && !vtap) return false;
         if (!firstTime(message.id)) return true;
 
         const phone = chat?.customer_phone || senderPhone;
         const done = (what: string) => console.log(`[Chat] ${key} ${what} in ${Date.now() - started} ms`);
         try {
+            if (vtap) {
+                // A tap on the vehicle buttons of an earlier chat, or after this
+                // one moved on: start again from that answer.
+                if (!chat || chat.id !== vtap.leadId || chat.session.stage !== 'vehicle') {
+                    const fresh = await startConversation({ phone, announce: false });
+                    if (fresh.result === 'held') return true;
+                    chat = await openChat(senderPhone);
+                    if (!chat) return true;
+                }
+                await applyVehicle(chat, phone, vehicleStep(0, { tap: vtap.vehicle }));
+                done(`vehicle tap ${vtap.vehicle}`);
+                return true;
+            }
             if (tap) {
                 // A tap on a menu from an earlier chat, or after this one moved
                 // on: start again from that choice rather than ignore it.
@@ -332,7 +419,7 @@ export async function handleConversationMessage(senderPhone: string, message: an
 
             // The "Heyy" that the workflow's hand-off beat to us by a moment is
             // the same "Heyy", not a restart — restarting sent the menu twice.
-            if (isRestart(text) && current.session.stage === 'product'
+            if (isRestart(text) && (current.session.stage === 'vehicle' || current.session.stage === 'product')
                 && Date.now() - Date.parse(current.session.at ?? '') < 20_000) {
                 return true;
             }
@@ -353,6 +440,11 @@ export async function handleConversationMessage(senderPhone: string, message: an
 
             const stage = current.session.stage as ChatStage;
             const tries = Number(current.session.tries) || 0;
+            if (stage === 'vehicle') {
+                await applyVehicle(current, phone, vehicleStep(tries, { text }));
+                done('vehicle answer');
+                return true;
+            }
             if (stage === 'product' || stage === 'product-other') {
                 await applyMenu(current, phone, menuStep(stage, tries, { text }));
                 done(`menu answer at ${stage}`);
@@ -364,7 +456,7 @@ export async function handleConversationMessage(senderPhone: string, message: an
              * holds this customer's next message until both are done, so it
              * still sees the saved step.
              */
-            const step = await nextStep({ stage, tries }, text, isKnownPincode);
+            const step = await nextStep({ stage: stage as 'car' | 'pincode', tries }, text, isKnownPincode);
             if (step.kind === 'retry') {
                 await Promise.all([
                     saveSession(current.id, { ...current.session, tries: step.tries, at: nowIso() }),
@@ -424,6 +516,52 @@ export async function handleConversationMessage(senderPhone: string, message: an
             return true;
         }
     });
+}
+
+/**
+ * The vehicle answer. A 4-wheeler goes on as the chat always has — the product
+ * menu, or the car when the product is already known. A 2-wheeler gets the
+ * Customer Executive's number, the executive is alerted (the support lead
+ * alert, with "2-Wheeler" as the vehicle), and the chat ends on this lead.
+ */
+async function applyVehicle(chat: OpenChat, phone: string, step: ReturnType<typeof vehicleStep>) {
+    if (step.kind === 'retry') {
+        await Promise.all([
+            saveSession(chat.id, { ...chat.session, tries: step.tries, at: nowIso() }),
+            send(phone, VEHICLE_RETRY, chat.id, 'vehicle-retry'),
+        ]);
+        return;
+    }
+    const vehicle: Vehicle = step.vehicle;
+    if (vehicle === '4w') {
+        const knowsProduct = Boolean(chat.product || chat.session.choice);
+        await Promise.all([
+            saveSession(chat.id, {
+                ...chat.session, stage: knowsProduct ? 'car' : 'product', tries: 0, at: nowIso(),
+                vehicle, vehicle_checked: step.checked,
+            }),
+            knowsProduct
+                ? send(phone, CAR_QUESTION, chat.id, 'car-question')
+                : sendList(phone, productMenu(chat.id, false), chat.id, 'product-menu'),
+        ]);
+        return;
+    }
+
+    const settings = await getLocatorSettings();
+    await Promise.all([
+        saveSession(chat.id, { ...chat.session, stage: 'done', tries: 0, at: nowIso(), vehicle, vehicle_checked: true }, { car_model: '2-Wheeler' }),
+        send(phone, twoWheelerText(settings.support_phone), chat.id, 'two-wheeler'),
+    ]);
+    // Live only, as every alert: a test from a team phone must not reach the executive.
+    const alert = await notifyOnce(
+        { id: chat.id, customer_phone: phone, product: chat.product, car_model: '2-Wheeler', notified: null, location: '' },
+        'support', settings.support_phone || null, settings.support_name, settings.whatsapp_live,
+    ).catch(() => 'failed' as const);
+    if (alert !== 'sent') {
+        await db.execute('UPDATE leads SET failure_reason = ? WHERE id = ?',
+            [`2-Wheeler enquiry: executive not alerted (${alert})`, chat.id]);
+    }
+    console.log(`[Chat] lead ${chat.id} 2-wheeler — executive ${alert}`);
 }
 
 /** Act on a menu step: show a menu (or a retry), or take the product and ask for the car. */

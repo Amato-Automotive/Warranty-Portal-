@@ -55,6 +55,9 @@ const LOCATOR_TEXT: Record<string, string> = {
 
 /* What each of our chat's messages asked or said (locatorConversation.service). */
 const CHAT_TEXT: Record<string, string> = {
+    'vehicle-question': 'Asked: 4-wheeler or 2-wheeler',
+    'vehicle-retry': 'Asked again: 4-wheeler or 2-wheeler',
+    'two-wheeler': "2-wheeler: sent the Customer Executive's number",
     'product-menu': 'Sent the product menu',
     'other-menu': 'Sent the Other Products menu',
     'product-retry': 'Asked them to pick from the menu',
@@ -104,8 +107,9 @@ export function describeMessage(m: LoggedMessage, ctx: MessageContext): LeadMess
         return { ...base, to: 'asm', toName: ctx.asm?.name ?? 'ASM', what: 'New enquiry alert' };
     }
 
+    // af_support_lead_alert is retired (never approved); kept so old log rows still read as support's.
     if (template === 'af_support_lead_alert'
-        || (tail && tail === phoneTail(ctx.support.phone) && template === 'af_franchise_lead_transfer')) {
+        ||(tail && tail === phoneTail(ctx.support.phone) && template === 'af_franchise_lead_transfer')) {
         return { ...base, to: 'support', toName: ctx.support.name, what: 'New lead alert' };
     }
 

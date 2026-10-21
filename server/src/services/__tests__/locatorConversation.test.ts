@@ -1,8 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readCarAnswer } from '../carModels.js';
-import { nextStep, menuStep, isRestart, isCancel, isIdle, startWord, MAX_TRIES } from '../locatorConversation.js';
-import { menuTapFromWebhook, productMenu } from '../storeLocatorMessages.js';
+import { nextStep, menuStep, isRestart, isCancel, isIdle, startWord, MAX_TRIES, readVehicleAnswer, vehicleStep } from '../locatorConversation.js';
+import { menuTapFromWebhook, productMenu, vehicleQuestion, vehicleTapFromWebhook, twoWheelerText, BUTTON_TITLE_MAX } from '../storeLocatorMessages.js';
 import { CAR_RETRY, PINCODE_QUESTION, INVALID_PINCODE_TEXT, NO_PINCODE_END } from '../storeLocatorMessages.js';
 
 describe('readCarAnswer — lenient, tidies known models', () => {
@@ -155,5 +155,43 @@ describe('list bodies keep their line breaks', () => {
         const body = productMenu('L').message.body.text;
         assert.match(body, /Autoform India\.\n\n🚘/);
         assert.ok(!/ {2}/.test(body));
+    });
+});
+
+describe('4-wheeler or 2-wheeler — the first question', () => {
+    test('typed answers are read', () => {
+        for (const t of ['2', 'two', '2 wheeler', '2-wheeler', 'Two Wheeler', 'bike', 'Scooty', 'scooter', 'motorcycle', 'activa', '2W', 'its a bike']) {
+            assert.equal(readVehicleAnswer(t), '2w', t);
+        }
+        for (const t of ['4', 'four', '4 wheeler', '4-Wheeler', 'car', 'SUV', 'Car 🚗', '4w']) {
+            assert.equal(readVehicleAnswer(t), '4w', t);
+        }
+    });
+    test('anything else is not an answer', () => {
+        for (const t of ['2 seat covers', 'Creta', 'hello', '', '201301']) assert.equal(readVehicleAnswer(t), null, t);
+    });
+    test('one retry, then it goes on as a 4-wheeler, marked unchecked', () => {
+        assert.deepEqual(vehicleStep(0, { text: 'what?' }), { kind: 'retry', tries: 1 });
+        assert.deepEqual(vehicleStep(1, { text: 'what?' }), { kind: 'chosen', vehicle: '4w', checked: false });
+        assert.deepEqual(vehicleStep(0, { tap: '2w' }), { kind: 'chosen', vehicle: '2w', checked: true });
+    });
+    test('the buttons fit WhatsApp and carry the lead id', () => {
+        const q = vehicleQuestion('abc-123');
+        assert.equal(q.message.action.buttons.length, 2);
+        for (const b of q.message.action.buttons) assert.ok(b.reply.title.length <= BUTTON_TITLE_MAX, b.reply.title);
+        assert.deepEqual(q.message.action.buttons.map(b => b.reply.id), ['vt:abc-123:4w', 'vt:abc-123:2w']);
+    });
+    test('a button tap is read back; other taps are not vehicle taps', () => {
+        const tap = (id: string) => ({ message: JSON.stringify({ type: 'button_reply', button_reply: { id, title: 'x' } }) });
+        assert.deepEqual(vehicleTapFromWebhook(tap('vt:abc-123:2w')), { leadId: 'abc-123', vehicle: '2w' });
+        assert.equal(vehicleTapFromWebhook(tap('pm:abc-123:seat')), null);
+        assert.equal(vehicleTapFromWebhook(tap('vt:abc-123:3w')), null);
+        assert.equal(menuTapFromWebhook(tap('vt:abc-123:4w')), null);
+    });
+    test('the 2-wheeler reply gives the executive number; the menu after it does not greet again', () => {
+        assert.match(twoWheelerText('917217014601'), /\+91 72170 14601/);
+        assert.match(twoWheelerText(''), /call you shortly/);
+        assert.ok(!/Hello/.test(productMenu('L', false).message.body.text));
+        assert.match(productMenu('L').message.body.text, /Hello/);
     });
 });
