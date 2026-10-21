@@ -17,8 +17,7 @@ import {
     ChevronLeft,
     LogOut,
     User,
-    PhoneIncoming
-}
+    PhoneIncoming, MessageSquareHeart }
     from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNotifications } from "@/contexts/NotificationContext";
@@ -47,6 +46,7 @@ export type FmsModule =
     | 'audit'
     | 'targets'
     | 'posm'
+    | 'feedback'
     | 'terms'
     | 'claim-process'
     | 'profile';
@@ -187,6 +187,7 @@ export const menuGroups = [
                 icon: Gift,
             },
             { id: 'audit' as const, label: "Audit & Compliance", icon: ClipboardCheck },
+            { id: 'feedback' as const, label: "Review & Feedback", icon: MessageSquareHeart },
         ]
     },
     {
@@ -197,7 +198,7 @@ export const menuGroups = [
                 label: "News & Alerts",
                 icon: Bell,
             },
-            { id: 'grievances' as const, label: "Grievance Redressal", icon: LifeBuoy },
+            { id: 'grievances' as const, label: "Complaint Redressal", icon: LifeBuoy },
             { id: 'terms' as const, label: "Terms & Conditions", icon: BookOpen },
             { id: 'claim-process' as const, label: "Claim Process", icon: ClipboardList },
         ]
@@ -242,7 +243,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
         let items = group.items;
 
         if (isDistributor && !isFranchise) {
-            const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets'];
+            const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets', 'feedback'];
             items = items.filter(item => !franchiseOnly.includes(item.id));
         }
 

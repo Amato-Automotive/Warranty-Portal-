@@ -28,6 +28,7 @@ import uploadRoutes from './routes/upload.routes.js';
 import oldWarrantiesRoutes from './routes/old-warranties.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import posmRoutes from './routes/posm.routes.js';
+import feedbackRoutes from './routes/feedback.routes.js';
 import schemeRoutes from './routes/scheme.routes.js';
 import uidRoutes from './routes/uid.routes.js';
 import orderRoutes from './routes/order.routes.js';
@@ -448,6 +449,24 @@ async function runMigrations() {
       }
     }
 
+    // Review & Feedback: the admin's form, and each store's answers (one a month).
+    await pool.query(`CREATE TABLE IF NOT EXISTS feedback_settings (
+         id TINYINT NOT NULL PRIMARY KEY,
+         settings JSON NOT NULL,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS feedback_responses (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         store_id CHAR(36) NOT NULL,
+         month CHAR(7) NOT NULL,
+         answers JSON NOT NULL,
+         submitted_by CHAR(36) NULL,
+         submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE KEY uq_feedback_store_month (store_id, month),
+         KEY idx_feedback_month (month)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');
   } catch (error: any) {
@@ -644,6 +663,7 @@ app.use('/api/upload', generalApiLimiter, uploadRoutes);
 app.use('/api/admin/old-warranties', generalApiLimiter, oldWarrantiesRoutes);
 app.use('/api/settings', generalApiLimiter, settingsRoutes);
 app.use('/api/posm', generalApiLimiter, posmRoutes);
+app.use('/api/feedback', generalApiLimiter, feedbackRoutes);
 app.use('/api/schemes', generalApiLimiter, schemeRoutes);
 app.use('/api/uid', generalApiLimiter, uidRoutes);
 app.use('/api/orders', generalApiLimiter, orderRoutes);

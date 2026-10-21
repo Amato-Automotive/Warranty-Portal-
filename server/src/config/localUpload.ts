@@ -309,6 +309,20 @@ export const posmItemUpload = multer({
     },
 });
 
+/** Review & Feedback photos → uploads/feedback/YYYY-MM/. Images only. */
+export const feedbackUpload = multer({
+    storage: multer.diskStorage({
+        destination: createDestination('feedback'),
+        filename: genericFileName,
+    }),
+    limits: { fileSize: 15 * 1024 * 1024, files: 20 },
+    fileFilter: (_req, file, cb) => {
+        const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+        if (['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext) || /^image\//.test(file.mimetype)) cb(null, true);
+        else cb(new Error(`Only photos can be attached: ${file.originalname}`));
+    },
+});
+
 /** Offers & Schemes: banners and the stores' entry files → uploads/schemes/YYYY-MM/.
  *  Which formats a field accepts is the scheme's own rule, checked after upload. */
 export const schemeUpload = multer({

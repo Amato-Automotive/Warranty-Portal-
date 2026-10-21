@@ -195,7 +195,7 @@ const ReplyBox = ({ withFiles, onSend }: { withFiles?: boolean; onSend: (text: s
 
 /** One grievance or POSM request: a line you can open to read all of it. */
 const Row = ({ kind, title, status, statusClass, sub, children }: {
-    kind: "Grievance" | "POSM"; title: string; status: string; statusClass: string; sub: string; children: React.ReactNode;
+    kind: "Complaint" | "POSM"; title: string; status: string; statusClass: string; sub: string; children: React.ReactNode;
 }) => {
     const [open, setOpen] = useState(false);
     return (
@@ -216,9 +216,9 @@ const Row = ({ kind, title, status, statusClass, sub, children }: {
 
 const GrievanceRow = ({ g, onReply }: { g: Grievance; onReply: (g: Grievance, text: string) => Promise<boolean> }) => (
     <Row
-        kind="Grievance"
+        kind="Complaint"
         sub={g.ticket_id}
-        title={g.subject || sentence(g.category || "Grievance")}
+        title={g.subject || sentence(g.category || "Complaint")}
         status={`${sentence(g.status)}, raised ${GRIEVANCE_DONE.includes(g.status) ? formatDay(g.created_at) : ageOf(g.created_at)}${g.source_type === "franchise" ? (raisedBy(g.created_by_role, g.created_by_name) || " by the store") : " by a customer"}`}
         statusClass={statusTone(g.status, GRIEVANCE_DONE)}
     >
@@ -484,13 +484,13 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                                         <Plus className="h-4 w-4 mr-1" /> Raise POSM
                                     </Button>
                                     <Button size="sm" variant="outline" onClick={() => setRaising("grievance")} className="h-9 rounded-xl border-orange-200 text-orange-700 hover:bg-orange-50">
-                                        <Plus className="h-4 w-4 mr-1" /> Raise grievance
+                                        <Plus className="h-4 w-4 mr-1" /> Raise complaint
                                     </Button>
                                 </div>
                             )}
                         </div>
                         {waiting.length === 0
-                            ? <p className="mt-2 text-sm text-slate-500">No open grievances or POSM requests.</p>
+                            ? <p className="mt-2 text-sm text-slate-500">No open complaints or POSM requests.</p>
                             : <div className="mt-3"><List>{waiting.map(w => w.el)}</List></div>}
                     </section>
 
@@ -500,7 +500,7 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                             <div className="flex items-center justify-between gap-3">
                                 <h3 className="text-base font-semibold text-slate-900">Closed</h3>
                                 <div role="tablist" className="inline-flex rounded-lg bg-slate-100 p-0.5 text-sm">
-                                    {([["grievances", "Grievances", closedG.length], ["posm", "POSM", closedP.length]] as const).map(([id, label, n]) => (
+                                    {([["grievances", "Complaints", closedG.length], ["posm", "POSM", closedP.length]] as const).map(([id, label, n]) => (
                                         <button key={id} role="tab" aria-selected={history === id} onClick={() => setHistory(id)}
                                             className={cn("h-8 px-3 rounded-md font-medium transition-colors", history === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}>
                                             {label} <span className="tabular-nums text-slate-400">{n}</span>
@@ -510,7 +510,7 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                             </div>
                             <div className="mt-3">
                                 {history === "grievances"
-                                    ? closedG.length ? <List>{closedG.map(g => <GrievanceRow key={g.id} g={g} onReply={replyGrievance} />)}</List> : <p className="text-sm text-slate-500">No closed grievances.</p>
+                                    ? closedG.length ? <List>{closedG.map(g => <GrievanceRow key={g.id} g={g} onReply={replyGrievance} />)}</List> : <p className="text-sm text-slate-500">No closed complaints.</p>
                                     : closedP.length ? <List>{closedP.map(r => <PosmRow key={r.id} r={r} onReply={replyPosm} />)}</List> : <p className="text-sm text-slate-500">No closed POSM requests.</p>}
                             </div>
                         </section>

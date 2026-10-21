@@ -163,7 +163,7 @@ export const AdminGrievances = () => {
         } catch (error: any) {
             toast({
                 title: "Error",
-                description: "Failed to fetch grievances",
+                description: "Failed to fetch complaints",
                 variant: "destructive",
             });
         } finally {
@@ -393,7 +393,7 @@ export const AdminGrievances = () => {
         try {
             const response = await api.post("/grievance/franchise", grievancePayload(draft, { franchiseId: obFranchiseId }));
             toast({
-                title: "Grievance filed",
+                title: "Complaint filed",
                 description: response.data?.message || "It is now in the queue and assigned.",
             });
             setOnBehalfOpen(false);
@@ -401,7 +401,7 @@ export const AdminGrievances = () => {
             return true;
         } catch (error: any) {
             toast({
-                title: "Could not file the grievance",
+                title: "Could not file the complaint",
                 description: getErrorMessage(error, "Failed to submit"),
                 variant: "destructive",
             });
@@ -427,7 +427,7 @@ export const AdminGrievances = () => {
     const exportToCSV = () => {
         const dataToExport = filteredGrievances;
         if (dataToExport.length === 0) {
-            toast({ title: "No Data", description: "No grievances to export with current filters.", variant: "destructive" });
+            toast({ title: "No Data", description: "No complaints to export with current filters.", variant: "destructive" });
             return;
         }
 
@@ -459,7 +459,7 @@ export const AdminGrievances = () => {
         link.click();
         URL.revokeObjectURL(link.href);
 
-        toast({ title: "Exported", description: `${dataToExport.length} franchise grievances exported to CSV.` });
+        toast({ title: "Exported", description: `${dataToExport.length} franchise complaints exported to CSV.` });
     };
 
     if (loading) {
@@ -477,7 +477,7 @@ export const AdminGrievances = () => {
                 <Card className="border-orange-100 shadow-sm">
                     <CardContent className="pt-4 md:pt-6 p-4 md:p-6">
                         <p className="text-2xl md:text-3xl font-bold text-slate-800">{stats.total}</p>
-                        <p className="text-xs md:text-sm text-slate-500">Total Grievances</p>
+                        <p className="text-xs md:text-sm text-slate-500">Total Complaints</p>
                     </CardContent>
                 </Card>
                 <Card className="border-orange-100 shadow-sm">
@@ -646,7 +646,7 @@ export const AdminGrievances = () => {
                     <Card className="border-orange-100 shadow-sm overflow-hidden">
                         <CardContent className="py-12 text-center">
                             <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                            <p className="text-muted-foreground">No grievances found</p>
+                            <p className="text-muted-foreground">No complaints found</p>
                         </CardContent>
                     </Card>
                 ) : (
@@ -1065,7 +1065,7 @@ export const AdminGrievances = () => {
                                                         if (linkedWarrantyId) {
                                                             handleViewWarranty(linkedWarrantyId);
                                                         } else {
-                                                            toast({ description: "No Warranty ID linked to this grievance." });
+                                                            toast({ description: "No Warranty ID linked to this complaint." });
                                                         }
                                                     }}
                                                     disabled={!linkedWarrantyId || loadingWarranty}
@@ -1186,7 +1186,7 @@ export const AdminGrievances = () => {
                                         </div>
 
                                         <Button onClick={handleSaveChanges} disabled={updating} className="w-full h-12 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-orange-500/20 bg-orange-600 hover:bg-orange-700 transition-all">
-                                            {updating ? (<><Loader2 className="h-4 w-4 mr-3 animate-spin" /> Committing Changes...</>) : "Save Grievance Updates"}
+                                            {updating ? (<><Loader2 className="h-4 w-4 mr-3 animate-spin" /> Committing Changes...</>) : "Save Complaint Updates"}
                                         </Button>
                                     </div>
                                 </TabsContent>
@@ -1363,10 +1363,10 @@ export const AdminGrievances = () => {
                 <DialogContent className="max-w-xl max-h-[90vh] flex flex-col p-0 gap-0">
                     <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
                         <DialogTitle className="text-base flex items-center gap-2">
-                            <Store className="h-4 w-4 text-orange-500" /> Raise a grievance for a franchise
+                            <Store className="h-4 w-4 text-orange-500" /> Raise a complaint for a franchise
                         </DialogTitle>
                         <DialogDescription className="text-xs">
-                            For grievances received by phone or email. It is filed against the
+                            For complaints received by phone or email. It is filed against the
                             store and auto-assigned exactly like a self-raised one.
                         </DialogDescription>
                     </DialogHeader>
@@ -1422,7 +1422,7 @@ export const AdminGrievances = () => {
 
                         {/* The franchise's own form, so every route asks identically. */}
                         {selectedFranchise && (
-                            <GrievanceForm onSubmit={handleCreateOnBehalf} submitLabel="File grievance" />
+                            <GrievanceForm onSubmit={handleCreateOnBehalf} submitLabel="File complaint" />
                         )}
                     </div>
 

@@ -140,7 +140,7 @@ const VendorGrievances = () => {
         } catch (error: any) {
             toast({
                 title: "Error",
-                description: "Failed to fetch grievances",
+                description: "Failed to fetch complaints",
                 variant: "destructive",
             });
         } finally {
@@ -193,8 +193,8 @@ const VendorGrievances = () => {
             const response = await api.post('/grievance/franchise', grievancePayload(draft));
             if (!response.data.success) return false;
             toast({
-                title: "Grievance Submitted",
-                description: "Your grievance has been submitted successfully.",
+                title: "Complaint Submitted",
+                description: "Your complaint has been submitted successfully.",
                 className: "bg-green-500 text-white"
             });
             setShowNewGrievanceForm(false);
@@ -204,7 +204,7 @@ const VendorGrievances = () => {
             console.error("Submit grievance error:", error);
             toast({
                 title: "Submission Failed",
-                description: getErrorMessage(error, "Failed to submit grievance"),
+                description: getErrorMessage(error, "Failed to submit complaint"),
                 variant: "destructive"
             });
             return false;
@@ -265,7 +265,7 @@ const VendorGrievances = () => {
         <div className="animate-in fade-in duration-700 space-y-6">
             {/* Unified Header */}
             <div className="flex justify-between items-center bg-white py-3 md:py-4 px-4 md:px-6 rounded-2xl md:rounded-3xl border border-orange-100 shadow-[0_8px_30px_rgba(0,0,0,0.02)]">
-                <h2 className="text-base md:text-lg font-black text-slate-800 tracking-tight">Grievances</h2>
+                <h2 className="text-base md:text-lg font-black text-slate-800 tracking-tight">Complaints</h2>
 
                 <div className="flex items-center gap-2 md:gap-3">
                     <Button
@@ -302,9 +302,9 @@ const VendorGrievances = () => {
                     <Card className="border-dashed">
                         <CardContent className="py-12 text-center">
                             <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                            <p className="text-muted-foreground">You haven't submitted any grievances yet</p>
+                            <p className="text-muted-foreground">You haven't submitted any complaints yet</p>
                             <Button variant="link" onClick={() => setShowNewGrievanceForm(true)}>
-                                Submit your first grievance
+                                Submit your first complaint
                             </Button>
                         </CardContent>
                     </Card>
@@ -372,7 +372,7 @@ const VendorGrievances = () => {
                 <Dialog open={showNewGrievanceForm} onOpenChange={setShowNewGrievanceForm}>
                     <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0 border-0 rounded-[30px] shadow-2xl bg-white">
                         <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 bg-slate-50/50">
-                            <DialogTitle className="text-xl font-black text-slate-800">Submit New Grievance</DialogTitle>
+                            <DialogTitle className="text-xl font-black text-slate-800">Submit New Complaint</DialogTitle>
                             <DialogDescription className="text-slate-500">
                                 Report an issue to the Concerned Department.
                             </DialogDescription>
@@ -381,7 +381,8 @@ const VendorGrievances = () => {
                         <div className="p-6">
                             <GrievanceForm
                                 onSubmit={handleSubmitGrievance}
-                                footnote="Your grievance will be sent to the selected department and tracked by admin."
+                                submitLabel="Submit Complaint"
+                                footnote="Your complaint will be sent to the selected department and tracked by admin."
                             />
                         </div>
                     </DialogContent>
@@ -393,9 +394,9 @@ const VendorGrievances = () => {
             <Dialog open={!!selectedGrievance} onOpenChange={() => setSelectedGrievance(null)}>
                 <DialogContent className="max-w-2xl h-[85vh] p-0 border-0 rounded-[30px] overflow-hidden shadow-2xl flex flex-col font-sans bg-white">
                     <DialogHeader className="sr-only">
-                        <DialogTitle>Grievance Details</DialogTitle>
+                        <DialogTitle>Complaint Details</DialogTitle>
                         <DialogDescription>
-                            Details for grievance {selectedGrievance?.ticket_id}
+                            Details for complaint {selectedGrievance?.ticket_id}
                         </DialogDescription>
                     </DialogHeader>
                     {selectedGrievance && (
@@ -544,7 +545,7 @@ const VendorGrievances = () => {
                                                         if (linkedWarrantyId) {
                                                             handleViewWarranty(linkedWarrantyId);
                                                         } else {
-                                                            toast({ description: "No Warranty ID linked to this grievance." });
+                                                            toast({ description: "No Warranty ID linked to this complaint." });
                                                         }
                                                     }}
                                                     disabled={!linkedWarrantyId || loadingWarranty}

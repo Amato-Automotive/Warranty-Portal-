@@ -814,7 +814,7 @@ const VendorDashboard = () => {
                             Catalogue
                         </TabsTrigger>
                         <TabsTrigger value="grievance" className="flex-1 min-w-[80px] rounded-md py-2 px-2 text-xs font-medium data-[state=active]:bg-white data-[state=active]:shadow-sm text-orange-700 data-[state=active]:text-orange-800 data-[state=active]:border-2 data-[state=active]:border-orange-500/20 transition-all">
-                            Grievances
+                            Complaints
                         </TabsTrigger>
 
                     </TabsList>

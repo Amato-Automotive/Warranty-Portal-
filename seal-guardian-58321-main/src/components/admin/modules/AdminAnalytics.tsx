@@ -249,7 +249,7 @@ export const AdminAnalytics = ({ onNavigate }: { onNavigate: (module: AdminModul
                     { label: 'Pending', value: summary?.franchise?.pending, color: 'text-amber-500' },
                     { label: 'Rejected', value: summary?.franchise?.disapproved, color: 'text-rose-500' },
                     { label: 'In Warranty', value: summary?.participation?.warranty_participation, color: 'text-blue-500' },
-                    { label: 'In Grievance', value: summary?.participation?.grievance_participation, color: 'text-red-500' },
+                    { label: 'In Complaint', value: summary?.participation?.grievance_participation, color: 'text-red-500' },
                     { label: 'In POSM', value: summary?.participation?.posm_participation, color: 'text-purple-500' }
                 ];
             case 'warranty':
@@ -323,7 +323,7 @@ export const AdminAnalytics = ({ onNavigate }: { onNavigate: (module: AdminModul
                     onClick={() => setSelectedView('warranty')}
                 />
                 <StatsCard
-                    title="Grievance Rate"
+                    title="Complaint Rate"
                     value={summary?.grievance?.total}
                     icon={MessageSquare}
                     trend="-5%"

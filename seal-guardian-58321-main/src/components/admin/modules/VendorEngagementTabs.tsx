@@ -124,7 +124,7 @@ export const VendorEngagementTabs = ({ vendorDetailsId, userId, kind }: Props) =
             ClipboardCheck;
         const text =
             kind === "posm" ? "No POSM requests from this store yet." :
-            kind === "grievances" ? "No grievances raised by this store." :
+            kind === "grievances" ? "No complaints raised by this store." :
             kind === "orders" ? "No orders placed by this store yet." :
             "No audits recorded for this store yet.";
         return (

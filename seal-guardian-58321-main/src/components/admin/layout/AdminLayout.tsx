@@ -32,6 +32,7 @@ const AdminWarrantyForm = lazy(() => import("../modules/AdminWarrantyForm").then
 const AdminAnnouncements = lazy(() => import("../modules/AdminAnnouncements").then(({ AdminAnnouncements }) => ({ default: AdminAnnouncements })));
 const AdminNotificationSettings = lazy(() => import("../modules/AdminNotificationSettings").then(({ AdminNotificationSettings }) => ({ default: AdminNotificationSettings })));
 const AdminFranchiseDistributorMap = lazy(() => import("../modules/AdminFranchiseDistributorMap").then(({ AdminFranchiseDistributorMap }) => ({ default: AdminFranchiseDistributorMap })));
+const AdminFeedback = lazy(() => import("../modules/AdminFeedback").then(({ AdminFeedback }) => ({ default: AdminFeedback })));
 const AdminAudits = lazy(() => import("../modules/AdminAudits").then(({ AdminAudits }) => ({ default: AdminAudits })));
 const AdminPortalActivity = lazy(() => import("../modules/AdminPortalActivity").then(({ AdminPortalActivity }) => ({ default: AdminPortalActivity })));
 const AdminOldWarranties = lazy(() => import("../modules/AdminOldWarranties").then(({ AdminOldWarranties }) => ({ default: AdminOldWarranties })));
@@ -114,6 +115,8 @@ export const AdminLayout = () => {
                 return <AdminAsmExpenses />;
             case 'posm':
                 return <AdminPOSM />;
+            case 'feedback':
+                return <AdminFeedback />;
             case 'schemes':
                 return <AdminSchemes />;
             case 'uid-management':

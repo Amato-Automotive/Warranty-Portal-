@@ -171,7 +171,7 @@ export default function AssignmentUpdatePanel() {
                             <span className="p-2 bg-orange-500 rounded-lg text-white">
                                 <MessageSquare className="h-5 w-5" />
                             </span>
-                            <h2 className="text-sm font-semibold uppercase tracking-wider text-orange-500">Grievance Assignment</h2>
+                            <h2 className="text-sm font-semibold uppercase tracking-wider text-orange-500">Complaint Assignment</h2>
                         </div>
                         <h1 className="text-3xl font-extrabold tracking-tight dark:text-white">
                             Task Update Portal
@@ -239,7 +239,7 @@ export default function AssignmentUpdatePanel() {
                         <Card className="shadow-xl border-2 border-slate-100 dark:border-slate-800 overflow-hidden">
                             <div className="h-2 bg-gradient-to-r from-orange-500 to-red-500"></div>
                             <CardHeader>
-                                <CardTitle>Grievance Details</CardTitle>
+                                <CardTitle>Complaint Details</CardTitle>
                                 <CardDescription>Below are the details shared by the customer</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">

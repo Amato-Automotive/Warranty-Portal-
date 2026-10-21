@@ -110,7 +110,7 @@ const ThankYouPage = () => {
                       <span className="flex-shrink-0 h-6 w-6 bg-white rounded-full flex items-center justify-center text-orange-500 font-bold shadow-sm text-xs">3</span>
                       <p className="text-sm">
                         <span className="font-bold text-slate-800 block mb-1 underline decoration-orange-300 decoration-2 underline-offset-4">Support & Complaints</span>
-                        Encountered a product issue? File a grievance or complaint directly through the portal for priority resolution by our team.
+                        Encountered a product issue? File a complaint directly through the portal for priority resolution by our team.
                       </p>
                     </li>
                   </ul>

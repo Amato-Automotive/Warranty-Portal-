@@ -59,7 +59,7 @@ const formatFileSize = (bytes: number) =>
 export function GrievanceForm({
     onSubmit,
     categoriesUrl = "/grievance/categories?active=true",
-    submitLabel = "Submit Grievance",
+    submitLabel = "Submit Complaint",
     footnote,
     disabled,
 }: {

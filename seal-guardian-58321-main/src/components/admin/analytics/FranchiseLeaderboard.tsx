@@ -29,7 +29,7 @@ export const FranchiseLeaderboard = ({ franchises }: FranchiseLeaderboardProps) 
                                     "State": f.state,
                                     "Total Registrations": f.total_registrations,
                                     "Approved Warranties": f.warranty_count,
-                                    "Grievances": f.grievance_count,
+                                    "Complaints": f.grievance_count,
                                     "POSM Requests": f.posm_count,
                                     "Status": f.is_verified ? "Approved" : f.verified_at ? "Rejected" : "Pending"
                                 })) || [], 
@@ -49,7 +49,7 @@ export const FranchiseLeaderboard = ({ franchises }: FranchiseLeaderboardProps) 
                             <tr className="bg-slate-50/50">
                                 <th className="py-5 px-8 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">Franchise Intelligence</th>
                                 <th className="py-5 px-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Warranty Flow</th>
-                                <th className="py-5 px-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Grievances</th>
+                                <th className="py-5 px-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Complaints</th>
                                 <th className="py-5 px-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">POSM Velocity</th>
                                 <th className="py-5 px-8 text-right text-[10px] font-black uppercase tracking-widest text-slate-400">Status</th>
                             </tr>

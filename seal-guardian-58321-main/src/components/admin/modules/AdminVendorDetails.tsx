@@ -1096,7 +1096,7 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                         <>
                             <TabsTrigger value="orders" className="py-2.5">Orders</TabsTrigger>
                             <TabsTrigger value="posm" className="py-2.5">POSM</TabsTrigger>
-                            <TabsTrigger value="grievances" className="py-2.5">Grievances</TabsTrigger>
+                            <TabsTrigger value="grievances" className="py-2.5">Complaints</TabsTrigger>
                             <TabsTrigger value="audits" className="py-2.5">Audits</TabsTrigger>
                             <TabsTrigger value="sourcing" className="py-2.5">Sourcing</TabsTrigger>
                             <TabsTrigger value="announcements" className="py-2.5">Announcements</TabsTrigger>

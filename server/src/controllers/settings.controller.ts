@@ -54,6 +54,44 @@ const validateSettingValue = (key: string, value: unknown): string | null => {
     return null;
 };
 
+/** Each brand's e-catalogue settings: Autoform keeps the original keys. */
+export const ECATALOGUE_KEYS = {
+    AF: { flipbook: 'ecatalogue_flipbook_url', download: 'ecatalogue_download_url' },
+    AC: { flipbook: 'ecatalogue_ac_flipbook_url', download: 'ecatalogue_ac_download_url' },
+} as const;
+
+/** The brands a franchise carries ('AF', 'AC', 'AFAC'; none set means AF). */
+export const brandsOf = (allowed: unknown): ('AF' | 'AC')[] => {
+    const b = String(allowed || 'AF').toUpperCase();
+    const out: ('AF' | 'AC')[] = [];
+    if (b.includes('AF')) out.push('AF');
+    if (b.includes('AC')) out.push('AC');
+    return out.length ? out : ['AF'];
+};
+
+/**
+ * The e-catalogues this franchise may see: its own brand's, or both for
+ * an AF + AC store. GET /api/settings/ecatalogue/mine
+ */
+export const getMyECatalogues = async (req: Request, res: Response) => {
+    try {
+        // @ts-ignore
+        const userId = req.user?.id;
+        const [vd]: any = await pool.query('SELECT allowed_brands FROM vendor_details WHERE user_id = ? LIMIT 1', [userId]);
+        const brands = brandsOf(vd[0]?.allowed_brands);
+        const keys = brands.flatMap(b => [ECATALOGUE_KEYS[b].flipbook, ECATALOGUE_KEYS[b].download]);
+        const [rows]: any = await pool.query('SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN (?)', [keys]);
+        const val = (k: string) => String(rows.find((r: any) => r.setting_key === k)?.setting_value ?? '').trim();
+        res.json({
+            success: true,
+            data: brands.map(b => ({ brand: b, flipbook_url: val(ECATALOGUE_KEYS[b].flipbook), download_url: val(ECATALOGUE_KEYS[b].download) })),
+        });
+    } catch (error) {
+        console.error('Error fetching e-catalogues:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
 export const updateSetting = async (req: Request, res: Response) => {
     try {
         const { key } = req.params;

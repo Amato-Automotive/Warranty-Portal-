@@ -20,12 +20,12 @@ export const AsmRaiseGrievance = ({ storeId, storeName, open, onOpenChange, onRa
     const submit = async (draft: GrievanceDraft) => {
         try {
             const r = await api.post(`/asm-portal/stores/${storeId}/grievances`, grievancePayload(draft));
-            toast({ title: `Grievance raised — ${r.data?.data?.ticketId ?? ""}`.trim(), description: r.data?.message });
+            toast({ title: `Complaint raised — ${r.data?.data?.ticketId ?? ""}`.trim(), description: r.data?.message });
             onOpenChange(false);
             onRaised();
             return true;
         } catch (e) {
-            toast({ title: "Could not raise the grievance", description: getErrorMessage(e, "Please try again."), variant: "destructive" });
+            toast({ title: "Could not raise the complaint", description: getErrorMessage(e, "Please try again."), variant: "destructive" });
             return false;
         }
     };
@@ -34,14 +34,14 @@ export const AsmRaiseGrievance = ({ storeId, storeName, open, onOpenChange, onRa
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0 border-0 rounded-[30px] shadow-2xl bg-white">
                 <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 bg-slate-50/50">
-                    <DialogTitle className="text-xl font-black text-slate-800">Raise a grievance for {storeName}</DialogTitle>
+                    <DialogTitle className="text-xl font-black text-slate-800">Raise a complaint for {storeName}</DialogTitle>
                     <DialogDescription className="text-slate-500">
-                        Filed as the store's grievance and sent to the right team, marked as raised by you. The store is told.
+                        Filed as the store's complaint and sent to the right team, marked as raised by you. The store is told.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="p-6">
                     {/* Mounted only while open, so each opening starts blank. */}
-                    {open && <GrievanceForm onSubmit={submit} categoriesUrl="/asm-portal/grievance-categories" submitLabel="Raise grievance" />}
+                    {open && <GrievanceForm onSubmit={submit} categoriesUrl="/asm-portal/grievance-categories" submitLabel="Raise complaint" />}
                 </div>
             </DialogContent>
         </Dialog>

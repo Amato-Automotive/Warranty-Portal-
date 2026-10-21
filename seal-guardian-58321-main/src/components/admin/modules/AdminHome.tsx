@@ -141,7 +141,7 @@ export const AdminHome = () => {
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">{stats.activeFranchises}</div>
-                        <p className="text-xs text-muted-foreground mt-1">With warranty, POSM, or grievance activity</p>
+                        <p className="text-xs text-muted-foreground mt-1">With warranty, POSM, or complaint activity</p>
                     </CardContent>
                 </Card>
                 <Card className="border-orange-100 shadow-sm hover:shadow-md transition-all">
