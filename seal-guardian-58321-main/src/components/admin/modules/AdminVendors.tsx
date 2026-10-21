@@ -633,11 +633,13 @@ export const AdminVendors = () => {
                 {/* Both children are hidden in leaderboard mode, so skip the
                     wrapper too rather than leave an empty flex row behind. */}
                 {!leaderboardMode && (
-                <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
-                {/* Search leads the row — it applies to every status tab, so it
-                    reads as the entry point rather than one more action. It sits
-                    with the tabs so the actions can still sit hard right. */}
-                <div className="relative w-full md:w-64 md:shrink-0">
+                <div className="flex flex-col gap-3">
+                {/* Two rows: the toolbar (search stretching, then the ASM filter
+                    and actions) and the status tabs under it. On one row they
+                    were wider than the panel on a laptop and the page scrolled
+                    sideways. */}
+                <div className="flex flex-col md:flex-row gap-2 md:items-center">
+                <div className="relative w-full md:flex-1 md:min-w-0">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                     <Input
                         placeholder="Search franchises..."
@@ -647,42 +649,8 @@ export const AdminVendors = () => {
                     />
                 </div>
 
-                <Tabs value={filter} onValueChange={setFilter} className="w-full md:w-auto">
-                    <TabsList className="grid w-full grid-cols-3 md:grid-cols-5 md:inline-flex bg-white/50 border border-orange-100 p-1 h-auto">
-                        <TabsTrigger value="all" className="gap-2">
-                            All
-                            <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.length}
-                            </Badge>
-                        </TabsTrigger>
-                        <TabsTrigger value="approved" className="gap-2 data-[state=active]:bg-green-50 data-[state=active]:text-green-700">
-                            Approved
-                            <Badge variant="secondary" className="bg-green-100/50 text-green-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => v.is_verified && v.is_active !== false).length}
-                            </Badge>
-                        </TabsTrigger>
-                        <TabsTrigger value="pending" className="gap-2 data-[state=active]:bg-amber-50 data-[state=active]:text-amber-700">
-                            Pending
-                            <Badge variant="secondary" className="bg-amber-100/50 text-amber-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => !v.is_verified && !v.verified_at).length}
-                            </Badge>
-                        </TabsTrigger>
-                        <TabsTrigger value="inactive" className="gap-2 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-700">
-                            Inactive
-                            <Badge variant="secondary" className="bg-slate-200/70 text-slate-600 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => v.is_verified && v.is_active === false).length}
-                            </Badge>
-                        </TabsTrigger>
-                        <TabsTrigger value="disapproved" className="gap-2 data-[state=active]:bg-red-50 data-[state=active]:text-red-700">
-                            Rejected
-                            <Badge variant="secondary" className="bg-red-100/50 text-red-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => !v.is_verified && v.verified_at).length}
-                            </Badge>
-                        </TabsTrigger>
-                    </TabsList>
-                </Tabs>
 
-                <div className="flex flex-col sm:flex-row w-full md:w-auto gap-2 md:ml-auto">
+                <div className="flex flex-col sm:flex-row w-full md:w-auto gap-2 md:shrink-0">
                     <Select value={asmFilter} onValueChange={setAsmFilter}>
                         <SelectTrigger className={`h-11 sm:h-10 sm:w-44 text-xs font-bold ${asmFilter !== 'all' ? 'text-orange-600 border-orange-200 bg-orange-50' : 'bg-white border-orange-100'}`}>
                             <SelectValue placeholder="All ASMs" />
@@ -778,6 +746,42 @@ export const AdminVendors = () => {
                         </Button>
                     </div>
                 </div>
+                </div>
+
+                <Tabs value={filter} onValueChange={setFilter} className="w-full md:w-auto">
+                    <TabsList className="grid w-full grid-cols-3 md:grid-cols-5 md:inline-flex md:w-auto bg-white/50 border border-orange-100 p-1 h-auto">
+                        <TabsTrigger value="all" className="gap-2">
+                            All
+                            <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
+                                {vendors.length}
+                            </Badge>
+                        </TabsTrigger>
+                        <TabsTrigger value="approved" className="gap-2 data-[state=active]:bg-green-50 data-[state=active]:text-green-700">
+                            Approved
+                            <Badge variant="secondary" className="bg-green-100/50 text-green-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
+                                {vendors.filter(v => v.is_verified && v.is_active !== false).length}
+                            </Badge>
+                        </TabsTrigger>
+                        <TabsTrigger value="pending" className="gap-2 data-[state=active]:bg-amber-50 data-[state=active]:text-amber-700">
+                            Pending
+                            <Badge variant="secondary" className="bg-amber-100/50 text-amber-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
+                                {vendors.filter(v => !v.is_verified && !v.verified_at).length}
+                            </Badge>
+                        </TabsTrigger>
+                        <TabsTrigger value="inactive" className="gap-2 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-700">
+                            Inactive
+                            <Badge variant="secondary" className="bg-slate-200/70 text-slate-600 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
+                                {vendors.filter(v => v.is_verified && v.is_active === false).length}
+                            </Badge>
+                        </TabsTrigger>
+                        <TabsTrigger value="disapproved" className="gap-2 data-[state=active]:bg-red-50 data-[state=active]:text-red-700">
+                            Rejected
+                            <Badge variant="secondary" className="bg-red-100/50 text-red-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
+                                {vendors.filter(v => !v.is_verified && v.verified_at).length}
+                            </Badge>
+                        </TabsTrigger>
+                    </TabsList>
+                </Tabs>
                 </div>
                 )}
             </div>
