@@ -60,7 +60,64 @@ export interface PosmLine {
     display: { label: string; value: string }[];
     files?: string[];
     approved_qty?: number | null;
-    line_status?: "pending" | "approved" | "rejected";
+    line_status?: LineStage;
+    /** To the store: why fewer, why on hold, why not approved. */
+    note?: string | null;
+    dispatch?: { courier: string; tracking: string; date: string | null } | null;
+    delivered_at?: string | null;
+    delivered_by?: "admin" | "franchise" | null;
+    /** The line before each step (Undo puts it back). */
+    trail?: unknown[];
+}
+
+/* ---------- each item moves on its own (the server's posmLineFlow decides; this mirrors it for the buttons) ---------- */
+
+export type LineStage = "pending" | "approved" | "in_production" | "on_hold" | "dispatched" | "delivered" | "rejected";
+export type LineAction = "approve" | "hold" | "reject" | "start" | "dispatch" | "deliver" | "resume" | "undo" | "edit";
+
+export const LINE_STAGE: Record<LineStage, { label: string; store: string; tone: string }> = {
+    pending: { label: "To approve", store: "Waiting", tone: "bg-slate-100 text-slate-700" },
+    approved: { label: "Approved", store: "Approved", tone: "bg-emerald-50 text-emerald-700" },
+    in_production: { label: "In production", store: "In production", tone: "bg-blue-50 text-blue-700" },
+    on_hold: { label: "On hold", store: "On hold", tone: "bg-yellow-50 text-yellow-800" },
+    dispatched: { label: "Dispatched", store: "Dispatched", tone: "bg-orange-50 text-orange-700" },
+    delivered: { label: "Delivered", store: "Delivered", tone: "bg-emerald-100 text-emerald-800" },
+    rejected: { label: "Rejected", store: "Not approved", tone: "bg-red-50 text-red-700" },
+};
+
+export const lineStage = (l: PosmLine): LineStage => (l.line_status && l.line_status in LINE_STAGE ? l.line_status : "pending");
+
+const LINE_FROM: Record<Exclude<LineAction, "undo" | "edit">, LineStage[]> = {
+    approve: ["pending", "rejected"], hold: ["pending", "approved", "in_production"],
+    reject: ["pending", "approved", "in_production", "on_hold"], start: ["approved"],
+    dispatch: ["approved", "in_production"], deliver: ["dispatched"], resume: ["on_hold"],
+};
+
+/** The steps open on an item now. */
+export function lineActionsFor(l: PosmLine): LineAction[] {
+    const s = lineStage(l);
+    const out = (Object.keys(LINE_FROM) as (keyof typeof LINE_FROM)[]).filter(a => LINE_FROM[a].includes(s)) as LineAction[];
+    if (l.trail?.length) out.push("undo");
+    return out;
+}
+
+/** A request's items by stage, in words: "2 dispatched · 1 to approve". */
+export function stagesText(lines: PosmLine[]): string {
+    const order: LineStage[] = ["pending", "approved", "in_production", "on_hold", "dispatched", "delivered", "rejected"];
+    const n: Partial<Record<LineStage, number>> = {};
+    lines.forEach(l => { const s = lineStage(l); n[s] = (n[s] ?? 0) + 1; });
+    return order.filter(s => n[s]).map(s => `${n[s]} ${LINE_STAGE[s].label.toLowerCase()}`).join(" · ");
+}
+
+/** A request whose items stand at different stages ("Partly dispatched"), else null. */
+export function mixedLabel(lines?: PosmLine[] | null): string | null {
+    const live = (lines ?? []).map(lineStage).filter(s => s !== "rejected");
+    if (new Set(live).size < 2) return null;
+    if (live.includes("delivered")) return "Partly delivered";
+    if (live.includes("dispatched")) return "Partly dispatched";
+    if (live.includes("in_production")) return "Partly in production";
+    if (live.includes("approved")) return "Partly approved";
+    return null;
 }
 
 /** The limits of an item, in words, for its card. */
@@ -149,16 +206,24 @@ export const ACTION_LABEL: Record<PosmAction, string> = {
 };
 
 export interface HistoryEntry {
-    action: PosmAction | "sent" | "received" | "update";
+    action: PosmAction | "sent" | "received" | "update" | "item" | "undo";
     status: string;
     at: string;
     by_role: "admin" | "franchise" | "asm";
     by_name?: string | null;
     note?: string | null;
+    lines?: number[];
+    undone?: boolean;
+    edited_at?: string;
+    edited_by_name?: string | null;
 }
 
+/* The steps that move a request without items, which Undo takes back. */
+const MOVES = ["approve", "hold", "reject", "start", "dispatch", "resume", "deliver", "close", "reopen", "received"];
+export const canUndo = (history?: HistoryEntry[] | null) => (history ?? []).some(h => MOVES.includes(h.action) && !h.undone);
+
 export const HISTORY_TEXT: Record<HistoryEntry["action"], string> = {
-    sent: "Sent", received: "Received by the store", update: "Quantities changed", approve: "Approved", hold: "Put on hold", reject: "Rejected",
+    sent: "Sent", received: "Received by the store", update: "Quantities changed", item: "Items", undo: "Step undone", approve: "Approved", hold: "Put on hold", reject: "Rejected",
     start: "Production started", dispatch: "Dispatched", resume: "Resumed", deliver: "Marked delivered", close: "Closed", reopen: "Reopened",
 };
 

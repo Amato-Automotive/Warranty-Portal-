@@ -1,3 +1,4 @@
+import type { LineStage, LineDispatch, LineSnapshot } from './posmLineFlow.js';
 /**
  * POSM items a franchise can ask for, built by the admin, and the checks on
  * what a store sends.
@@ -222,7 +223,13 @@ export interface PosmLine {
     display: { label: string; value: string }[];
     files?: string[];
     approved_qty?: number | null;
-    line_status?: 'pending' | 'approved' | 'rejected';
+    /** Each item moves on its own (posmLineFlow). */
+    line_status?: LineStage;
+    note?: string | null;
+    dispatch?: LineDispatch | null;
+    delivered_at?: string | null;
+    delivered_by?: 'admin' | 'franchise' | null;
+    trail?: LineSnapshot[];
 }
 
 /** How much of each item a store already has this month and year (rejected lines do not count). */

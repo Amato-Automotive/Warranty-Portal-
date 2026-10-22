@@ -1,5 +1,7 @@
 import { BaseRepository } from './base.repository.js';
 import type { RowDataPacket, ResultSetHeader, PoolConnection } from 'mysql2/promise';
+import { ownStages } from '../services/posmLineFlow.js';
+import { heldFrom } from '../services/posmFlow.js';
 
 export interface POSMRequest {
     id: number;
@@ -196,6 +198,10 @@ function withJson(row: any) {
         if (typeof row[col] === 'string') {
             try { row[col] = JSON.parse(row[col]); } catch { row[col] = null; }
         }
+    }
+    // Requests from before items moved on their own: each item takes the request's stage.
+    if (Array.isArray(row.items) && row.items.length) {
+        row.items = ownStages(row.items, { status: row.status, dispatch: row.dispatch, delivery: row.delivery, heldFrom: heldFrom(row.history) });
     }
     return row;
 }

@@ -9,12 +9,43 @@ import {
     readCatalog, catalogProblem, storeBrands, validateLines, requestSummary, applyDecisions, usageFrom,
     type PosmLine, type PosmCatalog, type Usage,
 } from '../services/posmCatalog.js';
-import { nextStatus, actionsFor, ACTION_TEXT, type HistoryEntry, type PosmAction } from '../services/posmFlow.js';
+import { nextStatus, actionsFor, undoTarget, ACTION_TEXT, type HistoryEntry, type PosmAction } from '../services/posmFlow.js';
 import { asmStore } from '../services/asmStores.js';
 
 /** Who the signed-in user is on a ticket: the store, head office or the store's ASM. */
 const roleOf = (req: AuthRequest): 'admin' | 'asm' | 'franchise' =>
     req.user?.role === 'admin' ? 'admin' : req.user?.role === 'asm' ? 'asm' : 'franchise';
+import { applyLineAction, lineActionsFor, requestStatus, stepText, type LineAction } from '../services/posmLineFlow.js';
+
+/** A step on some items: what changed, the items after it, or why it cannot be taken. */
+function stepLines(lines: PosmLine[], action: LineAction, specs: { index: number; qty?: unknown; note?: unknown }[], input: { note?: unknown; dispatch?: unknown; by?: 'admin' | 'franchise' }):
+    { lines: PosmLine[]; touched: number[] } | { error: string } {
+    const out = lines.map(l => ({ ...l }));
+    const touched: number[] = [];
+    for (const sp of specs) {
+        const i = Number(sp?.index);
+        if (!Number.isInteger(i) || i < 0 || i >= out.length) return { error: 'An item ticked is not on this request' };
+        if (touched.includes(i)) continue;
+        const r = applyLineAction(out[i], action, { ...input, qty: sp.qty, ...(sp.note !== undefined ? { note: sp.note } : {}) });
+        if ('error' in r) return r;
+        out[i] = r.line;
+        touched.push(i);
+    }
+    return { lines: out, touched };
+}
+
+/** What an edit changed on each item, in words. */
+function editText(before: PosmLine[], after: PosmLine[], touched: number[]): string {
+    const parts: string[] = [];
+    for (const i of touched) {
+        const b = before[i], a = after[i], bits: string[] = [];
+        if ((b.approved_qty ?? null) !== (a.approved_qty ?? null)) bits.push(`quantity ${b.approved_qty ?? b.qty} → ${a.approved_qty}`);
+        if ((b.note ?? null) !== (a.note ?? null)) bits.push(a.note ? `note: "${a.note.slice(0, 120)}"` : 'note removed');
+        if (JSON.stringify(b.dispatch ?? null) !== JSON.stringify(a.dispatch ?? null) && a.dispatch) bits.push(`shipment: ${[a.dispatch.courier, a.dispatch.tracking].filter(Boolean).join(' · ')}`);
+        if (bits.length) parts.push(`${a.item_name} ${bits.join(', ')}`);
+    }
+    return parts.join('; ');
+}
 
 /** A step for the timeline, by whoever is signed in. */
 const step = (req: AuthRequest, e: Omit<HistoryEntry, 'at' | 'by_role' | 'by' | 'by_name'>): HistoryEntry => ({
@@ -541,15 +572,27 @@ class POSMController {
         try {
             const access = await this.authorizeRequestAccess(req, req.params.id);
             if (access.error) return res.status(access.error.status).json(access.error.body);
-            if (access.request.status !== 'dispatched') {
+            const lines = Array.isArray(access.request.items) && access.request.items.length ? access.request.items as PosmLine[] : null;
+            const onWay = lines ? lines.map((l, index) => ({ index, l })).filter(x => x.l.line_status === 'dispatched') : [];
+            if (lines ? !onWay.length : access.request.status !== 'dispatched') {
                 return res.status(409).json({ success: false, error: 'Only a dispatched request can be marked as received' });
             }
             const photos = ((req.files as Express.Multer.File[]) ?? []).map(fileUrl);
             const delivery = { by: 'franchise', at: new Date().toISOString(), photos };
-            await posmRepository.updateRequest(access.requestId, {
-                status: 'delivered', delivery,
-                history: [...(access.request.history ?? []), step(req, { action: 'received', status: 'delivered' })],
-            });
+            if (lines) {
+                const r = stepLines(lines, 'deliver', onWay.map(x => ({ index: x.index })), { by: 'franchise' });
+                if ('error' in r) return res.status(409).json({ success: false, error: r.error });
+                const status = requestStatus(r.lines, access.request.status);
+                await posmRepository.updateRequest(access.requestId, {
+                    status, items: r.lines, ...(status === 'delivered' ? { delivery } : {}),
+                    history: [...(access.request.history ?? []), step(req, { action: 'received', status: status as HistoryEntry['status'], note: onWay.map(x => x.l.item_name).join(', '), lines: r.touched })],
+                });
+            } else {
+                await posmRepository.updateRequest(access.requestId, {
+                    status: 'delivered', delivery,
+                    history: [...(access.request.history ?? []), step(req, { action: 'received', status: 'delivered' })],
+                });
+            }
             const extra = String(req.body?.note ?? '').trim().slice(0, 500);
             await posmRepository.createMessage({
                 request_id: access.requestId, sender_id: req.user!.id, sender_role: 'franchise',
@@ -727,12 +770,25 @@ class POSMController {
                 if (!['open', 'under_review', 'pending', 'approved', 'in_production'].includes(current.status) || !Array.isArray(current.items)) {
                     return res.status(400).json({ success: false, error: 'Quantities can be changed only until the request is dispatched' });
                 }
-                const applied = applyDecisions(current.items as PosmLine[], decisions);
+                /* Items that have moved on keep their stage: only a new quantity is
+                   taken from them (the item steps are POST /:id/lines). */
+                const before = current.items as PosmLine[];
+                const moved = before.some(l => !['pending', 'approved', 'rejected'].includes(String(l.line_status)) || l.trail?.length);
+                let applied: PosmLine[] | { error: string };
+                if (moved) {
+                    const specs = (Array.isArray(decisions) ? decisions : [])
+                        .filter((d: any) => before[Number(d?.index)] && Number(d?.approved_qty) > 0 && Number(d.approved_qty) !== before[Number(d.index)].approved_qty
+                            && before[Number(d.index)].line_status !== 'rejected')
+                        .map((d: any) => ({ index: Number(d.index), qty: d.approved_qty }));
+                    const r = stepLines(before, 'edit', specs, {});
+                    applied = 'error' in r ? r : r.lines;
+                } else {
+                    applied = applyDecisions(before, decisions);
+                }
                 if (!Array.isArray(applied)) return res.status(400).json({ success: false, error: applied.error });
                 if (['approved', 'in_production'].includes(current.status)) {
                     const ok = applied.filter(l => l.line_status === 'approved' && (l.approved_qty ?? 0) > 0).length;
                     if (!ok) return res.status(400).json({ success: false, error: 'Every item would be at 0: reject the request instead' });
-                    const before = current.items as PosmLine[];
                     const diff = applied.map((l, k) => (l.approved_qty ?? null) !== (before[k]?.approved_qty ?? null)
                         ? `${l.item_name} ${before[k]?.approved_qty ?? '-'} → ${l.approved_qty ?? '-'}` : null).filter(Boolean);
                     if (diff.length) changedAfterApproval = diff.join(', ');
@@ -789,6 +845,68 @@ class POSMController {
             const current = await posmRepository.findRequest(requestId);
             if (!current) return res.status(404).json({ success: false, error: 'Request not found' });
             const history = (current.history ?? []) as HistoryEntry[];
+            const itemLines = Array.isArray(current.items) && current.items.length ? current.items as PosmLine[] : null;
+
+            if (action === 'undo') {
+                if (itemLines) return res.status(400).json({ success: false, error: 'Undo each item on its own' });
+                const u = undoTarget(history);
+                if ('error' in u) return res.status(409).json({ success: false, error: u.error });
+                const h = history.map((e, i) => i === u.index ? { ...e, undone: true } : e);
+                const undoFields: Parameters<typeof posmRepository.updateRequest>[1] = {
+                    status: u.status,
+                    history: [...h, step(req, { action: 'undo', status: u.status, note: `${ACTION_TEXT[u.undid.action]} undone` })],
+                };
+                if (u.undid.action === 'dispatch') undoFields.dispatch = null;
+                if (u.undid.action === 'deliver' || u.undid.action === 'received') undoFields.delivery = null;
+                await posmRepository.updateRequest(requestId, undoFields);
+                await ActivityLogService.log({
+                    adminId: req.user!.id, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
+                    actionType: 'POSM_ACTION', targetType: 'POSM_REQUEST', targetId: String(requestId), targetName: (current as any).store_name,
+                    details: { action: 'undo', from: current.status, to: u.status, undid: u.undid.action },
+                    ipAddress: req.ip || req.socket?.remoteAddress,
+                });
+                const storeUser = (current as any).store_user_id;
+                if (storeUser && STATUS_NOTE[u.status]) {
+                    try {
+                        await NotificationService.notify(storeUser, { title: `POSM ${current.ticket_id} ${STATUS_NOTE[u.status]}`, message: `${ACTION_TEXT[u.undid.action]} was undone`, type: 'posm' });
+                    } catch (e) { console.error('Failed to notify the store of a POSM undo:', e); }
+                }
+                const fresh = await posmRepository.findRequest(requestId);
+                return res.json({ success: true, message: 'Step undone', data: { ...fresh, actions: actionsFor(u.status) } });
+            }
+
+            /* On a request with items the old steps apply to every item they
+               fit; the items then decide the request's status. */
+            if (itemLines && !['close', 'reopen'].includes(String(action))) {
+                const a = String(action) as LineAction;
+                if (!['approve', 'hold', 'reject', 'start', 'dispatch', 'deliver', 'resume'].includes(a)) {
+                    return res.status(400).json({ success: false, error: 'Unknown action' });
+                }
+                let out = itemLines, touched: number[] = [];
+                if (a === 'approve' && Array.isArray(decisions)) {
+                    // Decided before Approve: a 0 or Reject is a rejection, the rest approve at the quantity set.
+                    const no = decisions.filter((d: any) => d?.line_status === 'rejected' || Number(d?.approved_qty) === 0)
+                        .map((d: any) => ({ index: Number(d.index) })).filter(x => itemLines[x.index]?.line_status === 'pending');
+                    if (no.length) {
+                        const r = stepLines(out, 'reject', no, { note: 'Not approved' });
+                        if ('error' in r) return res.status(400).json({ success: false, error: r.error });
+                        out = r.lines; touched = r.touched;
+                    }
+                }
+                const qtyOf = (i: number) => Array.isArray(decisions) ? (decisions as any[]).find(d => Number(d?.index) === i)?.approved_qty : undefined;
+                const fit = out.map((l, index) => ({ index, l })).filter(x => lineActionsFor(x.l).includes(a) && !(a === 'approve' && x.l.line_status === 'rejected'))
+                    .map(x => ({ index: x.index, qty: a === 'approve' ? qtyOf(x.index) : undefined }));
+                if (!fit.length && !touched.length) {
+                    return res.status(409).json({ success: false, error: `No item on this request can be ${ACTION_TEXT[a as PosmAction].toLowerCase()} now` });
+                }
+                const r = stepLines(out, a, fit, { note: a === 'reject' ? reason : note, dispatch, by: 'admin' });
+                if ('error' in r) return res.status(400).json({ success: false, error: r.error });
+                const said = touched.length
+                    ? [r.touched.length ? stepText('approve', r.touched.map(i => r.lines[i].item_name)) : '', stepText('reject', touched.map(i => r.lines[i].item_name))].filter(Boolean).join('; ')
+                    : undefined;
+                return this.saveLineStep(req, res, current, r.lines, a, [...touched, ...r.touched], String((a === 'reject' ? reason : note) ?? ''), said);
+            }
+
             const moved = nextStatus(current.status, String(action), history);
             if ('error' in moved) return res.status(409).json({ success: false, error: moved.error, data: { actions: actionsFor(current.status) } });
             const a = String(action) as PosmAction;
@@ -827,7 +945,7 @@ class POSMController {
             if (a === 'deliver') fields.delivery = { by: 'admin', at: new Date().toISOString(), photos: [] };
             if (a === 'reopen' && lines) {
                 // Back to To approve: the decisions are made again.
-                fields.items = lines.map(l => ({ ...l, line_status: 'pending' as const, approved_qty: null }));
+                fields.items = lines.map(l => ({ ...l, line_status: 'pending' as const, approved_qty: null, note: null, dispatch: null, delivered_at: null, delivered_by: null, trail: [] }));
             }
 
             fields.history = [...history, step(req, { action: a, status: moved.status, note: stepNote, ...(a === 'hold' ? { from: current.status as HistoryEntry['status'] } : {}) })];
@@ -865,6 +983,104 @@ class POSMController {
         } catch (error: any) {
             console.error('POSM action error:', error);
             return res.status(500).json({ success: false, error: 'Failed to update the request' });
+        }
+    }
+
+    /**
+     * A step on some items of a request (Admin only)
+     * POST /api/posm/:id/lines — { action, items: [{ index, qty? }], note?, dispatch? }
+     * Each item moves on its own (posmLineFlow); the request's status follows.
+     */
+    actOnLines = async (req: AuthRequest, res: Response) => {
+        try {
+            const requestId = parseInt(req.params.id);
+            const { action, items, note, dispatch } = req.body ?? {};
+            const current = await posmRepository.findRequest(requestId);
+            if (!current) return res.status(404).json({ success: false, error: 'Request not found' });
+            const lines = Array.isArray(current.items) && current.items.length ? current.items as PosmLine[] : null;
+            if (!lines) return res.status(400).json({ success: false, error: 'This request has no items: use the steps above' });
+            if (!Array.isArray(items) || !items.length) return res.status(400).json({ success: false, error: 'Tick at least one item' });
+            const a = String(action) as LineAction;
+            const r = stepLines(lines, a, items, { note, dispatch, by: 'admin' });
+            if ('error' in r) return res.status(400).json({ success: false, error: r.error });
+            if (a === 'edit') {
+                const what = editText(lines, r.lines, r.touched);
+                if (!what) return res.json({ success: true, message: 'Nothing changed', data: { ...current } });
+                return this.saveLineStep(req, res, current, r.lines, a, r.touched, '', what);
+            }
+            return this.saveLineStep(req, res, current, r.lines, a, r.touched, String(note ?? ''));
+        } catch (error: any) {
+            console.error('POSM item step error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to update the items' });
+        }
+    }
+
+    /** Saves a step on items: the lines, the request's status, the timeline; tells the store. */
+    private async saveLineStep(req: AuthRequest, res: Response, current: any, lines: PosmLine[], a: LineAction, touched: number[], note: string, described?: string) {
+        const requestId = current.id as number;
+        const status = requestStatus(lines, current.status);
+        let text = described ?? stepText(a, touched.map(i => lines[i].item_name), touched.map(i => lines[i]));
+        const n = note.trim();
+        if (!described && n && n !== 'Not approved') text += ` · ${n.slice(0, 200)}`;
+        if (a === 'dispatch') {
+            const d = lines[touched[0]]?.dispatch;
+            if (d) text += ` · ${[d.courier, d.tracking].filter(Boolean).join(' · ')}`;
+        }
+        const fields: Parameters<typeof posmRepository.updateRequest>[1] = {
+            items: lines,
+            history: [...((current.history ?? []) as HistoryEntry[]), step(req, { action: 'item', status: status as HistoryEntry['status'], note: text, lines: touched })],
+        };
+        if (status !== current.status) fields.status = status;
+        // The request-level shipment and delivery follow the latest item's, for the lists.
+        const shipped = [...lines].reverse().find(l => l.dispatch?.courier);
+        fields.dispatch = shipped?.dispatch ? { ...shipped.dispatch } : null;
+        if (status === 'delivered' && !current.delivery) fields.delivery = { by: 'admin', at: new Date().toISOString(), photos: [] };
+        if (!['delivered', 'closed'].includes(status) && current.delivery) fields.delivery = null;
+        await posmRepository.updateRequest(requestId, fields);
+
+        await ActivityLogService.log({
+            adminId: req.user!.id, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
+            actionType: 'POSM_ITEM_ACTION', targetType: 'POSM_REQUEST', targetId: String(requestId), targetName: current.store_name,
+            details: { action: a, items: touched, from: current.status, to: status, note: text },
+            ipAddress: req.ip || req.socket?.remoteAddress,
+        });
+        const storeUser = current.store_user_id;
+        if (storeUser) {
+            try {
+                await NotificationService.notify(storeUser, { title: `POSM ${current.ticket_id}: ${text}`.slice(0, 180), message: text.slice(0, 300), type: 'posm' });
+            } catch (e) { console.error('Failed to notify the store of a POSM item step:', e); }
+        }
+        const fresh = await posmRepository.findRequest(requestId);
+        return res.json({ success: true, message: text, data: { ...fresh, actions: actionsFor(status) } });
+    }
+
+    /**
+     * Correct the note on a step of the timeline (Admin only)
+     * PUT /api/posm/:id/history/:index — { note }
+     */
+    editHistoryNote = async (req: AuthRequest, res: Response) => {
+        try {
+            const requestId = parseInt(req.params.id);
+            const index = Number(req.params.index);
+            const current = await posmRepository.findRequest(requestId);
+            if (!current) return res.status(404).json({ success: false, error: 'Request not found' });
+            const history = (current.history ?? []) as HistoryEntry[];
+            if (!Number.isInteger(index) || !history[index]) return res.status(404).json({ success: false, error: 'That step is not on this request' });
+            if (history[index].by_role !== 'admin') return res.status(400).json({ success: false, error: 'Only the team’s own steps can be corrected' });
+            const note = String(req.body?.note ?? '').trim().slice(0, 500);
+            if (history[index].action === 'reject' && note.length < 3) return res.status(400).json({ success: false, error: 'Keep a reason for the store' });
+            const h = history.map((e, i) => i === index ? { ...e, note: note || null, edited_at: new Date().toISOString(), edited_by_name: (req.user as any)?.name ?? null } : e);
+            await posmRepository.updateRequest(requestId, { history: h });
+            await ActivityLogService.log({
+                adminId: req.user!.id, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
+                actionType: 'POSM_NOTE_EDITED', targetType: 'POSM_REQUEST', targetId: String(requestId), targetName: (current as any).store_name,
+                details: { index, was: history[index].note ?? null, now: note || null },
+                ipAddress: req.ip || req.socket?.remoteAddress,
+            });
+            return res.json({ success: true, message: 'Note corrected', data: await posmRepository.findRequest(requestId) });
+        } catch (error: any) {
+            console.error('Edit POSM history note error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to save the note' });
         }
     }
 }

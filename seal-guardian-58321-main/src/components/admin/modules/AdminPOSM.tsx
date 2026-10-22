@@ -11,12 +11,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ChevronLeft, Download, Loader2, Mail, MapPin, Paperclip, Plus, RefreshCw, Search, Send, Store, Truck, User, X } from "lucide-react";
 import {
-    STATUS_LABEL, STAGES, ACTIONS_AT, ACTION_LABEL, HISTORY_TEXT, BRAND_LABEL, decideLine,
+    STATUS_LABEL, STAGES, ACTIONS_AT, ACTION_LABEL, HISTORY_TEXT, BRAND_LABEL, decideLine, canUndo, mixedLabel, stagesText,
     type Brand, type HistoryEntry, type PosmAction, type PosmItem, type PosmLimits, type PosmLine, type Usage,
 } from "@/lib/posm";
 import { POSMLines, POSMTracker } from "@/components/posm/POSMLines";
 import { POSMShop, requestForm } from "@/components/posm/POSMShop";
 import { POSMItemBuilder } from "./POSMItemBuilder";
+import { POSMItemDesk } from "./POSMItemDesk";
 
 interface POSMRequest {
     id: number;
@@ -64,9 +65,9 @@ const STATUS_TONE: Record<string, string> = {
     rejected: "bg-red-50 text-red-700 border-red-100",
 };
 const statusText = (s: string) => (s === "open" || s === "under_review" ? "To approve" : STATUS_LABEL[s] ?? s.replace("_", " "));
-const StatusPill = ({ status }: { status: string }) => (
+const StatusPill = ({ status, lines }: { status: string; lines?: PosmLine[] | null }) => (
     <Badge variant="outline" className={cn("text-[10px] uppercase font-bold whitespace-nowrap", STATUS_TONE[status] || "bg-slate-100 text-slate-600")}>
-        {statusText(status)}
+        {mixedLabel(lines) ?? statusText(status)}
     </Badge>
 );
 const brandsText = (b?: string | null) => {
@@ -233,6 +234,44 @@ export const AdminPOSM = () => {
         }
     };
 
+    const hasItems = !!ticket?.items?.length;
+    /* Items move on their own; the request keeps only Close and Reopen. */
+    const shownActions = hasItems ? actions.filter(a => a === "close" || a === "reopen") : actions;
+
+    const undoStep = async () => {
+        if (!ticket) return;
+        setActing(true);
+        try {
+            const r = await api.post(`/posm/${ticket.id}/action`, { action: "undo" });
+            const fresh = r.data.data;
+            toast({ title: `${ticket.ticket_id}: step undone`, description: `${ticket.store_name} is told in their notifications.` });
+            setRequests(list => list.map(x => x.id === ticket.id ? { ...x, ...fresh } : x));
+            setStage(stageOf(fresh.status));
+            loadTicket(ticket.id);
+        } catch (e) {
+            toast({ title: "Not undone", description: getErrorMessage(e, "Try again."), variant: "destructive" });
+        } finally {
+            setActing(false);
+        }
+    };
+
+    const [editingStep, setEditingStep] = useState<number | null>(null);
+    const [stepNote, setStepNote] = useState("");
+    const saveStepNote = async (idx: number) => {
+        if (!ticket) return;
+        setActing(true);
+        try {
+            await api.put(`/posm/${ticket.id}/history/${idx}`, { note: stepNote });
+            toast({ title: "Note corrected" });
+            setEditingStep(null);
+            loadTicket(ticket.id);
+        } catch (e) {
+            toast({ title: "Not saved", description: getErrorMessage(e, ""), variant: "destructive" });
+        } finally {
+            setActing(false);
+        }
+    };
+
     const saveNotes = async () => {
         if (!ticket) return;
         setSavingNotes(true);
@@ -282,7 +321,7 @@ export const AdminPOSM = () => {
         if (!ticket) return [];
         const steps = (ticket.history?.length ? ticket.history
             : [{ action: "sent", status: "open", at: ticket.created_at, by_role: ticket.created_by_role ?? "franchise" } as HistoryEntry])
-            .map(h => ({ at: h.at, kind: "step" as const, h }));
+            .map((h, idx) => ({ at: h.at, kind: "step" as const, h, idx: ticket.history?.length ? idx : -1 }));
         const msgs = messages.map(m => ({ at: m.created_at, kind: "msg" as const, m }));
         return [...steps, ...msgs].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     }, [ticket, messages]);
@@ -457,7 +496,8 @@ export const AdminPOSM = () => {
                                         {r.created_by_role === 'asm' && <span className="ml-1 text-sky-700 font-semibold">· by ASM</span>}
                                     </p>
                                     <p className="text-sm text-slate-600 line-clamp-2">{itemsText(r)}</p>
-                                    {stage === "done" && <StatusPill status={r.status} />}
+                                    {r.items?.length && mixedLabel(r.items) ? <p className="text-[11px] font-semibold text-orange-600">{stagesText(r.items)}</p> : null}
+                                    {stage === "done" && <StatusPill status={r.status} lines={r.items} />}
                                 </button>
                             ))}
                         </div>
@@ -486,14 +526,17 @@ export const AdminPOSM = () => {
                                     </p>
                                 </div>
                             </div>
-                            <StatusPill status={ticket.status} />
+                            <StatusPill status={ticket.status} lines={ticket.items} />
                         </div>
 
                         {/* The actions open at this stage */}
-                        {actions.length > 0 && (
+                        {(shownActions.length > 0 || (!hasItems && canUndo(ticket.history))) && (
                             <div className="space-y-3">
                                 <div className="flex flex-wrap gap-2">
-                                    {actions.map(a => {
+                                    {!hasItems && canUndo(ticket.history) && (
+                                        <Button size="sm" variant="ghost" disabled={acting} onClick={undoStep} className="rounded-xl text-slate-500">Undo last step</Button>
+                                    )}
+                                    {shownActions.map(a => {
                                         const primary = ["approve", "start", "dispatch", "resume", "deliver"].includes(a);
                                         const label = a === "approve" && lines.length ? `Approve ${approvable} item${approvable === 1 ? "" : "s"}` : ACTION_LABEL[a];
                                         return (
@@ -533,10 +576,8 @@ export const AdminPOSM = () => {
                             </div>
                         )}
 
-                        {ticket.items?.length ? <POSMTracker status={ticket.status} /> : null}
-
-                        {/* Shipment */}
-                        {ticket.dispatch?.courier && (
+                        {/* Shipment (each item shows its own) */}
+                        {!hasItems && ticket.dispatch?.courier && (
                             <div className="rounded-xl bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center gap-3 min-w-0">
                                     <Truck className="h-5 w-5 text-orange-500 shrink-0" />
@@ -565,21 +606,13 @@ export const AdminPOSM = () => {
 
                         {/* Items */}
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-sm font-black text-slate-800">Items</h3>
-                                {editable && !afterApproval && <span className="text-[11px] text-slate-400">Set what you'll send (0 = not approved), then Approve</span>}
-                                {afterApproval && (
-                                    <div className="flex items-center gap-2">
-                                        {linesChanged && <Button size="sm" variant="ghost" onClick={() => setLines((ticket.items || []).map(l => ({ ...l })))}>Undo</Button>}
-                                        <Button size="sm" variant="outline" disabled={!linesChanged || savingLines} onClick={saveLines}>
-                                            {savingLines && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />} Save quantities
-                                        </Button>
-                                    </div>
-                                )}
-                            </div>
-                            {lines.length ? (
-                                <POSMLines lines={lines} items={catalogItems} limits={limits} disabled={acting}
-                                    onDecide={editable ? (i, p) => setLines(ls => ls.map((l, j) => j === i ? decideLine(l, p) : l)) : undefined} />
+                            <h3 className="text-sm font-black text-slate-800">Items</h3>
+                            {hasItems ? (
+                                <POSMItemDesk requestId={ticket.id} lines={ticket.items!} items={catalogItems} limits={limits}
+                                    onSaved={fresh => {
+                                        setRequests(list => list.map(x => x.id === ticket.id ? { ...x, ...fresh } : x));
+                                        loadTicket(ticket.id);
+                                    }} />
                             ) : (
                                 <p className="text-sm text-slate-600 whitespace-pre-wrap rounded-xl bg-slate-50 p-3">{ticket.requirement}</p>
                             )}
@@ -597,11 +630,24 @@ export const AdminPOSM = () => {
                             <h3 className="text-sm font-black text-slate-800">Timeline & messages</h3>
                             <div className="space-y-2 max-h-[46vh] overflow-y-auto pr-1">
                                 {feed.map((f, i) => f.kind === "step" ? (
-                                    <p key={`s${i}`} className="text-center text-[11px] font-semibold text-slate-400">
-                                        {formatToIST(f.h.at)} · {HISTORY_TEXT[f.h.action] ?? f.h.action}
-                                        {f.h.note ? ` · ${f.h.note}` : ""}
+                                    editingStep === f.idx ? (
+                                        <div key={`s${i}`} className="rounded-xl bg-slate-50 p-2 flex gap-2">
+                                            <Input value={stepNote} onChange={e => setStepNote(e.target.value)} aria-label="Corrected note" className="h-8 bg-white text-xs" autoFocus />
+                                            <Button size="sm" className="h-8" disabled={acting} onClick={() => saveStepNote(f.idx)}>Save</Button>
+                                            <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditingStep(null)}>Cancel</Button>
+                                        </div>
+                                    ) : (
+                                    <p key={`s${i}`} className={cn("text-center text-[11px] font-semibold text-slate-400", f.h.undone && "line-through")}>
+                                        {formatToIST(f.h.at)} · {f.h.action === "item" ? "" : `${HISTORY_TEXT[f.h.action] ?? f.h.action}`}
+                                        {f.h.note ? `${f.h.action === "item" ? "" : " · "}${f.h.note}` : ""}
                                         {f.h.by_role === "admin" && f.h.by_name ? ` · ${f.h.by_name}` : f.h.by_role === "asm" ? ` · ${f.h.by_name || "ASM"} (ASM)` : f.h.by_role === "franchise" ? " · by the store" : ""}
+                                        {f.h.edited_at ? <span className="italic"> · edited</span> : null}
+                                        {f.h.by_role === "admin" && f.idx >= 0 && (
+                                            <button type="button" onClick={() => { setEditingStep(f.idx); setStepNote(f.h.note ?? ""); }}
+                                                className="ml-1.5 text-orange-600 hover:underline">Edit note</button>
+                                        )}
                                     </p>
+                                    )
                                 ) : (
                                     <div key={`m${f.m.id}`} className={cn("flex flex-col max-w-[85%]", f.m.sender_role === "admin" ? "ml-auto items-end" : "mr-auto items-start")}>
                                         <div className={cn("px-3 py-2 rounded-2xl text-sm", f.m.sender_role === "admin" ? "bg-slate-900 text-white rounded-br-md" : f.m.sender_role === "asm" ? "bg-sky-50 text-slate-800 rounded-bl-md" : "bg-slate-100 text-slate-800 rounded-bl-md")}>

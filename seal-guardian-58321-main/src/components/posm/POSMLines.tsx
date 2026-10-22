@@ -1,6 +1,6 @@
-import { Paperclip } from "lucide-react";
+import { Paperclip, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { PROGRESS, type PosmItem, type PosmLimits, type PosmLine } from "@/lib/posm";
+import { PROGRESS, LINE_STAGE, lineStage, type PosmItem, type PosmLimits, type PosmLine } from "@/lib/posm";
 import { PosmArt } from "./posmClipart";
 
 type Limit = PosmLimits & { used_month?: number; used_year?: number };
@@ -57,6 +57,21 @@ export function POSMLines({ lines, items, limits, onDecide, disabled }: {
                                 </div>
                             ) : null}
                             {note && <p className="text-[11px] font-semibold text-amber-600 mt-0.5">{note}</p>}
+                            {!onDecide && (
+                                <span className={cn("inline-block mt-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold", LINE_STAGE[lineStage(l)].tone)}>
+                                    {LINE_STAGE[lineStage(l)].store}
+                                </span>
+                            )}
+                            {!onDecide && l.note && (
+                                <p className={cn("mt-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-700 break-words",
+                                    rejected ? "bg-red-50" : lineStage(l) === "on_hold" ? "bg-yellow-50" : "bg-gray-50")}>{l.note}</p>
+                            )}
+                            {!onDecide && l.dispatch?.courier && (
+                                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-gray-600">
+                                    <Truck className="h-3.5 w-3.5 text-orange-500 shrink-0" />
+                                    <span className="break-words">{[l.dispatch.courier, l.dispatch.tracking].filter(Boolean).join(" · ")}{l.dispatch.date ? ` · ${l.dispatch.date.split("-").reverse().join("/")}` : ""}</span>
+                                </p>
+                            )}
                         </div>
                         <div className="col-span-2 sm:col-span-1 flex items-center justify-end gap-2">
                             {onDecide ? (

@@ -8,7 +8,7 @@ import api, { getErrorMessage } from "@/lib/api";
 import { cn, formatToIST } from "@/lib/utils";
 import {
     STATUS_LABEL, HISTORY_TEXT, progressOf, isDone,
-    type Brand, type HistoryEntry, type PosmCatalog, type PosmLine, type Usage,
+    mixedLabel, stagesText, type Brand, type HistoryEntry, type PosmCatalog, type PosmLine, type Usage,
 } from "@/lib/posm";
 import { POSMLines, POSMTracker } from "@/components/posm/POSMLines";
 import { POSMShop, requestForm } from "@/components/posm/POSMShop";
@@ -163,7 +163,6 @@ const POSMModule: React.FC = () => {
             await api.post(`/posm/${selected.id}/delivered`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
             toast({ title: "Thanks, marked as received" });
             setDeliveryOpen(false); setDeliveryPhotos([]);
-            setSelected(prev => prev ? { ...prev, status: 'delivered' } : prev);
             fetchRequests();
             fetchTicketDetails(selected.id);
         } catch (error) {
@@ -279,16 +278,18 @@ const POSMModule: React.FC = () => {
                                         )}
                                     </div>
                                 </div>
-                                {selected.status === 'dispatched' && !deliveryOpen && (
+                                {(selected.items?.length ? selected.items.some(l => l.line_status === 'dispatched') : selected.status === 'dispatched') && !deliveryOpen && (
                                     <Button onClick={() => setDeliveryOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl">I received it</Button>
                                 )}
                             </div>
 
-                            {selected.items?.length ? <POSMTracker status={selected.status} /> : <StatusPill status={selected.status} />}
+                            {selected.items?.length ? (mixedLabel(selected.items) ? <p className="text-xs font-semibold text-orange-600">{stagesText(selected.items)}</p> : <POSMTracker status={selected.status} />) : <StatusPill status={selected.status} />}
 
                             {deliveryOpen && (
                                 <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 space-y-2">
-                                    <p className="text-sm font-bold text-emerald-800">Confirm you received the items</p>
+                                    <p className="text-sm font-bold text-emerald-800">
+                                        Confirm you received {selected.items?.length ? selected.items.filter(l => l.line_status === 'dispatched').map(l => l.item_name).join(', ') : 'the items'}
+                                    </p>
                                     <input id="posm-delivery-photos" type="file" accept="image/*" multiple className="hidden"
                                         onChange={e => { const fl = e.target.files; if (fl) setDeliveryPhotos(p => [...p, ...Array.from(fl)].slice(0, 5)); e.target.value = ''; }} />
                                     <label htmlFor="posm-delivery-photos" className="flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-emerald-200 bg-white p-3 text-xs text-emerald-700 cursor-pointer">
@@ -304,7 +305,7 @@ const POSMModule: React.FC = () => {
                                 </div>
                             )}
 
-                            {selected.dispatch?.courier && (
+                            {!selected.items?.length && selected.dispatch?.courier && (
                                 <div className="rounded-xl bg-gray-50 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
                                     <div className="flex items-center gap-3 min-w-0">
                                         <Truck className="h-5 w-5 text-orange-500 shrink-0" />
@@ -330,12 +331,12 @@ const POSMModule: React.FC = () => {
                                     {loadingMessages ? (
                                         <div className="flex justify-center p-4"><Loader2 className="h-5 w-5 animate-spin text-brand-orange" /></div>
                                     ) : feed.map((f, k) => f.h ? (
-                                        <p key={`s${k}`} className="text-center text-[11px] font-semibold text-gray-400">
-                                            {formatToIST(f.h.at)} · {f.h.action === 'sent'
+                                        <p key={`s${k}`} className={cn("text-center text-[11px] font-semibold text-gray-400", f.h.undone && "line-through")}>
+                                            {formatToIST(f.h.at)} · {f.h.action === 'item' ? f.h.note : f.h.action === 'sent'
                                                 ? (f.h.by_role === 'admin' ? 'Raised for you by Autoform'
                                                     : f.h.by_role === 'asm' ? `Raised for you by ${f.h.by_name || 'your ASM'} (your ASM)` : 'You sent the request')
                                                 : f.h.action === 'received' ? 'You confirmed it arrived' : HISTORY_TEXT[f.h.action] ?? f.h.action}
-                                            {f.h.note && f.h.action !== 'sent' && f.h.action !== 'reject' ? ` · ${f.h.note}` : ''}
+                                            {f.h.note && !['sent', 'reject', 'item'].includes(f.h.action) ? ` · ${f.h.note}` : ''}
                                         </p>
                                     ) : f.m && ((msg: Message) => (
                                         <div key={msg.id} className={cn("flex flex-col max-w-[85%]", msg.sender_role === 'franchise' ? "ml-auto items-end" : "mr-auto items-start")}>
