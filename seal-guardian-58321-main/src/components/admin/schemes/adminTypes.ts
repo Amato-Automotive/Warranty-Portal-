@@ -10,6 +10,8 @@ export interface AdminEntry {
     invoices: { invoice_no: string; files: string[]; lines: EntryLine[]; points: number }[] | null;
     status: "pending" | "approved" | "rejected";
     review_note: string | null; reviewed_at: string | null; created_at: string;
+    /** Head office's corrections to what the store sent, oldest first. */
+    edits?: { at: string; by_name: string | null; changes: string[]; note: string | null }[];
 }
 export interface BoardRow {
     store_id: string; store_name: string; city: string | null; state: string | null;

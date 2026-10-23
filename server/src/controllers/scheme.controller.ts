@@ -9,6 +9,7 @@ import {
     type SchemeField, type ScoreRule, type RewardRule, type Eligibility, type SchemeStatus, type EntryFile,
     type SchemeWindow, type EntryLine, type Club, type ImportRow, type InvoiceIn,
 } from '../services/schemeRules.js';
+import { correctEntry, type EntryEdit } from '../services/schemeCorrection.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -414,7 +415,7 @@ export class SchemeController {
                     score: Number(e.score), lines: json(e.lines, null), claimed_lines: json(e.claimed_lines, null),
                     source: e.source || 'store', invoice_no: e.invoice_no ?? null, invoices: json(e.invoices, null),
                     status: e.status, review_note: e.review_note,
-                    reviewed_at: e.reviewed_at, created_at: e.created_at,
+                    reviewed_at: e.reviewed_at, created_at: e.created_at, edits: json(e.edits, []),
                 })),
                 adjustments: adjustments.map((a: any) => ({
                     id: a.id, store_id: String(a.store_id), store_name: name(String(a.store_id)),
@@ -730,6 +731,144 @@ export class SchemeController {
      * in, or a past month. Approved straight away, outside the windows; the
      * store is joined if it was not. `date` (YYYY-MM-DD) dates it, at noon IST.
      */
+    /** The distributors a store can name, for correcting a distributor answer. */
+    static async adminDistributors(req: Request, res: Response) {
+        try {
+            const [[store]]: any = await db.execute('SELECT user_id, state FROM vendor_details WHERE id = ?', [String(req.query.store_id ?? '')]);
+            res.json({ success: true, distributors: store ? await distributorChoices(store) : [] });
+        } catch (error: any) {
+            console.error('[Schemes] distributors:', error);
+            res.status(500).json({ error: 'Could not load distributors' });
+        }
+    }
+
+    /**
+     * Head office correcting an entry: the store's answers, its files, or the
+     * store it is under. The review (status, points from products) is left as
+     * it was; a score worked out from a field is worked out again. What
+     * changed is kept on the entry and in the activity log.
+     */
+    static async adminCorrectEntry(req: Request, res: Response) {
+        try {
+            const [[entry]]: any = await db.execute('SELECT * FROM scheme_entries WHERE id = ?', [req.params.entryId]);
+            if (!entry) return res.status(404).json({ error: 'Entry not found' });
+            const scheme = await loadScheme(entry.scheme_id);
+            if (!scheme) return res.status(404).json({ error: 'Scheme not found' });
+
+            const fromStore = String(entry.store_id);
+            const toStore = String(req.body?.store_id ?? '').trim() || fromStore;
+            const names = new Map<string, string>();
+            const [stores]: any = await db.execute('SELECT id, store_name FROM vendor_details WHERE id IN (?, ?)', [fromStore, toStore]);
+            for (const s of stores) names.set(String(s.id), s.store_name);
+            if (!names.has(toStore)) return res.status(400).json({ error: 'Pick the store' });
+
+            const before = { answers: json<Record<string, string>>(entry.answers, {}), files: json<Record<string, EntryFile[]>>(entry.files, {}), store_id: fromStore };
+            const added = uploadedFiles(req);
+            const r = correctEntry(scheme.fields, before, {
+                answers: json<Record<string, unknown>>(req.body?.answers, {}),
+                remove: json<string[]>(req.body?.remove, []),
+                added, store_id: toStore,
+                store_names: { from: names.get(fromStore) ?? 'the store', to: names.get(toStore) ?? 'another store' },
+            });
+            /* Only what this correction breaks is refused: an entry added by
+               head office without every field can still be corrected. */
+            const was = new Set(entryProblems(scheme.fields, before.answers, before.files));
+            const problems = [...r.problems, ...entryProblems(scheme.fields, r.answers, r.files).filter(p => !was.has(p))];
+            if (problems.length) return res.status(400).json({ error: problems[0], problems });
+
+            /* Points on an approved entry: the products read off its invoices
+               (invoice by invoice when it was approved that way), or the score. */
+            const rule = scheme.score_rule;
+            const pts = json<{ lines?: EntryLine[]; invoices?: InvoiceIn[]; score?: unknown } | null>(req.body?.points, null);
+            let score = entry.status === 'approved' && (rule.mode === 'sum' || rule.mode === 'count') ? entryScore(rule, r.answers) : Number(entry.score);
+            let lines = json<ReturnType<typeof linesScore>['lines'] | null>(entry.lines, null);
+            let invoices = json<ReturnType<typeof invoicesScore>['invoices'] | null>(entry.invoices, null);
+            let invoiceNo: string | null = entry.invoice_no ?? null;
+            const said = (ls: { name: string; qty: number }[] | null) => (ls ?? []).map(l => `${l.name} × ${l.qty}`).join(', ') || 'none';
+            if (pts) {
+                if (entry.status !== 'approved') return res.status(400).json({ error: 'Points are set when the entry is approved: approve it from the review' });
+                if (rule.mode === 'products' && Array.isArray(pts.invoices)) {
+                    const b = invoicesScore(rule.products, pts.invoices);
+                    if (b.problems.length) return res.status(400).json({ error: b.problems[0], problems: b.problems });
+                    if (JSON.stringify(b.invoices.map(i => [i.invoice_no, i.lines.map(l => [l.product_id, l.qty])])) !== JSON.stringify((invoices ?? []).map(i => [i.invoice_no, i.lines.map(l => [l.product_id, l.qty])]))) {
+                        b.invoices.forEach((inv, i) => {
+                            const was = invoices?.[i];
+                            if (!was || was.invoice_no !== inv.invoice_no || said(was.lines) !== said(inv.lines)) r.changes.push(`Invoice ${inv.invoice_no}: ${was ? said(was.lines) : 'new'} → ${said(inv.lines)}`);
+                        });
+                    }
+                    score = b.score; lines = b.lines; invoices = b.invoices;
+                    invoiceNo = b.invoices.map(i => i.invoice_no).join(', ').slice(0, 80);
+                } else if (rule.mode === 'products') {
+                    const b = linesScore(rule.products, Array.isArray(pts.lines) ? pts.lines : []);
+                    if (b.problems.length) return res.status(400).json({ error: b.problems[0], problems: b.problems });
+                    if (said(b.lines) !== said(lines)) r.changes.push(`Products: ${said(lines)} → ${said(b.lines)}`);
+                    score = b.score; lines = b.lines;
+                } else if (rule.mode !== 'none') {
+                    const n = Number(pts.score);
+                    if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'The score must be a number' });
+                    score = n;
+                }
+            }
+            if (score !== Number(entry.score)) r.changes.push(`Points: ${Number(entry.score)} → ${score}`);
+            /* Only what this correction breaks is checked again. */
+            if (!r.changes.length) return res.status(400).json({ error: 'Nothing was changed' });
+
+            /* The same invoice still counts once: new files, new invoice numbers, and the whole entry when it moves store. */
+            const moved = toStore !== fromStore;
+            const nos = entry.status !== 'approved' ? [] : invoices?.length ? invoices.map(i => i.invoice_no) : invoiceNo ? [invoiceNo] : [];
+            const dup = await alreadyCounted(scheme.id, toStore, {
+                files: moved ? r.files : added,
+                invoiceNos: moved || invoiceNo !== (entry.invoice_no ?? null) ? nos : [],
+                except: entry.id,
+            });
+            if (dup) return res.status(409).json({ error: dup, problems: [dup] });
+            const admin = (req as any).user;
+            const edit: EntryEdit = {
+                at: new Date().toISOString(), by: admin?.id ?? null, by_name: admin?.name ?? null,
+                changes: r.changes, note: String(req.body?.note ?? '').trim().slice(0, 500) || null,
+            };
+            if (moved && !edit.note) return res.status(400).json({ error: 'Say why the entry is moving to another store' });
+
+            if (moved) await db.execute('INSERT IGNORE INTO scheme_participants (scheme_id, store_id) VALUES (?, ?)', [scheme.id, toStore]);
+            await db.execute(
+                'UPDATE scheme_entries SET store_id = ?, answers = ?, files = ?, score = ?, `lines` = ?, invoices = ?, invoice_no = ?, edits = ? WHERE id = ?',
+                [toStore, JSON.stringify(r.answers), JSON.stringify(r.files), score, lines ? JSON.stringify(lines) : null,
+                 invoices ? JSON.stringify(invoices) : null, invoiceNo, JSON.stringify([...json<EntryEdit[]>(entry.edits, []), edit]), entry.id]
+            );
+            log(req, 'SCHEME_ENTRY_CORRECTED', scheme, { entry: entry.id, store_id: toStore, ...(moved ? { from_store: fromStore } : {}), changes: r.changes, note: edit.note });
+            res.json({ success: true, changes: r.changes });
+        } catch (error: any) {
+            console.error('[Schemes] correct entry:', error);
+            res.status(500).json({ error: 'Could not save the correction' });
+        }
+    }
+
+    /**
+     * A wrong entry taken off the scheme — a duplicate, or one sent by
+     * mistake. The reason and the whole entry are kept in the activity log.
+     */
+    static async adminDeleteEntry(req: Request, res: Response) {
+        try {
+            const reason = String(req.body?.reason ?? '').trim().slice(0, 500);
+            if (reason.length < 3) return res.status(400).json({ error: 'Say why the entry is being deleted' });
+            const [[entry]]: any = await db.execute('SELECT * FROM scheme_entries WHERE id = ?', [req.params.entryId]);
+            if (!entry) return res.status(404).json({ error: 'Entry not found' });
+            const scheme = await loadScheme(entry.scheme_id);
+            if (!scheme) return res.status(404).json({ error: 'Scheme not found' });
+            await db.execute('DELETE FROM scheme_entries WHERE id = ?', [entry.id]);
+            log(req, 'SCHEME_ENTRY_DELETED', scheme, {
+                reason, entry: {
+                    ...entry, answers: json(entry.answers, {}), files: json(entry.files, {}), lines: json(entry.lines, null),
+                    claimed_lines: json(entry.claimed_lines, null), invoices: json(entry.invoices, null), edits: json(entry.edits, []),
+                },
+            });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] delete entry:', error);
+            res.status(500).json({ error: 'Could not delete the entry' });
+        }
+    }
+
     static async adminAddEntry(req: Request, res: Response) {
         try {
             const scheme = await loadScheme(req.params.id);

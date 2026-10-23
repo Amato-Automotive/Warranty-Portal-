@@ -8,6 +8,7 @@ import { downloadCSV } from "@/lib/utils";
 import { Combobox } from "@/components/ui/combobox";
 import { ClubBadge } from "@/components/schemes/ClubBadge";
 import { AddEntryDialog } from "./AddEntryDialog";
+import { CorrectEntryDialog } from "./CorrectEntryDialog";
 import { ImportDialog } from "./ImportDialog";
 import { SellThroughTab } from "./SellThroughTab";
 import { SchemeOverview } from "./SchemeOverview";
@@ -69,6 +70,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
     const [confirmEnd, setConfirmEnd] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [addOpen, setAddOpen] = useState(false);
+    const [correcting, setCorrecting] = useState<Entry | null>(null);
     const [importOpen, setImportOpen] = useState(false);
     const [reloadKey, setReloadKey] = useState(0);
     const [ef, setEf] = useState({ q: "", store: "all", state: "all", from: "", to: "", minPts: "", maxPts: "", product: "all" });
@@ -244,6 +246,12 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         {e.source !== "store" && <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-500">{e.source === "import" ? "Imported" : "Added by admin"}</span>}
                                                         {e.invoice_no && <span className="text-slate-500">Invoice {e.invoice_no}</span>}
+                                                        {!!e.edits?.length && (
+                                                            <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-700"
+                                                                title={e.edits.map(ed => `${new Date(ed.at).toLocaleDateString("en-GB")} ${ed.by_name ?? ""}: ${ed.changes.join("; ")}`).join("\n")}>
+                                                                Corrected{e.edits.length > 1 ? ` ×${e.edits.length}` : ""}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     {e.status === "pending" && (e.claimed_lines ?? []).length > 0 && (
                                                         <div className="rounded-md bg-sky-50 border border-sky-100 px-2 py-1">
@@ -311,6 +319,9 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                                                 <Button size="sm" variant="outline" onClick={() => setRejecting({ id: e.id, note: "" })}>
                                                                     <X className="h-4 w-4 mr-1" /> Reject
                                                                 </Button>
+                                                                <Button size="sm" variant="ghost" onClick={() => setCorrecting(e)} title="Correct what the store sent">
+                                                                    <Pencil className="h-4 w-4 mr-1" /> Correct
+                                                                </Button>
                                                             </div>
                                                         )
                                                     ) : (
@@ -320,6 +331,10 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                                             <button type="button" className="block text-[11px] text-slate-400 hover:text-orange-600"
                                                                 onClick={() => act(e.id, () => api.put(`/schemes/admin/entries/${e.id}`, { status: "pending" }), "Moved back to review")}>
                                                                 Undo
+                                                            </button>
+                                                            <button type="button" className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-orange-600"
+                                                                onClick={() => setCorrecting(e)}>
+                                                                <Pencil className="h-3 w-3" /> Correct
                                                             </button>
                                                         </div>
                                                     )}
@@ -753,6 +768,8 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                     )}
                 </div>
             )}
+            <CorrectEntryDialog entry={correcting} scheme={s} onClose={() => setCorrecting(null)}
+                onDone={() => { setCorrecting(null); setReloadKey(k => k + 1); load(); onChanged(); }} />
             <AddEntryDialog open={addOpen} scheme={s} onClose={() => setAddOpen(false)}
                 onDone={() => { setAddOpen(false); setReloadKey(k => k + 1); load(); onChanged(); }} />
             {products.length > 0 && (

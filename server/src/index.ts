@@ -406,6 +406,7 @@ async function runMigrations() {
     await addColumn('scheme_entries', 'source', "source VARCHAR(10) NOT NULL DEFAULT 'store'");
     await addColumn('scheme_entries', 'invoice_no', 'invoice_no VARCHAR(80) NULL');
     await addColumn('scheme_entries', 'invoices', 'invoices JSON NULL');
+    await addColumn('scheme_entries', 'edits', 'edits JSON NULL');
     await addColumn('scheme_entries', 'import_key', 'import_key VARCHAR(200) NULL, ADD INDEX idx_se_import (scheme_id, import_key)');
     await addColumn('scheme_payouts', 'delivery', 'delivery VARCHAR(12) NULL');
     await addColumn('scheme_payouts', 'dispatched_at', 'dispatched_at TIMESTAMP NULL');
