@@ -47,6 +47,7 @@ const PERMISSION_GROUPS: { label: string; modules: PermissionModule[] }[] = [
             { key: "announcements", label: "Announcements", description: "Broadcast messages to franchises" },
             { key: "grievances", label: "Complaints", description: "Support tickets & complaints" },
             { key: "posm", label: "POSM Requirements", description: "Marketing material requests" },
+            { key: "claims", label: "Warranty Claims", description: "Decide claims, payment, dispatch, undo" },
             { key: "schemes", label: "Offers & Schemes", description: "Create schemes, review entries, payouts" },
             { key: "feedback", label: "Review & Feedback", description: "Monthly franchise questions, answers and reminder" },
             { key: "ecatalogue", label: "E-Catalogue CMS", description: "Digital catalogue content" },

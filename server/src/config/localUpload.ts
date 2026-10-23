@@ -309,6 +309,22 @@ export const posmItemUpload = multer({
     },
 });
 
+/** Warranty claims: the problem's photos and video, the store's inspection and
+ *  fitting photos, an invoice → uploads/claims/YYYY-MM/. */
+export const claimUpload = multer({
+    storage: multer.diskStorage({
+        destination: createDestination('claims'),
+        filename: genericFileName,
+    }),
+    limits: { fileSize: 60 * 1024 * 1024, files: 12 },
+    fileFilter: (_req, file, cb) => {
+        const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+        if (['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf', 'mp4', 'mov', 'webm', '3gp', 'm4v'].includes(ext)
+            || /^(image|video)\//.test(file.mimetype) || file.mimetype === 'application/pdf') cb(null, true);
+        else cb(new Error(`Only photos, videos and PDFs can be attached: ${file.originalname}`));
+    },
+});
+
 /** Review & Feedback photos → uploads/feedback/YYYY-MM/. Images only. */
 export const feedbackUpload = multer({
     storage: multer.diskStorage({

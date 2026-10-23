@@ -114,6 +114,7 @@ export const SidebarContent = ({
             : id === 'vendors' ? attention.franchises
             : id === 'manpower' ? attention.manpower
             : id === 'asm-expenses' ? attention.asmExpenses
+            : id === 'claims' ? attention.claims
             : 0) || 0;
 
     const badgeText = (n: number): string | undefined =>

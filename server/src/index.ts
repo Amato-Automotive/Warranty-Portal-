@@ -28,6 +28,7 @@ import uploadRoutes from './routes/upload.routes.js';
 import oldWarrantiesRoutes from './routes/old-warranties.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import posmRoutes from './routes/posm.routes.js';
+import claimRoutes from './routes/claims.routes.js';
 import feedbackRoutes from './routes/feedback.routes.js';
 import schemeRoutes from './routes/scheme.routes.js';
 import uidRoutes from './routes/uid.routes.js';
@@ -467,6 +468,41 @@ async function runMigrations() {
          KEY idx_feedback_month (month)
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+    // Warranty and alteration claims (claimFlow): raised by the customer or the
+    // store, inspected by the store, decided and sent by head office.
+    await pool.query(`CREATE TABLE IF NOT EXISTS warranty_claims (
+         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+         claim_no VARCHAR(20) NULL,
+         kind VARCHAR(12) NOT NULL DEFAULT 'warranty',
+         warranty_uid VARCHAR(255) NOT NULL,
+         warranty_id INT NULL,
+         customer_user_id CHAR(36) NULL,
+         store_id CHAR(36) NULL,
+         raised_by_role VARCHAR(12) NOT NULL,
+         raised_by CHAR(36) NULL,
+         raised_via VARCHAR(12) NOT NULL DEFAULT 'web',
+         problem VARCHAR(40) NOT NULL,
+         description TEXT NULL,
+         media JSON NULL,
+         snapshot JSON NULL,
+         status VARCHAR(16) NOT NULL DEFAULT 'inspect',
+         inspection JSON NULL,
+         decision JSON NULL,
+         payment JSON NULL,
+         dispatch JSON NULL,
+         fixed JSON NULL,
+         old_part JSON NULL,
+         trail JSON NULL,
+         history JSON NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         UNIQUE KEY uq_claim_no (claim_no),
+         KEY idx_claim_warranty (warranty_uid),
+         KEY idx_claim_customer (customer_user_id),
+         KEY idx_claim_store (store_id, status),
+         KEY idx_claim_status (status)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');
   } catch (error: any) {
@@ -663,6 +699,7 @@ app.use('/api/upload', generalApiLimiter, uploadRoutes);
 app.use('/api/admin/old-warranties', generalApiLimiter, oldWarrantiesRoutes);
 app.use('/api/settings', generalApiLimiter, settingsRoutes);
 app.use('/api/posm', generalApiLimiter, posmRoutes);
+app.use('/api/claims', generalApiLimiter, claimRoutes);
 app.use('/api/feedback', generalApiLimiter, feedbackRoutes);
 app.use('/api/schemes', generalApiLimiter, schemeRoutes);
 app.use('/api/uid', generalApiLimiter, uidRoutes);
