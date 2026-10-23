@@ -328,6 +328,19 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                                         <div className="space-y-1">
                                                             <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${ENTRY_META[e.status].tone}`}>{ENTRY_META[e.status].label}</span>
                                                             {e.review_note && <p className="text-xs text-slate-500">{e.review_note}</p>}
+                                                            {e.status === "rejected" && (
+                                                                <Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-xs" disabled={busy === e.id}
+                                                                    title={products.length ? "Reopens it in the review queue, to read the invoice and add the products" : undefined}
+                                                                    onClick={async () => {
+                                                                        /* A products entry is approved by reading its invoice: back to the queue, opened on it. */
+                                                                        if (products.length) {
+                                                                            await act(e.id, () => api.put(`/schemes/admin/entries/${e.id}`, { status: "pending" }), "Reopened for review");
+                                                                            setQueueStart(e.id); setEntryFilter("pending");
+                                                                        } else review(e, "approved");
+                                                                    }}>
+                                                                    <Check className="h-3.5 w-3.5 mr-1" /> Approve
+                                                                </Button>
+                                                            )}
                                                             <button type="button" className="block text-[11px] text-slate-400 hover:text-orange-600"
                                                                 onClick={() => act(e.id, () => api.put(`/schemes/admin/entries/${e.id}`, { status: "pending" }), "Moved back to review")}>
                                                                 Undo
