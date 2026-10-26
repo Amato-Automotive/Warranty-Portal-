@@ -6,7 +6,7 @@ import { signalAdminAttentionOnSuccess as signalAttention } from '../services/ad
 
 const router = Router();
 
-/* The problem's photos and video as media, inspection and fitting photos as photos. */
+/* The problem's photos and video as media; the store's and fitting photos as photos. */
 const handleUpload = (req: Request, res: Response, next: NextFunction) => {
     claimUpload.any()(req, res, (err: any) => {
         if (err) {
@@ -23,17 +23,18 @@ router.get('/meta', authenticateToken, ClaimsController.meta);
 router.get('/mine', authenticateToken, requireRole('customer'), ClaimsController.mine);
 router.post('/', authenticateToken, requireRole('customer'), handleUpload, ClaimsController.raise);
 
-// The store: its claims, finding a customer's warranty, raising one at the counter.
+// The store: its claims (and a distributor's stores'), finding a warranty, raising one at the counter.
 router.get('/store', authenticateToken, requireRole('vendor'), ClaimsController.storeList);
+router.get('/store/warranties', authenticateToken, requireRole('vendor'), ClaimsController.storeWarranties);
 router.get('/store/search', authenticateToken, requireRole('vendor'), ClaimsController.storeSearch);
 router.post('/store', authenticateToken, requireRole('vendor'), signalAttention, handleUpload, ClaimsController.storeRaise);
-router.post('/:id/old-part', authenticateToken, requireRole('vendor'), signalAttention, handleUpload, ClaimsController.oldPart);
 
-// Head office.
+// The plant: everyone with Warranty Claims read sees every claim; the steps
+// each person may take come from their claims_* rights (see whoOf).
 router.get('/admin/all', authenticateToken, requireRole('admin'), requirePermission('claims', 'read'), ClaimsController.adminList);
 
 // A step by whoever is on the claim; claimFlow decides who may take which.
 router.get('/:id', authenticateToken, requirePermission('claims', 'read'), ClaimsController.detail);
-router.post('/:id/action', authenticateToken, requirePermission('claims', 'write'), signalAttention, handleUpload, ClaimsController.act);
+router.post('/:id/action', authenticateToken, requirePermission('claims', 'read'), signalAttention, handleUpload, ClaimsController.act);
 
 export default router;

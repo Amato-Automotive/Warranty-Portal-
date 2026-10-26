@@ -485,12 +485,15 @@ async function runMigrations() {
          description TEXT NULL,
          media JSON NULL,
          snapshot JSON NULL,
-         status VARCHAR(16) NOT NULL DEFAULT 'inspect',
-         inspection JSON NULL,
+         status VARCHAR(16) NOT NULL DEFAULT 'verify',
+         vehicle JSON NULL,
+         verification JSON NULL,
+         hold_info JSON NULL,
          decision JSON NULL,
-         payment JSON NULL,
+         consent JSON NULL,
+         plan_info JSON NULL,
          dispatch JSON NULL,
-         fixed JSON NULL,
+         fitted JSON NULL,
          old_part JSON NULL,
          trail JSON NULL,
          history JSON NULL,
@@ -502,6 +505,11 @@ async function runMigrations() {
          KEY idx_claim_store (store_id, status),
          KEY idx_claim_status (status)
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    // The plant's flow (24 Oct): store verifies, plant holds/decides, the
+    // customer agrees to a charge, the plant plans (EDD) and dispatches.
+    for (const col of ['vehicle', 'verification', 'hold_info', 'consent', 'plan_info', 'fitted']) {
+      await addColumn('warranty_claims', col, `${col} JSON NULL`);
+    }
 
     await ensureCustomerMobileLimitTable();
     console.log('Migration: customer_mobile_limits is ready.');

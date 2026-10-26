@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Loader2, Plus, ShieldCheck, Truck } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { ChevronLeft, Loader2, Plus, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { decisionText, day, rupees, REJECT_REASONS, type Claim, type ClaimWarranty } from "@/lib/claims";
-import { ClaimStatusPill, ClaimTimeline, ClaimTracker, FilePicker, MediaGrid, ProblemPicker, claimForm } from "@/components/claims/ClaimParts";
+import { decisionText, day, HOLD_REASONS, NEEDS_DESCRIPTION, REJECT_REASONS, type Claim, type ClaimWarranty } from "@/lib/claims";
+import {
+    ClaimDetails, ClaimStatusPill, ClaimTimeline, ClaimTracker, ConsentBox, EMPTY_VEHICLE, FilePicker, MediaGrid, MobileActionBar, ProblemPicker,
+    StepJump, VehicleFields, claimForm, missingForRequest, type VehicleValue,
+} from "@/components/claims/ClaimParts";
 
 interface Store { vendor_details_id: string; store_name: string; city?: string }
 
@@ -16,7 +20,9 @@ const CustomerClaims = () => {
     const [loading, setLoading] = useState(true);
     const [warranties, setWarranties] = useState<ClaimWarranty[]>([]);
     const [claims, setClaims] = useState<Claim[]>([]);
-    const [view, setView] = useState<'list' | 'raise' | number>('list');
+    const [params, setParams] = useSearchParams();
+    const askedUid = params.get('uid');
+    const [view, setView] = useState<'list' | 'raise' | number>(askedUid ? 'raise' : 'list');
 
     const load = async () => {
         try {
@@ -34,8 +40,9 @@ const CustomerClaims = () => {
     if (loading) return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-orange-600" /></div>;
 
     if (view === 'raise') {
-        return <RaiseClaim warranties={warranties} onBack={() => setView('list')}
-            onDone={c => { setClaims(prev => [c, ...prev]); setView(c.id); }} />;
+        const back = () => { if (askedUid) setParams({}, { replace: true }); setView('list'); };
+        return <RaiseClaim warranties={warranties} initialUid={askedUid} onBack={back}
+            onDone={c => { if (askedUid) setParams({}, { replace: true }); setClaims(prev => [c, ...prev]); setView(c.id); }} />;
     }
     if (typeof view === 'number') {
         const c = claims.find(x => x.id === view);
@@ -49,15 +56,15 @@ const CustomerClaims = () => {
                     <h1 className="text-2xl font-extrabold text-gray-900">My claims</h1>
                     <p className="text-sm text-gray-500">Warranty claim / alteration</p>
                 </div>
-                <Button onClick={() => setView('raise')} className="h-11 rounded-xl bg-orange-700 hover:bg-orange-800 font-bold">
-                    <Plus className="h-4 w-4 mr-1" />Raise claim / alteration
+                <Button onClick={() => setView('raise')} className="h-12 sm:h-11 w-full sm:w-auto rounded-xl bg-orange-700 hover:bg-orange-800 font-bold">
+                    <Plus className="h-4 w-4 mr-1" />Request claim / alteration
                 </Button>
             </div>
             {!claims.length && (
                 <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-8 text-center">
                     <ShieldCheck className="mx-auto h-8 w-8 text-orange-600" />
                     <p className="mt-2 font-semibold text-gray-900">No claims yet</p>
-                    <p className="text-sm text-gray-500">If a product under warranty has a problem, raise a claim and the store will check it.</p>
+                    <p className="text-sm text-gray-500">If a product under warranty has a problem, request a claim and the store will check it.</p>
                 </div>
             )}
             {claims.map(c => (
@@ -67,6 +74,8 @@ const CustomerClaims = () => {
                             <p className="text-xs font-bold text-gray-500">{c.claim_no}{c.kind === 'alteration' ? ' · Alteration' : ''}</p>
                             <p className="font-bold text-gray-900">{c.snapshot?.product_name} · {c.problem_text}</p>
                             <p className="text-sm text-gray-500">{c.snapshot?.registration_number} · {day(c.created_at)}</p>
+                            {c.plan && ['production', 'ready'].includes(c.status) && <p className="mt-1 text-xs font-semibold text-indigo-700">Expected by {day(c.plan.edd)}</p>}
+                            {c.status === 'consent' && <p className="mt-1 text-xs font-semibold text-purple-700">Your agreement is needed</p>}
                             {decisionText(c) && <p className="mt-1 text-xs text-gray-600">{decisionText(c)}</p>}
                         </div>
                         <ClaimStatusPill status={c.status} who="customer" />
@@ -79,10 +88,11 @@ const CustomerClaims = () => {
 
 /* ─── Raise ──────────────────────────────────────────────────────────────── */
 
-const RaiseClaim = ({ warranties, onBack, onDone }: { warranties: ClaimWarranty[]; onBack: () => void; onDone: (c: Claim) => void }) => {
+const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: ClaimWarranty[]; initialUid?: string | null; onBack: () => void; onDone: (c: Claim) => void }) => {
     const { toast } = useToast();
-    const [uid, setUid] = useState(warranties.find(w => w.claimable)?.uid ?? '');
+    const [uid, setUid] = useState(warranties.find(w => w.claimable && w.uid === initialUid)?.uid ?? warranties.find(w => w.claimable)?.uid ?? '');
     const [problem, setProblem] = useState('');
+    const [vehicle, setVehicle] = useState<VehicleValue>(EMPTY_VEHICLE);
     const [description, setDescription] = useState('');
     const [photos, setPhotos] = useState<File[]>([]);
     const [video, setVideo] = useState<File[]>([]);
@@ -102,17 +112,17 @@ const RaiseClaim = ({ warranties, onBack, onDone }: { warranties: ClaimWarranty[
 
     const send = async () => {
         if (!w) return toast({ variant: "destructive", title: "Choose the product" });
-        if (!problem) return toast({ variant: "destructive", title: "Choose the problem" });
-        if (!photos.length) return toast({ variant: "destructive", title: "Add at least one photo" });
-        if (!storeId) return toast({ variant: "destructive", title: "Choose the store for the inspection" });
+        const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: photos.length });
+        if (missing) return toast({ variant: "destructive", title: missing });
+        if (!storeId) return toast({ variant: "destructive", title: "Choose the store to check it" });
         setSending(true);
         try {
-            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId }, { media: [...photos, ...video] });
+            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId, ...vehicle }, { media: [...photos, ...video] });
             const r = await api.post('/claims', fd);
-            toast({ title: `Claim ${r.data.claim.claim_no} raised`, description: 'The store will call you to check the car.' });
+            toast({ title: `Claim ${r.data.claim.claim_no} requested`, description: 'The store will check it and call you.' });
             onDone(r.data.claim);
         } catch (e) {
-            toast({ variant: "destructive", title: "Claim not raised", description: getErrorMessage(e, "Try again in a moment.") });
+            toast({ variant: "destructive", title: "Claim not requested", description: getErrorMessage(e, "Try again in a moment.") });
         } finally {
             setSending(false);
         }
@@ -154,23 +164,28 @@ const RaiseClaim = ({ warranties, onBack, onDone }: { warranties: ClaimWarranty[
             {w && (
                 <>
                     <section className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">2 · What is the problem</p>
+                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">2 · Your vehicle</p>
+                        <VehicleFields value={vehicle} onChange={setVehicle} airbags={w.asks_airbags} registered={w.car} />
+                    </section>
+
+                    <section className="space-y-2">
+                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">3 · What is the issue</p>
                         <ProblemPicker options={options} value={problem} onChange={setProblem} />
-                        {problem === 'alteration' && <p className="text-xs text-gray-500">Alterations are usually chargeable. Head office will tell you the amount before anything is done.</p>}
+                        {problem === 'alteration' && <p className="text-xs text-gray-500">Alterations are usually chargeable. You will be asked to agree before anything is done.</p>}
                         <label className="block space-y-1.5 text-sm font-semibold text-gray-800">
-                            Tell us more {['product_defect', 'alteration'].includes(problem) ? '' : '(optional)'}
+                            Tell us more {NEEDS_DESCRIPTION.includes(problem) ? '' : '(optional)'}
                             <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} maxLength={2000} className="font-normal" />
                         </label>
                     </section>
 
                     <section className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">3 · Photos and video</p>
+                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">4 · Photos and video</p>
                         <FilePicker files={photos} onChange={setPhotos} max={5} hint="1 to 5 photos: a close-up of the problem and one of the whole seat or part." />
                         <FilePicker files={video} onChange={setVideo} max={1} accept="video/*" label="Add video" hint="A short video is optional (up to 60 MB)." />
                     </section>
 
                     <section className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">4 · Store for the inspection</p>
+                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">5 · Store to check it</p>
                         {!changing ? (
                             <div className="flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white p-4">
                                 <div>
@@ -180,7 +195,7 @@ const RaiseClaim = ({ warranties, onBack, onDone }: { warranties: ClaimWarranty[
                                 <Button variant="outline" className="h-11 rounded-xl" onClick={() => setChanging(true)}>Change</Button>
                             </div>
                         ) : (
-                            <select value={storeId} onChange={e => setStoreId(e.target.value)} aria-label="Store for the inspection"
+                            <select value={storeId} onChange={e => setStoreId(e.target.value)} aria-label="Store to check it"
                                 className="h-12 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm">
                                 <option value="">Choose a store</option>
                                 {w.store_id && <option value={w.store_id}>{w.fitted_store || 'Where it was fitted'}</option>}
@@ -189,12 +204,17 @@ const RaiseClaim = ({ warranties, onBack, onDone }: { warranties: ClaimWarranty[
                                 ))}
                             </select>
                         )}
-                        {store && <p className="text-xs text-gray-500">{store.store_name} will call you to check the car.</p>}
+                        {store && <p className="text-xs text-gray-500">{store.store_name} will check it and call you.</p>}
                     </section>
 
-                    <Button onClick={send} disabled={sending} className="h-12 w-full rounded-xl bg-orange-700 hover:bg-orange-800 text-base font-bold">
-                        {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Raise claim'}
+                    <Button onClick={send} disabled={sending} className="hidden sm:flex h-12 w-full rounded-xl bg-orange-700 hover:bg-orange-800 text-base font-bold">
+                        {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Request claim'}
                     </Button>
+                    <MobileActionBar>
+                        <Button onClick={send} disabled={sending} className="h-12 w-full rounded-xl bg-orange-700 hover:bg-orange-800 text-base font-bold">
+                            {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Request claim'}
+                        </Button>
+                    </MobileActionBar>
                 </>
             )}
         </div>
@@ -206,21 +226,21 @@ const RaiseClaim = ({ warranties, onBack, onDone }: { warranties: ClaimWarranty[
 const ClaimDetail = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => void; onChange: (c: Claim) => void }) => {
     const { toast } = useToast();
     const [c, setC] = useState(claim);
-    const [closing, setClosing] = useState(false);
+    const [busy, setBusy] = useState(false);
     useEffect(() => {
         api.get(`/claims/${claim.id}`).then(r => { setC(r.data.claim); onChange(r.data.claim); }).catch(() => {});
     }, [claim.id]);
 
-    const close = async () => {
-        setClosing(true);
+    const act = async (action: 'consent' | 'decline', note: string) => {
+        setBusy(true);
         try {
-            const r = await api.post(`/claims/${c.id}/action`, { action: 'close' });
+            const r = await api.post(`/claims/${c.id}/action`, { action, agree: action === 'consent', note });
             setC(r.data.claim); onChange(r.data.claim);
-            toast({ title: 'Thank you', description: 'The claim is closed.' });
+            toast({ title: action === 'consent' ? 'Thank you' : 'Noted', description: action === 'consent' ? 'The plant will go ahead now.' : 'Nothing will be done on this claim.' });
         } catch (e) {
-            toast({ variant: "destructive", title: "Could not close", description: getErrorMessage(e, "Try again in a moment.") });
+            toast({ variant: "destructive", title: "Could not save", description: getErrorMessage(e, "Try again in a moment.") });
         } finally {
-            setClosing(false);
+            setBusy(false);
         }
     };
     const d = c.decision;
@@ -231,9 +251,9 @@ const ClaimDetail = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => 
                 <button onClick={onBack} aria-label="Back" className="h-11 w-11 rounded-xl flex items-center justify-center hover:bg-gray-100"><ChevronLeft className="h-5 w-5" /></button>
                 <h1 className="text-xl font-extrabold text-gray-900">Claim {c.claim_no}</h1>
             </div>
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 space-y-4">
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-4">
                 <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                         <p className="text-lg font-extrabold text-gray-900">{c.snapshot?.product_name}</p>
                         <p className="text-sm text-gray-600">{c.problem_text} · {c.snapshot?.registration_number}</p>
                         {c.store_name && <p className="text-sm text-gray-500">Store: {c.store_name}{c.store_city ? `, ${c.store_city}` : ''}</p>}
@@ -241,43 +261,46 @@ const ClaimDetail = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => 
                     <ClaimStatusPill status={c.status} who="customer" />
                 </div>
 
+                {c.actions.includes('consent') && (
+                    <ConsentBox who="customer" busy={busy} onAgree={n => act('consent', n)} onDecline={n => act('decline', n)} />
+                )}
+
                 <ClaimTracker c={c} />
 
+                {c.status === 'on_hold' && c.hold && (
+                    <div className="rounded-xl bg-yellow-50 px-4 py-3 text-sm text-yellow-900">
+                        <p className="font-bold">On hold: {HOLD_REASONS[c.hold.reason] ?? 'see note'}</p>
+                        {c.hold.note && <p className="mt-1">{c.hold.note}</p>}
+                    </div>
+                )}
                 {c.status === 'rejected' && d && (
                     <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-900">
                         <p className="font-bold">Not approved as per T&amp;C: {REJECT_REASONS[d.reason ?? ''] ?? 'see note'}</p>
-                        {d.note && <p className="mt-1">{d.note}</p>}
+                        {d.remarks && <p className="mt-1">{d.remarks}</p>}
                     </div>
                 )}
+                {c.status === 'declined' && <p className="rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-700">The charge was declined, so nothing will be done on this claim.</p>}
                 {d && d.outcome !== 'reject' && (
                     <div className="rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-800 space-y-1">
                         <p className="font-bold">{decisionText(c)}</p>
-                        {d.note && <p>{d.note}</p>}
-                        {c.status === 'payment' && <p className="text-purple-800 font-semibold">Please pay {rupees(d.amount)} to Autoform by UPI or bank transfer. The store will share the details. Work starts once it is received.</p>}
+                        {d.remarks && <p>{d.remarks}</p>}
                     </div>
                 )}
-                {c.dispatch?.courier && (
-                    <p className="flex items-center gap-2 text-sm text-gray-700"><Truck className="h-4 w-4 text-orange-600" />{[c.dispatch.courier, c.dispatch.tracking].filter(Boolean).join(' · ')}{c.dispatch.date ? ` · sent ${day(c.dispatch.date)}` : ''}</p>
-                )}
-                {c.kind === 'warranty' && c.snapshot?.cover_end && c.status !== 'rejected' && (
+                {c.kind === 'warranty' && c.snapshot?.cover_end && !['rejected', 'declined'].includes(c.status) && (
                     <p className="rounded-xl bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">Your warranty stays the same: covered till {day(c.snapshot.cover_end)}. A replacement does not start a new period.</p>
-                )}
-                {c.actions.includes('close') && (
-                    <Button onClick={close} disabled={closing} variant="outline" className="h-12 w-full rounded-xl font-bold">
-                        {closing ? <Loader2 className="h-5 w-5 animate-spin" /> : 'It is fixed, close the claim'}
-                    </Button>
                 )}
             </div>
 
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 space-y-3">
-                <p className="text-sm font-bold text-gray-900">Your photos</p>
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-3">
+                <p className="text-sm font-bold text-gray-900">What you sent</p>
+                <ClaimDetails c={c} />
                 <MediaGrid urls={c.media} />
-                {c.description && <p className="text-sm text-gray-600">"{c.description}"</p>}
             </div>
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 space-y-3">
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-3">
                 <p className="text-sm font-bold text-gray-900">Timeline</p>
                 <ClaimTimeline history={c.history} who="customer" />
             </div>
+            <StepJump label={c.actions.includes('consent') ? 'Your agreement is needed' : null} />
         </div>
     );
 };

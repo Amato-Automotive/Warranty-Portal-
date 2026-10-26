@@ -1,18 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyClaimAction, actionsFor, coverage, warrantyYears, problemsFor, kindOf, stepText, type FlowClaim } from '../claimFlow.js';
+import {
+    applyClaimAction, actionsFor, coverage, warrantyYears, problemsFor, kindOf, readVehicle, readProblem, waitingOn,
+    type FlowClaim, type Who,
+} from '../claimFlow.js';
 
 const claim = (p: Partial<FlowClaim> = {}): FlowClaim => ({
-    kind: 'warranty', status: 'inspect', inspection: null, decision: null, payment: null, dispatch: null, fixed: null, ...p,
+    kind: 'warranty', product_type: 'seat-cover', status: 'verify', problem: 'stitch_issue', description: null,
+    vehicle: { make: 'Hyundai', model: 'Creta', airbags: 'with' },
+    verification: null, hold: null, decision: null, consent: null, plan: null, dispatch: null, fitted: null, ...p,
 });
 const ok = (r: ReturnType<typeof applyClaimAction>) => { if ('error' in r) throw new Error(r.error); return r.claim; };
 const err = (r: ReturnType<typeof applyClaimAction>) => ('error' in r ? r.error : 'no error');
-const inspected = () => ok(applyClaimAction(claim(), 'inspect', 'vendor', { covered: true, suggest: 'send_material', note: 'Seam open 15 cm', photos: ['a.jpg'] }));
+
+const store: Who = { actor: 'vendor' };
+const customer: Who = { actor: 'customer' };
+const anuka: Who = { actor: 'admin', rights: ['decide', 'plan', 'dispatch', 'edit'] };
+const viewer: Who = { actor: 'admin', rights: [] };
+
+const verified = () => ok(applyClaimAction(claim(), 'verify', store, { note: 'Seam open 15 cm' }));
+const approved = (charge: 'foc' | 'chargeable', outcome = 'send_material') =>
+    ok(applyClaimAction(verified(), 'approve', anuka, { outcome, charge, remarks: 'Replace front seat' }));
 
 test('warranty years from the text, and cover from the purchase date', () => {
     assert.equal(warrantyYears('1+1 year'), 2);
     assert.equal(warrantyYears('2 + 1 year'), 3);
-    assert.equal(warrantyYears('7 years'), 7);
     assert.equal(warrantyYears(null), 0);
     const now = new Date('2026-10-22');
     const c = coverage({ status: 'validated', warranty_type: '1+1 year', purchase_date: '2025-03-12' }, now);
@@ -20,88 +32,86 @@ test('warranty years from the text, and cover from the purchase date', () => {
     assert.equal(c.covered, true);
     assert.equal(coverage({ status: 'validated', warranty_type: '1+1 year', purchase_date: '2024-01-01' }, now).why, 'Warranty period is over');
     assert.equal(coverage({ status: 'pending', warranty_type: '1+1 year', purchase_date: '2026-01-01' }, now).covered, false);
-    assert.equal(coverage({ status: 'validated', warranty_type: '1+1', purchase_date: null, created_at: '2026-01-05' }, now).start, '2026-01-05');
 });
 
-test('the problems follow the T&C for each product', () => {
-    assert.deepEqual(problemsFor('seat-cover'), ['stitching_defect', 'colour_bleeding', 'rubbing_fastness', 'alteration']);
-    assert.deepEqual(problemsFor('ev-products'), ['product_defect', 'alteration']);
-    assert.deepEqual(problemsFor('seat-cover', false), ['alteration'], 'out of warranty, only an alteration');
+test('issues: all while covered, only alteration after; the description where it is needed', () => {
+    assert.ok(problemsFor('seat-cover').includes('stitch_issue'));
+    assert.deepEqual(problemsFor('seat-cover', false), ['alteration']);
     assert.equal(kindOf('alteration'), 'alteration');
-    assert.equal(kindOf('stitching_defect'), 'warranty');
+    assert.match(String((readProblem({ problem: 'stitch_issue' }, false) as any).error), /only an alteration/);
+    assert.match(String((readProblem({ problem: 'other', description: 'x' }, true) as any).error), /Describe/);
+    assert.deepEqual(readProblem({ problem: 'colour_issue' }, true), { problem: 'colour_issue', description: null });
 });
 
-test('the store inspects with photos and a note; not covered needs a T&C reason', () => {
-    assert.match(err(applyClaimAction(claim(), 'inspect', 'vendor', { covered: true, note: 'ok ok' })), /photo/);
-    assert.match(err(applyClaimAction(claim(), 'inspect', 'vendor', { covered: false, note: 'cut mark', photos: ['a'] })), /not covered/);
-    assert.match(err(applyClaimAction(claim(), 'inspect', 'admin', { covered: true, note: 'x', photos: ['a'] })), /cannot take/);
-    const c = inspected();
-    assert.equal(c.status, 'decide');
-    assert.equal(c.inspection?.suggest, 'send_material');
-    const back = ok(applyClaimAction(c, 'ask_more', 'admin', { note: 'Photo of the seat back please' }));
-    assert.equal(back.status, 'inspect');
-    const again = ok(applyClaimAction(back, 'inspect', 'vendor', { covered: true, note: 'Added seat back', photos: ['b.jpg'] }));
-    assert.deepEqual(again.inspection?.photos, ['a.jpg', 'b.jpg'], 'photos add up across inspections');
+test('vehicle: make and model always, airbags only for seat covers', () => {
+    assert.match(String((readVehicle({ vehicle_make: 'Kia' }, 'seat-cover') as any).error), /model/);
+    assert.match(String((readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos' }, 'seat-cover') as any).error), /airbags/);
+    assert.deepEqual(readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos', airbags: 'with' }, 'ppf'), { make: 'Kia', model: 'Seltos', airbags: null });
 });
 
-test('FOC replacement: send → dispatched → fitted → closed, each step undoable', () => {
-    const a = ok(applyClaimAction(inspected(), 'approve', 'admin', { outcome: 'send_material', charge: 'foc', item: 'U-CREST driver seat set', old_part: 'return' }));
-    assert.equal(a.status, 'send');
-    assert.equal(a.decision?.source, 'plant');
-    assert.equal(a.decision?.material, 'replacement');
-    assert.equal(a.decision?.old_part, 'return');
-    assert.match(stepText('approve', a), /replacement from the plant, FOC/);
-    assert.match(err(applyClaimAction(a, 'dispatch', 'admin', {})), /how it was sent/);
-    const d = ok(applyClaimAction(a, 'dispatch', 'admin', { courier: 'DTDC', tracking: 'D1', date: '2026-10-21' }));
+test('the store verifies, correcting details in words', () => {
+    const c = ok(applyClaimAction(claim(), 'verify', store, { note: 'Checked', vehicle_model: 'Creta N Line', problem: 'colour_issue' }));
+    assert.equal(c.status, 'review');
+    assert.deepEqual(c.verification?.corrections, [
+        'Vehicle: Hyundai · Creta · with airbags → Hyundai · Creta N Line · with airbags',
+        'Issue: Stitch issue → Colour issue / colour difference',
+    ]);
+    assert.equal(c.problem, 'colour_issue');
+    assert.match(err(applyClaimAction(claim(), 'verify', anuka, {})), /cannot take/);
+});
+
+test('the plant holds, asks for more, rejects; a viewer can do none of it', () => {
+    const v = verified();
+    assert.deepEqual(actionsFor(v, viewer), []);
+    assert.match(err(applyClaimAction(v, 'approve', viewer, { outcome: 'repair_store', charge: 'foc' })), /cannot take/);
+    const held = ok(applyClaimAction(v, 'hold', anuka, { reason: 'component' }));
+    assert.equal(held.status, 'on_hold');
+    assert.equal(waitingOn(held.status), 'Plant (on hold)');
+    assert.equal(ok(applyClaimAction(held, 'ask_more', anuka, { note: 'Send a closer photo' })).status, 'verify');
+    assert.match(err(applyClaimAction(v, 'reject', anuka, {})), /reason/);
+    assert.equal(ok(applyClaimAction(held, 'reject', anuka, { reason: 'fading' })).status, 'rejected');
+});
+
+test('free of cost goes straight on; chargeable waits for the customer, or the store with their say-so', () => {
+    assert.equal(approved('foc').status, 'plan');
+    assert.equal(approved('foc', 'repair_store').status, 'repair');
+    const ch = approved('chargeable');
+    assert.equal(ch.status, 'consent');
+    assert.deepEqual(actionsFor(ch, customer), ['consent', 'decline']);
+    assert.match(err(applyClaimAction(ch, 'consent', store, {})), /customer has agreed/);
+    const agreed = ok(applyClaimAction(ch, 'consent', store, { agree: true }));
+    assert.equal(agreed.status, 'plan');
+    assert.equal(agreed.consent?.by, 'store');
+    assert.equal(ok(applyClaimAction(ch, 'decline', customer, {})).status, 'declined');
+});
+
+test('EDD and alteration no., then dispatch date and docket, then the store confirms fitted', () => {
+    const planRight: Who = { actor: 'admin', rights: ['plan'] };
+    const a = approved('foc');
+    assert.match(err(applyClaimAction(a, 'plan', planRight, { alteration_no: 'ALT-9' })), /EDD/);
+    assert.match(err(applyClaimAction(a, 'plan', { actor: 'admin', rights: ['dispatch'] }, { edd: '2026-11-02' })), /cannot take/);
+    const p = ok(applyClaimAction(a, 'plan', planRight, { edd: '2026-11-02', alteration_no: 'ALT-9' }));
+    assert.equal(p.status, 'production');
+    assert.match(err(applyClaimAction(p, 'ready', { actor: 'admin', rights: ['dispatch'] }, {})), /cannot take/);
+    const r = ok(applyClaimAction(p, 'ready', planRight, {}));
+    assert.equal(r.status, 'ready');
+    assert.equal(waitingOn(r.status), 'Plant to dispatch');
+    assert.match(err(applyClaimAction(r, 'dispatch', anuka, { dispatch_date: '2026-11-01' })), /docket/);
+    const d = ok(applyClaimAction(r, 'dispatch', anuka, { dispatch_date: '2026-11-01', docket: 'DTDC 123' }));
     assert.equal(d.status, 'dispatched');
-    const f = ok(applyClaimAction(d, 'fixed', 'vendor', { note: 'Fitted' }));
-    assert.equal(f.status, 'fixed');
-    assert.deepEqual(actionsFor(f, 'customer'), ['close']);
-    const cl = ok(applyClaimAction(f, 'close', 'customer'));
-    assert.equal(cl.status, 'closed');
-
-    const u = ok(applyClaimAction(ok(applyClaimAction(cl, 'undo', 'admin')), 'undo', 'admin'));
-    assert.equal(u.status, 'dispatched');
-    assert.equal(u.fixed, null);
-    const u2 = ok(applyClaimAction(u, 'undo', 'admin'));
-    assert.equal(u2.status, 'send');
-    assert.equal(u2.dispatch, null);
-    assert.match(err(applyClaimAction(u2, 'undo', 'vendor')), /cannot take/);
+    assert.equal(ok(applyClaimAction(d, 'fitted', store, {})).status, 'closed');
 });
 
-test('chargeable waits for payment, then goes on to repair or send', () => {
-    const base = inspected();
-    assert.match(err(applyClaimAction(base, 'approve', 'admin', { outcome: 'repair_store', charge: 'chargeable' })), /amount/);
-    const p = ok(applyClaimAction(base, 'approve', 'admin', { outcome: 'repair_store', charge: 'chargeable', amount: '1500' }));
-    assert.equal(p.status, 'payment');
-    assert.equal(p.decision?.amount, 1500);
-    const e = ok(applyClaimAction(p, 'edit', 'admin', { amount: 1200, note: 'Labour only' }));
-    assert.equal(e.decision?.amount, 1200);
-    assert.equal(e.trail?.length, p.trail?.length, 'an edit is not a step');
-    assert.match(err(applyClaimAction(p, 'paid', 'admin', {})), /how it was paid/);
-    const r = ok(applyClaimAction(e, 'paid', 'admin', { mode: 'upi', ref: 'UTR123' }));
-    assert.equal(r.status, 'repair');
-    assert.match(err(applyClaimAction(r, 'edit', 'admin', { amount: 900 })), /payment is already in/);
-    const s = ok(applyClaimAction(ok(applyClaimAction(base, 'approve', 'admin', { outcome: 'send_material', charge: 'chargeable', amount: 800, item: 'Mat set', source: 'distributor', distributor: 'Shree Auto' })), 'paid', 'admin', { mode: 'bank' }));
-    assert.equal(s.status, 'send');
-    assert.equal(s.decision?.distributor, 'Shree Auto');
-});
-
-test('reject needs a T&C reason; other needs words; steps out of turn are refused', () => {
-    const base = inspected();
-    assert.match(err(applyClaimAction(base, 'reject', 'admin', {})), /reason/);
-    assert.match(err(applyClaimAction(base, 'reject', 'admin', { reason: 'other' })), /Write the reason/);
-    const r = ok(applyClaimAction(base, 'reject', 'admin', { reason: 'sharp_object', note: 'Cut mark on the seat' }));
-    assert.equal(r.status, 'rejected');
-    assert.match(stepText('reject', r), /sharp object/);
-    assert.ok(!actionsFor(r, 'admin').includes('edit'));
-    assert.match(err(applyClaimAction(r, 'dispatch', 'admin', { courier: 'x' })), /cannot be dispatched/);
-    assert.match(err(applyClaimAction(base, 'approve', 'admin', { outcome: 'send_material', charge: 'foc' })), /what is being sent/);
-    assert.match(err(applyClaimAction(base, 'approve', 'admin', { outcome: 'send_material', charge: 'foc', item: 'x', source: 'distributor' })), /which distributor/);
-});
-
-test('an alteration sends alteration material by default', () => {
-    const c = ok(applyClaimAction({ ...inspected(), kind: 'alteration' }, 'approve', 'admin', { outcome: 'send_material', charge: 'chargeable', amount: 600, item: 'Headrest covers' }));
-    assert.equal(c.decision?.material, 'alteration');
-    assert.equal(c.status, 'payment');
+test('edits and undos need a reason, list their changes, and can themselves be undone', () => {
+    const d = ok(applyClaimAction(ok(applyClaimAction(approved('foc'), 'plan', anuka, { edd: '2026-11-02' })), 'dispatch', anuka, { dispatch_date: '2026-11-01', docket: 'D1' }));
+    assert.match(err(applyClaimAction(d, 'edit', anuka, { docket: 'D2' })), /why/);
+    assert.match(err(applyClaimAction(d, 'edit', anuka, { docket: 'D1', note: 'no change' })), /Nothing/);
+    const r = applyClaimAction(d, 'edit', anuka, { docket: 'D2', edd: '2026-11-05', note: 'Courier re-booked' });
+    if ('error' in r) throw new Error(r.error);
+    assert.deepEqual(r.changes, ['EDD: 2026-11-02 → 2026-11-05', 'Docket: D1 → D2']);
+    assert.equal(r.claim.status, 'dispatched');
+    const back = ok(applyClaimAction(r.claim, 'undo', anuka, { note: 'Wrong claim' }));
+    assert.equal(back.dispatch?.docket, 'D1');
+    assert.match(err(applyClaimAction(back, 'undo', anuka, {})), /why/);
+    assert.equal(ok(applyClaimAction(back, 'undo', anuka, { note: 'Not sent yet' })).status, 'production');
 });

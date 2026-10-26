@@ -1,9 +1,9 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import Header from "@/components/Header";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Package, ArrowLeft, Search, Loader2, Edit, LayoutGrid, List } from "lucide-react";
+import { Package, ArrowLeft, Search, Loader2, Edit, LayoutGrid, List, ShieldAlert } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,9 @@ import { warrantyVehicleNumber } from "@/lib/vehicleNumber";
 
 const CustomerDashboard = () => {
     const { user, loading } = useAuth();
+    const navigate = useNavigate();
+    // Open the claim form on this warranty (My Claims reads ?uid=).
+    const requestClaim = (uid: string) => navigate(`/dashboard/customer/claims?uid=${encodeURIComponent(uid)}`);
     const [warranties, setWarranties] = useState<any[]>([]);
     const [loadingWarranties, setLoadingWarranties] = useState(false);
     const [editingWarranty, setEditingWarranty] = useState<any>(null);
@@ -342,6 +345,12 @@ const CustomerDashboard = () => {
                                         )}
                                     </div>
                                 )}
+                                {warranty.status === 'validated' && (
+                                    <Button size="sm" variant="outline" className="mt-4 w-full h-10 rounded-xl border-orange-200 text-orange-700 hover:bg-orange-50 font-semibold"
+                                        onClick={(e) => { e.stopPropagation(); requestClaim(warranty.uid); }}>
+                                        <ShieldAlert className="w-4 h-4 mr-2" /> Request claim / alteration
+                                    </Button>
+                                )}
                             </div>
                         );
                     }
@@ -417,6 +426,12 @@ const CustomerDashboard = () => {
                                             {warranty.status === 'pending_vendor' ? 'In Review' : warranty.status === 'validated' ? 'Approved' : warranty.status}
                                         </span>
                                     </div>
+                                    {warranty.status === 'validated' && (
+                                        <button type="button" className="mt-1 text-xs font-semibold text-orange-700 hover:underline"
+                                            onClick={(e) => { e.stopPropagation(); requestClaim(warranty.uid); }}>
+                                            Request claim
+                                        </button>
+                                    )}
                                 </div>
                             </div>
 

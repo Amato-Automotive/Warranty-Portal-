@@ -48,7 +48,8 @@ export async function getAttentionCounts(user: { isSuperAdmin?: boolean; permiss
     }
 
     if (canRead(user, 'claims')) {
-        const [rows]: any = await db.execute("SELECT COUNT(*) AS n FROM warranty_claims WHERE status = 'decide'");
+        // Waiting on the plant: to decide, to plan (EDD), to dispatch.
+        const [rows]: any = await db.execute("SELECT COUNT(*) AS n FROM warranty_claims WHERE status IN ('review', 'plan', 'production', 'ready')");
         counts.claims = Number(rows[0]?.n || 0);
     }
 

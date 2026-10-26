@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Loader2, Phone, Search, Truck, Undo2 } from "lucide-react";
+import { ChevronLeft, Eye, Loader2, Phone, Search, Truck, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,91 +7,162 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { decisionText, day, rupees, REJECT_REASONS, type Claim, type ClaimStatus } from "@/lib/claims";
-import { ClaimStatusPill, ClaimSummary, ClaimTimeline, MediaGrid, ChoiceRow } from "@/components/claims/ClaimParts";
+import { decisionText, day, HOLD_REASONS, PROBLEMS, REJECT_REASONS, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
+import { ClaimDetails, ClaimStatusPill, ClaimSummary, ClaimTimeline, ClaimTracker, MediaGrid, ChoiceRow, ProblemPicker, STEP_ID, StepJump, VehicleFields, type VehicleValue } from "@/components/claims/ClaimParts";
 import { RegistrationPanel } from "@/components/claims/RegistrationPanel";
+import { PlantTeam } from "@/components/admin/claims/PlantTeam";
 
-const CARDS: { status: ClaimStatus | ''; label: string }[] = [
-    { status: 'decide', label: 'To decide' },
-    { status: 'inspect', label: 'With store' },
-    { status: 'payment', label: 'Awaiting payment' },
-    { status: 'send', label: 'To send' },
-    { status: 'dispatched', label: 'On the way' },
-    { status: 'repair', label: 'Store to repair' },
-    { status: 'fixed', label: 'Fixed' },
-    { status: '', label: 'All' },
+/** The plant's queues, in the order the work flows. */
+const CARDS: { statuses: ClaimStatus[]; label: string; right?: PlantRight }[] = [
+    { statuses: ['review'], label: 'To decide', right: 'decide' },
+    { statuses: ['on_hold'], label: 'On hold', right: 'decide' },
+    { statuses: ['plan'], label: 'To set EDD', right: 'plan' },
+    { statuses: ['production'], label: 'Being prepared', right: 'plan' },
+    { statuses: ['ready'], label: 'Ready to dispatch', right: 'dispatch' },
+    { statuses: ['dispatched'], label: 'Dispatched' },
+    { statuses: ['verify'], label: 'With store' },
+    { statuses: ['consent'], label: 'Customer to agree' },
+    { statuses: ['repair'], label: 'Store to repair' },
+    { statuses: ['closed'], label: 'Closed' },
+    { statuses: ['rejected', 'declined'], label: 'Rejected / declined' },
+    { statuses: [], label: 'All' },
 ];
 
-/** Head office: every claim, the decision, payment, dispatch, and undo. */
+const RIGHT_TEXT: Record<PlantRight, string> = { decide: 'Decide', plan: 'EDD, alteration no. & ready', dispatch: 'Dispatch', edit: 'Edit & undo' };
+
+/**
+ * The plant (MFU): every claim, and the steps each person's rights allow —
+ * deciding, the EDD and alteration number, dispatch, and edits with a reason.
+ * Anyone with only Warranty Claims read (and the depots) sees it all, read-only.
+ */
 export const AdminClaims = () => {
     const { toast } = useToast();
+    const { user } = useAuth() as any;
+    // The team is run by super admins, who alone can change admin access.
+    const [tab, setTab] = useState<'claims' | 'team'>('claims');
     const [claims, setClaims] = useState<(Claim & { store_name?: string })[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
-    const [status, setStatus] = useState<ClaimStatus | ''>('decide');
+    const [rights, setRights] = useState<PlantRight[] | null>(null);
+    const [card, setCard] = useState<number | null>(null);
     const [q, setQ] = useState('');
     const [loading, setLoading] = useState(true);
     const [open, setOpen] = useState<number | null>(null);
 
-    const load = async (s = status, query = q) => {
+    const load = async (i = card, query = q) => {
         setLoading(true);
         try {
-            const r = await api.get('/claims/admin/all', { params: { status: s || undefined, q: query || undefined } });
+            const statuses = i === null ? [] : CARDS[i].statuses;
+            const r = await api.get('/claims/admin/all', { params: { status: statuses.join(',') || undefined, q: query || undefined } });
             setClaims(r.data.claims ?? []);
             setCounts(r.data.counts ?? {});
+            if (rights === null) {
+                const rs: PlantRight[] = r.data.rights ?? [];
+                setRights(rs);
+                // Open on the first queue this person works, once.
+                if (i === null) {
+                    const first = CARDS.findIndex(c => c.right && rs.includes(c.right));
+                    if (first >= 0) { setCard(first); return; }
+                    setCard(CARDS.length - 1);
+                }
+            }
         } catch (e) {
             toast({ variant: "destructive", title: "Could not load claims", description: getErrorMessage(e, "Try again in a moment.") });
         } finally {
             setLoading(false);
         }
     };
-    useEffect(() => { load(); }, [status]);
+    useEffect(() => { load(); }, [card]);
 
     if (open !== null) return <AdminClaim id={open} onBack={() => { setOpen(null); load(); }} />;
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const tabs = user?.isSuperAdmin && (
+        <div className="flex gap-2" role="tablist">
+            {([['claims', 'Claims'], ['team', 'Plant team']] as const).map(([k, label]) => (
+                <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={cn("h-10 rounded-full px-4 text-sm font-semibold",
+                    tab === k ? "bg-gray-900 text-white" : "border border-gray-300 bg-white text-gray-800")}>{label}</button>
+            ))}
+        </div>
+    );
+    if (tab === 'team') return (
+        <div className="space-y-5">
+            <div>
+                <h1 className="text-2xl font-extrabold text-gray-900">Warranty Claim / Alteration</h1>
+                <p className="text-sm text-gray-500">Plant team: who sees claims and which steps they take</p>
+            </div>
+            {tabs}
+            <PlantTeam />
+        </div>
+    );
+    const countOf = (s: ClaimStatus[]) => s.length ? s.reduce((n, x) => n + (counts[x] ?? 0), 0) : Object.values(counts).reduce((a, b) => a + b, 0);
 
     return (
         <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="text-2xl font-extrabold text-gray-900">Warranty Claim / Alteration</h1>
-                    <p className="text-sm text-gray-500">Warranty claims and alteration requests from customers and stores</p>
+                    <p className="text-sm text-gray-500">
+                        {rights === null ? 'Loading…' : rights.length ? `Your part: ${rights.map(r => RIGHT_TEXT[r]).join(' · ')}` : 'View only: you see every claim and its activity'}
+                    </p>
                 </div>
-                <form onSubmit={e => { e.preventDefault(); load(status, q); }} className="flex gap-2">
-                    <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Claim no., UID, phone, car no., name" className="h-11 w-72 max-w-full" aria-label="Search claims" />
-                    <Button type="submit" variant="outline" className="h-11" aria-label="Search"><Search className="h-4 w-4" /></Button>
+                <form onSubmit={e => { e.preventDefault(); load(card, q); }} className="flex w-full gap-2 sm:w-auto">
+                    <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Claim no., UID, phone, car no., name, store, docket" className="h-11 min-w-0 flex-1 sm:w-80 sm:flex-none" aria-label="Search claims" />
+                    <Button type="submit" variant="outline" className="h-11 shrink-0" aria-label="Search"><Search className="h-4 w-4" /></Button>
                 </form>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-                {CARDS.map(c => (
-                    <button key={c.label} onClick={() => setStatus(c.status)} className={cn("rounded-xl border bg-white p-3 text-left",
-                        status === c.status ? "border-2 border-orange-600" : "border-gray-200")}>
-                        <p className="text-xs font-semibold text-gray-500">{c.label}</p>
-                        <p className="text-xl font-extrabold text-gray-900">{c.status ? counts[c.status] ?? 0 : total}</p>
+            {tabs}
+            {/* A sideways strip on a phone; a grid of counts on wider screens. */}
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 sm:grid sm:grid-cols-4 sm:overflow-visible lg:grid-cols-6 xl:grid-cols-12">
+                {CARDS.map((c, i) => (
+                    <button key={c.label} onClick={() => setCard(i)} className={cn("w-[112px] shrink-0 sm:w-auto rounded-xl border bg-white p-3 text-left",
+                        card === i ? "border-2 border-orange-600" : "border-gray-200", c.right && rights?.includes(c.right) && "bg-orange-50/40")}>
+                        <p className="text-xs font-semibold text-gray-500 leading-tight">{c.label}</p>
+                        <p className="text-xl font-extrabold text-gray-900">{countOf(c.statuses)}</p>
                     </button>
                 ))}
             </div>
             <div className="rounded-2xl border border-gray-200 bg-white overflow-x-auto">
                 {loading ? <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-orange-600" /></div>
                     : !claims.length ? <p className="p-10 text-center text-sm text-gray-500">No claims here.</p>
-                        : (
-                            <table className="w-full text-sm">
+                        : <>
+                            {/* On a phone each claim is a card; the table needs a wide screen. */}
+                            <ul className="divide-y divide-gray-100 md:hidden">
+                                {claims.map(c => (
+                                    <li key={c.id}>
+                                        <button onClick={() => setOpen(c.id)} className="w-full p-4 text-left active:bg-orange-50/40">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <span className="text-xs font-bold text-gray-500">{c.claim_no} · {day(c.created_at)}</span>
+                                                <ClaimStatusPill status={c.status} who="admin" />
+                                            </div>
+                                            <p className="mt-1 font-bold text-gray-900">{c.snapshot?.customer_name} · {c.snapshot?.product_name}</p>
+                                            <p className="text-sm text-gray-600">{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</p>
+                                            <p className="text-xs text-gray-500">{[c.store_name, [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || c.snapshot?.registration_number].filter(Boolean).join(' · ')}</p>
+                                            {c.plan && ['production', 'ready'].includes(c.status) && <p className="mt-1 text-xs font-semibold text-indigo-700">EDD {day(c.plan.edd)}</p>}
+                                            {c.dispatch && c.status === 'dispatched' && <p className="mt-1 text-xs font-semibold text-sky-700">Docket {c.dispatch.docket}</p>}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                            <table className="hidden md:table w-full text-sm">
                                 <thead className="bg-gray-50 text-left text-xs font-bold uppercase text-gray-500">
-                                    <tr><th className="px-4 py-3">Claim</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Product</th><th className="px-4 py-3">Store</th><th className="px-4 py-3">Raised</th><th className="px-4 py-3">Status</th></tr>
+                                    <tr><th className="px-4 py-3">Claim</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Product</th><th className="px-4 py-3">Store</th><th className="px-4 py-3">Requested</th><th className="px-4 py-3">Status</th></tr>
                                 </thead>
                                 <tbody>
                                     {claims.map(c => (
                                         <tr key={c.id} onClick={() => setOpen(c.id)} className="border-t border-gray-100 cursor-pointer hover:bg-orange-50/40">
                                             <td className="px-4 py-3"><button className="font-bold text-gray-900 hover:underline" onClick={() => setOpen(c.id)}>{c.claim_no}</button><div className="text-xs text-gray-500">{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</div></td>
-                                            <td className="px-4 py-3">{c.snapshot?.customer_name}<div className="text-xs text-gray-500">{c.snapshot?.registration_number}</div></td>
+                                            <td className="px-4 py-3">{c.snapshot?.customer_name}<div className="text-xs text-gray-500">{[c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || c.snapshot?.registration_number}</div></td>
                                             <td className="px-4 py-3">{c.snapshot?.product_name}</td>
                                             <td className="px-4 py-3">{c.store_name ?? '—'}</td>
-                                            <td className="px-4 py-3 whitespace-nowrap">{day(c.created_at)}<div className="text-xs text-gray-500">{c.raised_by_role === 'customer' ? 'by customer' : c.raised_by_role === 'vendor' ? 'by store' : 'by HO'}</div></td>
-                                            <td className="px-4 py-3"><ClaimStatusPill status={c.status} who="admin" /></td>
+                                            <td className="px-4 py-3 whitespace-nowrap">{day(c.created_at)}<div className="text-xs text-gray-500">{c.raised_by_role === 'customer' ? 'by customer' : c.raised_by_role === 'vendor' ? 'by store' : 'by plant'}</div></td>
+                                            <td className="px-4 py-3">
+                                                <ClaimStatusPill status={c.status} who="admin" />
+                                                {c.plan && ['production', 'ready'].includes(c.status) && <div className="mt-1 text-xs text-gray-500">EDD {day(c.plan.edd)}</div>}
+                                                {c.dispatch && c.status === 'dispatched' && <div className="mt-1 text-xs text-gray-500">Docket {c.dispatch.docket}</div>}
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
-                        )}
+                        </>}
             </div>
         </div>
     );
@@ -99,36 +170,43 @@ export const AdminClaims = () => {
 
 /* ─── One claim ──────────────────────────────────────────────────────────── */
 
-type Outcome = 'repair_store' | 'send_material' | 'reject';
+type Choice = 'approve' | 'hold' | 'reject' | 'ask_more';
+const today = () => new Date().toISOString().slice(0, 10);
+const Field = ({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) => (
+    <label className={cn("block space-y-1.5 text-sm font-semibold", className)}>{label}{children}</label>
+);
+const SELECT = "h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-normal";
 
 const AdminClaim = ({ id, onBack }: { id: number; onBack: () => void }) => {
     const { toast } = useToast();
-    const { hasPermission } = useAuth() as any;
-    const canWrite = hasPermission ? hasPermission('claims', 'write') : true;
     const [c, setC] = useState<Claim | null>(null);
     const [busy, setBusy] = useState(false);
     const [f, setF] = useState<Record<string, string>>({});
     const set = (k: string) => (v: string) => setF(p => ({ ...p, [k]: v }));
+    const [vehicle, setVehicle] = useState<VehicleValue>({ vehicle_make: '', vehicle_model: '', airbags: '' });
 
     const load = () => api.get(`/claims/${id}`).then(r => setC(r.data.claim)).catch(e => toast({ variant: "destructive", title: "Could not load", description: getErrorMessage(e, "") }));
     useEffect(() => { load(); }, [id]);
     useEffect(() => {
         if (!c) return;
-        const d = c.decision;
+        // Each form starts from what the claim holds now.
         setF({
-            outcome: c.inspection?.covered === false ? 'reject' : (c.inspection?.suggest ?? ''),
-            charge: c.kind === 'alteration' ? 'chargeable' : 'foc', material: c.kind === 'alteration' ? 'alteration' : 'replacement',
-            source: 'plant', old_part: '', reason: c.inspection?.reason ?? '', item: c.snapshot?.product_name ?? '',
-            edit_note: d?.note ?? '', edit_amount: d?.amount ? String(d.amount) : '', edit_item: d?.item ?? '',
-            courier: c.dispatch?.courier ?? '', tracking: c.dispatch?.tracking ?? '', date: c.dispatch?.date ?? new Date().toISOString().slice(0, 10),
+            choice: '', outcome: '', charge: c.kind === 'alteration' ? 'chargeable' : 'foc', source: 'plant', item: '', remarks: '',
+            reason: '', hold_reason: '', note: '',
+            edd: c.plan?.edd ?? '', alteration_no: c.plan?.alteration_no ?? '',
+            dispatch_date: c.dispatch?.date ?? today(), docket: c.dispatch?.docket ?? '', courier: c.dispatch?.courier ?? '',
+            e_problem: c.problem, e_description: c.description ?? '', e_remarks: c.decision?.remarks ?? '', e_item: c.decision?.item ?? '',
+            e_edd: c.plan?.edd ?? '', e_alteration_no: c.plan?.alteration_no ?? '',
+            e_dispatch_date: c.dispatch?.date ?? '', e_docket: c.dispatch?.docket ?? '', e_courier: c.dispatch?.courier ?? '',
+            e_reason: '', undo_reason: '',
         });
-    }, [c?.id, c?.status]);
+        setVehicle({ vehicle_make: c.vehicle?.make ?? '', vehicle_model: c.vehicle?.model ?? '', airbags: c.vehicle?.airbags ?? '' });
+    }, [c?.id, c?.status, c?.history?.length]);
 
     const act = async (action: string, body: Record<string, unknown>, title: string) => {
         setBusy(true);
         try {
-            const r = await api.post(`/claims/${id}/action`, { action, ...body });
-            setC(prev => ({ ...prev!, ...r.data.claim }));
+            await api.post(`/claims/${id}/action`, { action, ...body });
             await load();
             toast({ title });
         } catch (e) {
@@ -140,28 +218,41 @@ const AdminClaim = ({ id, onBack }: { id: number; onBack: () => void }) => {
 
     if (!c) return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-orange-600" /></div>;
     const d = c.decision;
-    const has = (a: string) => canWrite && c.actions.includes(a as any);
+    const has = (a: string) => c.actions.includes(a as any);
+    const deciding = has('approve') || has('hold') || has('reject') || has('ask_more');
+    const viewOnly = !c.actions.length;
+    // The first step this person can take; a phone gets a button that jumps to it.
+    const step = deciding ? 'decide' : has('plan') ? 'plan' : has('ready') ? 'ready' : has('dispatch') ? 'dispatch' : null;
+    const stepId = (k: string) => step === k ? STEP_ID : undefined;
+    const STEP_LABEL: Record<string, string> = { decide: 'Your decision', plan: 'Set EDD and alteration no.', ready: 'Mark ready to dispatch', dispatch: 'Dispatch' };
+
     const decide = () => {
-        if (f.outcome === 'reject') return act('reject', { reason: f.reason, note: f.note }, 'Rejected: the store and customer are told');
-        return act('approve', {
-            outcome: f.outcome, charge: f.charge, amount: f.amount, material: f.material, item: f.item,
-            source: f.source, distributor: f.distributor, old_part: f.old_part || null, note: f.note,
-        }, 'Approved: the store and customer are told');
+        switch (f.choice as Choice) {
+            case 'approve': return act('approve', { outcome: f.outcome, charge: f.charge, item: f.item, source: f.source, remarks: f.remarks }, 'Approved: the store and customer are told');
+            case 'hold': return act('hold', { reason: f.hold_reason, note: f.note }, 'Put on hold');
+            case 'reject': return act('reject', { reason: f.reason, note: f.note }, 'Rejected: the store and customer are told');
+            case 'ask_more': return act('ask_more', { note: f.note }, 'Sent back to the store');
+        }
     };
+    const choices: { value: Choice; label: string }[] = ([
+        { value: 'approve', label: 'Approve' }, { value: 'hold', label: 'Put on hold' }, { value: 'reject', label: 'Reject' }, { value: 'ask_more', label: 'Ask store for more' },
+    ] as { value: Choice; label: string }[]).filter(x => has(x.value));
 
     return (
         <div className="space-y-4">
             <button onClick={onBack} className="inline-flex h-11 items-center gap-1 rounded-xl px-3 text-sm font-semibold hover:bg-gray-100"><ChevronLeft className="h-4 w-4" />All claims</button>
+            {viewOnly && <p className="flex items-center gap-2 rounded-xl bg-blue-50 px-4 py-2.5 text-sm text-blue-900"><Eye className="h-4 w-4" />{c.waiting_on ? `Waiting for: ${c.waiting_on}.` : 'Nothing to do on this claim.'} Your access here is to view.</p>}
             <div className="flex flex-wrap gap-5 items-start">
-                <div className="flex-[999_1_560px] min-w-0 rounded-2xl border border-gray-200 bg-white p-5 md:p-6 space-y-5">
+                <div className="flex-[999_1_560px] min-w-0 rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 md:p-6 space-y-5">
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="space-y-1">
-                            <h2 className="text-xl font-extrabold text-gray-900">{c.claim_no} · {c.problem_text}{c.kind === 'alteration' ? ' (alteration)' : ''}</h2>
+                        <div className="min-w-0 space-y-1">
+                            <h2 className="text-lg sm:text-xl font-extrabold text-gray-900">{c.claim_no} · {c.problem_text}{c.kind === 'alteration' ? ' (alteration)' : ''}</h2>
                             <ClaimSummary c={c} />
-                            <p className="text-sm text-gray-500">Store: {c.store_name ?? '—'}{c.store_city ? `, ${c.store_city}` : ''} · raised {c.raised_by_role === 'customer' ? 'by the customer' : c.raised_by_role === 'vendor' ? 'by the store' : 'by head office'} on {day(c.created_at)}</p>
+                            <p className="text-sm text-gray-500">Store: {c.store_name ?? '—'}{c.store_city ? `, ${c.store_city}` : ''} · requested {c.raised_by_role === 'customer' ? 'by the customer' : c.raised_by_role === 'vendor' ? 'by the store' : 'by the plant'} on {day(c.created_at)}</p>
                         </div>
-                        <div className="flex flex-col items-end gap-2">
+                        <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 sm:w-auto sm:flex-col sm:items-end">
                             <ClaimStatusPill status={c.status} who="admin" />
+                            {c.waiting_on && <span className="text-xs font-semibold text-gray-500">Waiting for: {c.waiting_on}</span>}
                             {c.snapshot?.customer_phone && <a href={`tel:${c.snapshot.customer_phone}`} className="inline-flex items-center gap-1 text-sm font-semibold text-gray-700"><Phone className="h-4 w-4" />{c.snapshot.customer_phone}</a>}
                         </div>
                     </div>
@@ -174,185 +265,194 @@ const AdminClaim = ({ id, onBack }: { id: number; onBack: () => void }) => {
                         </div>
                     )}
 
+                    <ClaimTracker c={c} />
+
                     <RegistrationPanel c={c} who="admin" />
 
                     <p className="text-base font-extrabold text-gray-900">Now: the claim</p>
                     <div className="grid gap-4 md:grid-cols-2">
                         <section className="space-y-2">
-                            <p className="text-sm font-bold">{c.raised_by_role === 'customer' ? 'Customer sent' : 'Problem photos'}</p>
-                            {c.description && <p className="text-sm text-gray-700">"{c.description}"</p>}
+                            <p className="text-sm font-bold">{c.raised_by_role === 'customer' ? 'Customer sent' : 'The request'}</p>
+                            <ClaimDetails c={c} />
                             <MediaGrid urls={c.media} className="sm:grid-cols-3" />
-                            {!c.media?.length && <p className="text-sm text-gray-500">None.</p>}
+                            {!c.media?.length && <p className="text-sm text-gray-500">No photos.</p>}
                         </section>
                         <section className="space-y-2">
-                            <p className="text-sm font-bold">Store inspection{c.inspection ? ` · ${day(c.inspection.at)}` : ''}</p>
-                            {c.inspection ? (
+                            <p className="text-sm font-bold">Store verification{c.verification ? ` · ${day(c.verification.at)}` : ''}</p>
+                            {c.verification ? (
                                 <>
-                                    <MediaGrid urls={c.inspection.photos} className="sm:grid-cols-3" />
-                                    <p className={cn("rounded-xl px-3 py-2.5 text-sm", c.inspection.covered ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-900")}>
-                                        <b>{c.inspection.covered ? `Covered · suggests ${c.inspection.suggest === 'repair_store' ? 'repair at store' : 'sending material'}.` : `Not covered: ${REJECT_REASONS[c.inspection.reason ?? ''] ?? ''}.`}</b> {c.inspection.note}
-                                    </p>
+                                    {c.verification.remarks && <p className="rounded-xl bg-gray-50 px-3 py-2.5 text-sm text-gray-800">{c.verification.remarks}</p>}
+                                    {c.verification.corrections.length > 0 && (
+                                        <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+                                            <p className="font-bold">The store corrected:</p>
+                                            <ul className="list-disc pl-5">{c.verification.corrections.map((x, i) => <li key={i}>{x}</li>)}</ul>
+                                        </div>
+                                    )}
+                                    <MediaGrid urls={c.verification.photos} className="sm:grid-cols-3" />
                                 </>
-                            ) : <p className="text-sm text-gray-500">Waiting for the store to check the car.</p>}
+                            ) : <p className="text-sm text-gray-500">Waiting for the store to verify.</p>}
                         </section>
                     </div>
 
+                    {c.status === 'on_hold' && c.hold && (
+                        <p className="rounded-xl bg-yellow-50 px-4 py-3 text-sm text-yellow-900"><b>On hold: {HOLD_REASONS[c.hold.reason] ?? 'see note'}.</b> {c.hold.note} · since {day(c.hold.at)}</p>
+                    )}
                     {d && (
                         <section className={cn("rounded-xl px-4 py-3 text-sm space-y-1", d.outcome === 'reject' ? "bg-red-50 text-red-900" : "bg-gray-50 text-gray-800")}>
                             <p className="font-bold">{decisionText(c)}</p>
-                            {d.note && <p>{d.note}</p>}
-                            {c.payment && <p>Paid by {c.payment.mode.toUpperCase()}{c.payment.ref ? ` · ${c.payment.ref}` : ''} · {day(c.payment.at)}</p>}
-                            {c.dispatch?.courier && <p className="flex items-center gap-1.5"><Truck className="h-4 w-4 text-orange-600" />{[c.dispatch.courier, c.dispatch.tracking].filter(Boolean).join(' · ')}{c.dispatch.date ? ` · ${day(c.dispatch.date)}` : ''}</p>}
-                            {d.old_part && <p>Old part: {d.old_part === 'return' ? 'return to plant' : 'scrap at store'} · {c.old_part ? `${c.old_part.done} ${day(c.old_part.at)}${c.old_part.courier ? ` · ${[c.old_part.courier, c.old_part.tracking].filter(Boolean).join(' · ')}` : ''}` : 'store has not done it yet'}</p>}
-                            {c.old_part?.photos?.length ? <MediaGrid urls={c.old_part.photos} className="pt-1" /> : null}
-                            {c.fixed && <p>{d.outcome === 'repair_store' ? 'Repaired' : 'Fitted'} {day(c.fixed.at)}{c.fixed.note ? ` · ${c.fixed.note}` : ''}</p>}
-                            {c.fixed?.photos?.length ? <MediaGrid urls={c.fixed.photos} className="pt-1" /> : null}
+                            {d.remarks && <p>{d.remarks}</p>}
+                            {c.consent && <p>Charge {c.consent.agreed ? 'agreed' : 'declined'} by the {c.consent.by === 'customer' ? 'customer' : 'store on the customer\'s behalf'} · {day(c.consent.at)}{c.consent.note ? ` · ${c.consent.note}` : ''}</p>}
+                            {c.plan && <p>EDD <b>{day(c.plan.edd)}</b>{c.plan.alteration_no ? ` · alteration no. ${c.plan.alteration_no}` : ''}</p>}
+                            {c.dispatch && <p className="flex items-center gap-1.5"><Truck className="h-4 w-4 text-orange-600" />Dispatched {day(c.dispatch.date)} · docket <b>{c.dispatch.docket}</b>{c.dispatch.courier ? ` · ${c.dispatch.courier}` : ''}</p>}
+                            {c.fitted && <p>{d.outcome === 'repair_store' ? 'Repaired' : 'Fitted'} {day(c.fitted.at)}{c.fitted.note ? ` · ${c.fitted.note}` : ''}</p>}
+                            {c.fitted?.photos?.length ? <MediaGrid urls={c.fitted.photos} className="pt-1" /> : null}
                         </section>
                     )}
 
-                    {has('approve') && (
-                        <section className="border-t border-gray-200 pt-5 space-y-4">
+                    {deciding && (
+                        <section id={stepId('decide')} className="scroll-mt-20 border-t border-gray-200 pt-5 space-y-4">
                             <p className="text-base font-extrabold text-gray-900">Your decision</p>
-                            <ChoiceRow<Outcome> name="outcome" value={f.outcome as Outcome} onChange={set('outcome')}
-                                options={[{ value: 'repair_store', label: 'Approve: repair at store' }, { value: 'send_material', label: 'Approve: send material' }, { value: 'reject', label: 'Reject' }]} />
-                            {f.outcome && f.outcome !== 'reject' && (
-                                <>
-                                    <ChoiceRow<'foc' | 'chargeable'> name="charge" value={f.charge as any} onChange={set('charge')} options={[{ value: 'foc', label: 'FOC (free)' }, { value: 'chargeable', label: 'Chargeable' }]} />
-                                    {f.charge === 'chargeable' && (
-                                        <label className="block max-w-xs space-y-1.5 text-sm font-semibold">Amount the customer pays (₹)
-                                            <Input inputMode="decimal" value={f.amount ?? ''} onChange={e => set('amount')(e.target.value)} className="h-11 font-normal" />
-                                        </label>
-                                    )}
+                            <ChoiceRow<Choice> name="choice" value={f.choice as Choice} onChange={set('choice')} options={choices} />
+                            {f.choice === 'approve' && (
+                                <div className="space-y-3">
+                                    <ChoiceRow<'repair_store' | 'send_material'> name="outcome" value={f.outcome as any} onChange={set('outcome')}
+                                        options={[{ value: 'send_material', label: 'Send material from the plant' }, { value: 'repair_store', label: 'Store repairs it' }]} />
+                                    <ChoiceRow<'foc' | 'chargeable'> name="charge" value={f.charge as any} onChange={set('charge')} options={[{ value: 'foc', label: 'Free of cost' }, { value: 'chargeable', label: 'Chargeable' }]} />
+                                    {f.charge === 'chargeable' && <p className="text-xs text-purple-800">The customer (or the store for them) must agree to the charge before anything goes ahead. Payment is taken at the store.</p>}
                                     {f.outcome === 'send_material' && (
                                         <div className="grid gap-3 sm:grid-cols-2">
-                                            <label className="space-y-1.5 text-sm font-semibold">What is sent
-                                                <select value={f.material} onChange={e => set('material')(e.target.value)} className="h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-normal">
-                                                    <option value="replacement">Replacement (same SKU)</option><option value="repaired">Repaired product</option><option value="alteration">Alteration material</option>
-                                                </select>
-                                            </label>
-                                            <label className="space-y-1.5 text-sm font-semibold">Item
-                                                <Input value={f.item ?? ''} onChange={e => set('item')(e.target.value)} className="h-11 font-normal" placeholder="e.g. U-CREST driver seat set, black" />
-                                            </label>
-                                            <label className="space-y-1.5 text-sm font-semibold">From
-                                                <select value={f.source} onChange={e => set('source')(e.target.value)} className="h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-normal">
-                                                    <option value="plant">Plant</option><option value="distributor">Distributor</option>
-                                                </select>
-                                            </label>
-                                            {f.source === 'distributor' && (
-                                                <label className="space-y-1.5 text-sm font-semibold">Which distributor
-                                                    <Input value={f.distributor ?? ''} onChange={e => set('distributor')(e.target.value)} className="h-11 font-normal" />
-                                                </label>
-                                            )}
+                                            <Field label="Material (optional)"><Input value={f.item} onChange={e => set('item')(e.target.value)} className="h-11 font-normal" placeholder="e.g. driver seat set, black" /></Field>
+                                            <Field label="From">
+                                                <select value={f.source} onChange={e => set('source')(e.target.value)} className={SELECT}><option value="plant">Plant</option><option value="distributor">Distributor</option></select>
+                                            </Field>
                                         </div>
                                     )}
-                                    <div className="space-y-1.5">
-                                        <p className="text-sm font-semibold">Old part</p>
-                                        <ChoiceRow<'' | 'return' | 'scrap'> name="old" value={f.old_part as any} onChange={set('old_part')}
-                                            options={[{ value: '', label: 'Not needed' }, { value: 'return', label: 'Return to plant' }, { value: 'scrap', label: 'Scrap at store' }]} />
-                                    </div>
-                                </>
+                                    <Field label="Remarks (the store and customer see them)"><Textarea value={f.remarks} onChange={e => set('remarks')(e.target.value)} rows={2} className="font-normal" /></Field>
+                                </div>
                             )}
-                            {f.outcome === 'reject' && (
-                                <label className="block max-w-md space-y-1.5 text-sm font-semibold">Reason from the T&amp;C (the customer sees it)
-                                    <select value={f.reason} onChange={e => set('reason')(e.target.value)} className="h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-normal">
-                                        <option value="">Choose the reason</option>
-                                        {Object.entries(REJECT_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                                    </select>
-                                </label>
+                            {f.choice === 'hold' && (
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <Field label="Why on hold">
+                                        <select value={f.hold_reason} onChange={e => set('hold_reason')(e.target.value)} className={SELECT}>
+                                            <option value="">Choose</option>{Object.entries(HOLD_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                        </select>
+                                    </Field>
+                                    <Field label="Note"><Input value={f.note} onChange={e => set('note')(e.target.value)} className="h-11 font-normal" /></Field>
+                                </div>
                             )}
-                            <label className="block space-y-1.5 text-sm font-semibold">Note to the customer and store
-                                <Textarea value={f.note ?? ''} onChange={e => set('note')(e.target.value)} rows={2} className="font-normal" />
-                            </label>
-                            <div className="flex flex-wrap gap-2">
-                                <Button onClick={decide} disabled={busy || !f.outcome} className="h-12 rounded-xl bg-orange-700 hover:bg-orange-800 font-bold px-6">{busy ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Save decision'}</Button>
-                                {has('ask_more') && <Button variant="outline" disabled={busy} className="h-12 rounded-xl" onClick={() => act('ask_more', { note: f.note }, 'Sent back to the store')}>Ask store for more</Button>}
-                            </div>
-                            <p className="text-xs text-gray-500">"Ask store for more" sends the note above to the store and returns the claim to them.</p>
+                            {f.choice === 'reject' && (
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <Field label="Reason from the T&C (the customer sees it)">
+                                        <select value={f.reason} onChange={e => set('reason')(e.target.value)} className={SELECT}>
+                                            <option value="">Choose the reason</option>{Object.entries(REJECT_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                        </select>
+                                    </Field>
+                                    <Field label="Note"><Input value={f.note} onChange={e => set('note')(e.target.value)} className="h-11 font-normal" /></Field>
+                                </div>
+                            )}
+                            {f.choice === 'ask_more' && (
+                                <Field label="What the store should send or check"><Textarea value={f.note} onChange={e => set('note')(e.target.value)} rows={2} className="font-normal" /></Field>
+                            )}
+                            {f.choice && (
+                                <Button onClick={decide} disabled={busy} className="h-12 w-full sm:w-auto rounded-xl bg-orange-700 hover:bg-orange-800 font-bold px-6">
+                                    {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Save'}
+                                </Button>
+                            )}
                         </section>
                     )}
 
-                    {has('reject') && !has('approve') && (
-                        <section className="border-t border-gray-200 pt-5 space-y-3">
-                            <p className="text-sm text-gray-600">The store has not checked the car yet. You can still reject it now, if it is clearly not covered.</p>
-                            <div className="flex flex-wrap gap-2">
-                                <select value={f.reason} onChange={e => set('reason')(e.target.value)} aria-label="Reason" className="h-11 rounded-xl border border-gray-300 bg-white px-3 text-sm">
-                                    <option value="">Reason from the T&amp;C</option>
-                                    {Object.entries(REJECT_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                                </select>
-                                <Input value={f.note ?? ''} onChange={e => set('note')(e.target.value)} placeholder="Note" className="h-11 max-w-xs" aria-label="Note" />
-                                <Button variant="outline" disabled={busy || !f.reason} className="h-11 rounded-xl" onClick={() => act('reject', { reason: f.reason, note: f.note }, 'Rejected')}>Reject</Button>
+                    {has('plan') && (
+                        <section id={stepId('plan')} className="scroll-mt-20 border-t border-gray-200 pt-5 space-y-3">
+                            <p className="text-base font-extrabold text-gray-900">EDD and alteration number</p>
+                            <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-end">
+                                <Field label="Expected delivery date"><Input type="date" value={f.edd} onChange={e => set('edd')(e.target.value)} className="h-11 font-normal" /></Field>
+                                <Field label="Alteration no."><Input value={f.alteration_no} onChange={e => set('alteration_no')(e.target.value)} className="h-11 font-normal" /></Field>
+                                <Button disabled={busy} onClick={() => act('plan', { edd: f.edd, alteration_no: f.alteration_no }, 'EDD saved: the store and customer are told')} className="h-12 sm:h-11 w-full sm:w-auto rounded-xl bg-gray-900 font-bold">Save</Button>
                             </div>
                         </section>
                     )}
 
-                    {has('paid') && (
-                        <section className="border-t border-gray-200 pt-5 space-y-3">
-                            <p className="text-base font-extrabold text-gray-900">Payment of {rupees(d?.amount)}</p>
-                            <div className="flex flex-wrap gap-2 items-end">
-                                <select value={f.mode ?? ''} onChange={e => set('mode')(e.target.value)} aria-label="Paid by" className="h-11 rounded-xl border border-gray-300 bg-white px-3 text-sm">
-                                    <option value="">Paid by</option><option value="upi">UPI</option><option value="bank">Bank transfer</option><option value="cash">Cash</option><option value="other">Other</option>
-                                </select>
-                                <Input value={f.ref ?? ''} onChange={e => set('ref')(e.target.value)} placeholder="UTR / reference" className="h-11 max-w-xs" aria-label="Reference" />
-                                <Button disabled={busy || !f.mode} onClick={() => act('paid', { mode: f.mode, ref: f.ref }, 'Marked paid')} className="h-11 rounded-xl bg-gray-900 font-bold">Mark paid</Button>
-                            </div>
+                    {has('ready') && (
+                        <section id={stepId('ready')} className="scroll-mt-20 border-t border-gray-200 pt-5 flex flex-wrap items-center gap-3">
+                            <p className="text-base font-extrabold text-gray-900">Being prepared{c.plan ? ` · EDD ${day(c.plan.edd)}` : ''}</p>
+                            <Button disabled={busy} onClick={() => act('ready', {}, 'Marked ready to dispatch')} className="h-12 sm:h-11 w-full sm:w-auto rounded-xl bg-gray-900 font-bold">Mark ready to dispatch</Button>
                         </section>
                     )}
 
                     {has('dispatch') && (
-                        <section className="border-t border-gray-200 pt-5 space-y-3">
-                            <p className="text-base font-extrabold text-gray-900">Dispatch {d?.item ? `· ${d.item}` : ''}</p>
-                            <div className="flex flex-wrap gap-2 items-end">
-                                <Input value={f.courier ?? ''} onChange={e => set('courier')(e.target.value)} placeholder="Sent by (courier…)" className="h-11 max-w-[200px]" aria-label="Sent by" />
-                                <Input value={f.tracking ?? ''} onChange={e => set('tracking')(e.target.value)} placeholder="Tracking no." className="h-11 max-w-[200px]" aria-label="Tracking number" />
-                                <Input type="date" value={f.date ?? ''} onChange={e => set('date')(e.target.value)} className="h-11 max-w-[170px]" aria-label="Date sent" />
-                                <Button disabled={busy} onClick={() => act('dispatch', { courier: f.courier, tracking: f.tracking, date: f.date }, 'Marked dispatched')} className="h-11 rounded-xl bg-gray-900 font-bold">Mark dispatched</Button>
+                        <section id={stepId('dispatch')} className="scroll-mt-20 border-t border-gray-200 pt-5 space-y-3">
+                            <p className="text-base font-extrabold text-gray-900">Dispatch{d?.item ? ` · ${d.item}` : ''}</p>
+                            <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-end">
+                                <Field label="Dispatch date"><Input type="date" value={f.dispatch_date} onChange={e => set('dispatch_date')(e.target.value)} className="h-11 font-normal" /></Field>
+                                <Field label="Docket no."><Input value={f.docket} onChange={e => set('docket')(e.target.value)} className="h-11 font-normal" /></Field>
+                                <Field label="Courier (optional)"><Input value={f.courier} onChange={e => set('courier')(e.target.value)} className="h-11 font-normal" /></Field>
+                                <Button disabled={busy} onClick={() => act('dispatch', { dispatch_date: f.dispatch_date, docket: f.docket, courier: f.courier }, 'Dispatched: the store and customer are told')} className="h-12 sm:h-11 w-full sm:w-auto rounded-xl bg-gray-900 font-bold">Mark dispatched</Button>
                             </div>
                         </section>
                     )}
 
-                    {(has('fixed') || has('close')) && (
+                    {has('fitted') && (
                         <section className="border-t border-gray-200 pt-5 flex flex-wrap items-center gap-2">
-                            {has('fixed') && <Button variant="outline" disabled={busy} className="h-11 rounded-xl" onClick={() => act('fixed', { note: 'Marked by head office' }, 'Marked fixed')}>Mark {d?.outcome === 'repair_store' ? 'repaired' : 'fitted'} for the store</Button>}
-                            {has('close') && <Button disabled={busy} className="h-11 rounded-xl bg-gray-900 font-bold" onClick={() => act('close', {}, 'Claim closed')}>Close the claim</Button>}
-                            {has('close') && <p className="text-xs text-gray-500">The customer can also close it from their dashboard.</p>}
+                            <Button variant="outline" disabled={busy} className="h-12 sm:h-11 w-full sm:w-auto rounded-xl" onClick={() => act('fitted', { note: 'Marked by the plant for the store' }, 'Marked done')}>
+                                Mark {d?.outcome === 'repair_store' ? 'repaired' : 'fitted'} for the store
+                            </Button>
+                            <p className="text-xs text-gray-500">Normally the store confirms this.</p>
                         </section>
                     )}
 
                     {has('edit') && (
                         <details className="border-t border-gray-200 pt-4">
-                            <summary className="cursor-pointer text-sm font-bold text-gray-800">Edit the decision</summary>
+                            <summary className="cursor-pointer text-sm font-bold text-gray-800">Edit details (with a reason)</summary>
                             <div className="mt-3 space-y-3">
-                                <Textarea value={f.edit_note ?? ''} onChange={e => set('edit_note')(e.target.value)} rows={2} placeholder="Note to the customer and store" aria-label="Note" />
-                                <div className="flex flex-wrap gap-2">
-                                    {d?.outcome === 'send_material' && <Input value={f.edit_item ?? ''} onChange={e => set('edit_item')(e.target.value)} placeholder="Item" className="h-11 max-w-xs" aria-label="Item" />}
-                                    {c.status === 'payment' && <Input value={f.edit_amount ?? ''} onChange={e => set('edit_amount')(e.target.value)} placeholder="Amount ₹" className="h-11 max-w-[140px]" aria-label="Amount" />}
-                                    {c.dispatch && <>
-                                        <Input value={f.courier ?? ''} onChange={e => set('courier')(e.target.value)} placeholder="Courier" className="h-11 max-w-[180px]" aria-label="Courier" />
-                                        <Input value={f.tracking ?? ''} onChange={e => set('tracking')(e.target.value)} placeholder="Tracking" className="h-11 max-w-[180px]" aria-label="Tracking" />
-                                    </>}
-                                    <Button variant="outline" disabled={busy} className="h-11 rounded-xl" onClick={() => act('edit', {
-                                        note: f.edit_note, ...(d?.outcome === 'send_material' ? { item: f.edit_item } : {}),
-                                        ...(c.status === 'payment' ? { amount: f.edit_amount } : {}),
-                                        ...(c.dispatch ? { courier: f.courier, tracking: f.tracking, date: c.dispatch.date } : {}),
-                                    }, 'Saved')}>Save changes</Button>
-                                </div>
+                                <VehicleFields value={vehicle} onChange={setVehicle} airbags={c.snapshot?.product_type === 'seat-cover'} />
+                                <ProblemPicker options={Object.keys(PROBLEMS)} value={f.e_problem} onChange={set('e_problem')} />
+                                <Textarea value={f.e_description} onChange={e => set('e_description')(e.target.value)} rows={2} placeholder="Description" aria-label="Description" />
+                                {d && d.outcome !== 'reject' && (
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                        <Field label="Plant remarks"><Input value={f.e_remarks} onChange={e => set('e_remarks')(e.target.value)} className="h-11 font-normal" /></Field>
+                                        {d.outcome === 'send_material' && <Field label="Material"><Input value={f.e_item} onChange={e => set('e_item')(e.target.value)} className="h-11 font-normal" /></Field>}
+                                    </div>
+                                )}
+                                {c.plan && (
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                        <Field label="EDD"><Input type="date" value={f.e_edd} onChange={e => set('e_edd')(e.target.value)} className="h-11 font-normal" /></Field>
+                                        <Field label="Alteration no."><Input value={f.e_alteration_no} onChange={e => set('e_alteration_no')(e.target.value)} className="h-11 font-normal" /></Field>
+                                    </div>
+                                )}
+                                {c.dispatch && (
+                                    <div className="grid gap-3 sm:grid-cols-3">
+                                        <Field label="Dispatch date"><Input type="date" value={f.e_dispatch_date} onChange={e => set('e_dispatch_date')(e.target.value)} className="h-11 font-normal" /></Field>
+                                        <Field label="Docket no."><Input value={f.e_docket} onChange={e => set('e_docket')(e.target.value)} className="h-11 font-normal" /></Field>
+                                        <Field label="Courier"><Input value={f.e_courier} onChange={e => set('e_courier')(e.target.value)} className="h-11 font-normal" /></Field>
+                                    </div>
+                                )}
+                                <Field label="Reason for the change (needed)"><Input value={f.e_reason} onChange={e => set('e_reason')(e.target.value)} className="h-11 font-normal" /></Field>
+                                <Button variant="outline" disabled={busy} className="h-11 rounded-xl font-bold" onClick={() => act('edit', {
+                                    note: f.e_reason, ...vehicle, problem: f.e_problem, description: f.e_description,
+                                    ...(d && d.outcome !== 'reject' ? { remarks: f.e_remarks, ...(d.outcome === 'send_material' ? { item: f.e_item } : {}) } : {}),
+                                    ...(c.plan ? { edd: f.e_edd, alteration_no: f.e_alteration_no } : {}),
+                                    ...(c.dispatch ? { dispatch_date: f.e_dispatch_date, docket: f.e_docket, courier: f.e_courier } : {}),
+                                }, 'Changes saved')}>Save changes</Button>
                             </div>
                         </details>
                     )}
                 </div>
 
-                <div className="flex-[1_1_280px] min-w-0 rounded-2xl border border-gray-200 bg-white p-5 space-y-4">
-                    <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-extrabold text-gray-900">Timeline</p>
-                        {has('undo') && (
-                            <Button variant="outline" size="sm" disabled={busy} className="h-9 rounded-lg" onClick={() => act('undo', {}, 'Last step undone')}>
-                                <Undo2 className="h-4 w-4 mr-1" />Undo last step
+                <div className="flex-[1_1_280px] min-w-0 rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-4">
+                    <p className="text-sm font-extrabold text-gray-900">Timeline</p>
+                    {has('undo') && (
+                        <div className="flex gap-2">
+                            <Input value={f.undo_reason ?? ''} onChange={e => set('undo_reason')(e.target.value)} placeholder="Why undo the last step?" className="h-9" aria-label="Reason to undo" />
+                            <Button variant="outline" size="sm" disabled={busy || (f.undo_reason ?? '').trim().length < 3} className="h-9 rounded-lg shrink-0"
+                                onClick={() => act('undo', { note: f.undo_reason }, 'Last step undone')}>
+                                <Undo2 className="h-4 w-4 mr-1" />Undo
                             </Button>
-                        )}
-                    </div>
+                        </div>
+                    )}
                     <ClaimTimeline history={c.history} who="admin" />
                 </div>
             </div>
+            <StepJump label={step ? STEP_LABEL[step] : null} />
         </div>
     );
 };
