@@ -11,6 +11,7 @@ import { AddEntryDialog } from "./AddEntryDialog";
 import { CorrectEntryDialog } from "./CorrectEntryDialog";
 import { ImportDialog } from "./ImportDialog";
 import { SellThroughTab } from "./SellThroughTab";
+import { TargetsTab } from "./TargetsTab";
 import { SchemeOverview } from "./SchemeOverview";
 import { ReviewQueue, type InvoiceOut } from "./ReviewQueue";
 import { type AdminEntry as Entry, type AdminDetail as Detail, stateKey, stateLabel, istDay } from "./adminTypes";
@@ -355,6 +356,9 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                                             </tr>
     );
 
+    /* A scheme run by targets has no entries to review: its page is the targets grid. */
+    const byTargets = s.settings?.run === "targets";
+
     return (
         <div className="space-y-5">
             <button type="button" onClick={onBack} className="text-sm font-medium text-slate-500 hover:text-orange-600 flex items-center gap-1.5">
@@ -383,8 +387,8 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                         onClick={() => { setRefreshing(true); setReloadKey(k => k + 1); load().finally(() => setRefreshing(false)); }}>
                         <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => setAddOpen(true)}><FilePlus2 className="h-4 w-4 mr-1" /> Add entry</Button>
-                    {products.length > 0 && (
+                    {!byTargets && <Button variant="outline" size="sm" onClick={() => setAddOpen(true)}><FilePlus2 className="h-4 w-4 mr-1" /> Add entry</Button>}
+                    {products.length > 0 && !byTargets && (
                         <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}><FileSpreadsheet className="h-4 w-4 mr-1" /> Import Excel</Button>
                     )}
                     <Button variant="outline" size="sm" onClick={() => onEdit(s)}><Pencil className="h-4 w-4 mr-1" /> Edit</Button>
@@ -409,6 +413,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                 </div>
             </div>
 
+            {byTargets ? <TargetsTab scheme={s} refreshKey={reloadKey} /> : <>
             <div className="flex gap-1 overflow-x-auto border-b border-slate-200">
                 {([
                     ["overview", "Overview"],
@@ -781,6 +786,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                     )}
                 </div>
             )}
+            </>}
             <CorrectEntryDialog entry={correcting} scheme={s} onClose={() => setCorrecting(null)}
                 onDone={() => { setCorrecting(null); setReloadKey(k => k + 1); load(); onChanged(); }} />
             <AddEntryDialog open={addOpen} scheme={s} onClose={() => setAddOpen(false)}

@@ -10,11 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2, Plus, Trash2, ArrowUp, ArrowDown, ImagePlus, X, Search, Repeat, CalendarPlus } from "lucide-react";
 import {
-    CATEGORY_LABEL, FIELD_TYPE_LABEL, FORMAT_LABEL, nextMonthWindow,
-    type Scheme, type SchemeWindow, type ProductPoints, type Club, type SchemeContact, type SchemeField, type FieldType, type FileFormat, type RewardRule, type ScoreRule, type Eligibility, type SchemeCategory,
+    CATEGORY_LABEL, DEFAULT_SETTINGS, FIELD_TYPE_LABEL, FORMAT_LABEL, nextMonthWindow,
+    type Scheme, type SchemeWindow, type ProductPoints, type Club, type SchemeContact, type SchemeField, type FieldType, type FileFormat, type RewardRule, type ScoreRule, type Eligibility, type SchemeCategory, type SchemeSettings,
 } from "@/lib/schemes";
 import { ProductPointsPicker } from "./ProductPointsPicker";
 import { ClubsEditor } from "./ClubsEditor";
+import { EditorSection as Section, TargetSettingsEditor } from "./TargetSettingsEditor";
 
 /**
  * Create or edit a scheme: basics, dates, who it is for, what stores submit
@@ -40,7 +41,11 @@ type Draft = {
     leaderboard: { show: boolean; names: boolean };
     clubs: Club[];
     contact: SchemeContact;
+    settings: SchemeSettings;
 };
+
+/* The steps a new target scheme starts with; the admin fills in the benefit. */
+const STARTING_STEPS = [{ pct: 80 }, { pct: 100 }, { pct: 120 }];
 
 const blank = (): Draft => ({
     title: "", category: "sales", summary: "", banner_url: "",
@@ -57,6 +62,7 @@ const blank = (): Draft => ({
     leaderboard: { show: true, names: false },
     clubs: [],
     contact: { name: "", role: "", phone: "", email: "" },
+    settings: DEFAULT_SETTINGS,
 });
 
 const fromScheme = (s: Scheme): Draft => ({
@@ -67,19 +73,8 @@ const fromScheme = (s: Scheme): Draft => ({
     score_rule: s.score_rule, rewards: s.rewards,
     instructions: s.instructions ?? "", terms: s.terms ?? "", leaderboard: s.leaderboard, clubs: s.clubs ?? [],
     contact: s.contact ?? { name: "", role: "", phone: "", email: "" },
+    settings: s.settings ?? DEFAULT_SETTINGS,
 });
-
-function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
-    return (
-        <section className="rounded-xl border border-slate-200 p-4 space-y-3 min-w-0">
-            <div>
-                <p className="text-[11px] font-black uppercase tracking-widest text-slate-800">{title}</p>
-                {note && <p className="text-xs text-slate-500 mt-0.5">{note}</p>}
-            </div>
-            {children}
-        </section>
-    );
-}
 
 export function SchemeEditor({ open, scheme, onClose, onSaved }: {
     open: boolean; scheme: Scheme | null; onClose: () => void; onSaved: (s: Scheme) => void;
@@ -117,7 +112,12 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
     };
     const numberFields = d.fields.filter(f => f.type === "number");
     const isPublished = scheme && scheme.status !== "draft";
-    const hasScore = d.score_rule.mode !== "none";
+    const targets = d.settings.run === "targets";
+    const hasScore = d.score_rule.mode !== "none" && !targets;
+    /* A new target scheme starts counted from warranties, each store with its own growth and reward. */
+    const setRun = (run: "entries" | "targets") => set("settings", run === "targets" && d.settings.run !== "targets" && !scheme
+        ? { ...d.settings, run, source: "warranties", unit: "warranties", show: { ...d.settings.show, percent: false } }
+        : { ...d.settings, run, steps: run === "targets" && d.settings.source === "manual" && !d.settings.steps.length ? STARTING_STEPS : d.settings.steps });
 
     const shownStores = useMemo(() => {
         const q = storeSearch.trim().toLowerCase();
@@ -168,6 +168,23 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
                 </DialogHeader>
 
                 <div className="space-y-3">
+                    <Section title="How this scheme runs" note={isPublished ? "A published scheme keeps the way it runs; copy it to run it the other way." : undefined}>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                            {([
+                                ["entries", "Stores submit entries", "Stores send invoices or entries; you approve them and points add up."],
+                                ["targets", "You set targets", "You add the franchises, give each a target and its reward steps, and enter what it achieved."],
+                            ] as const).map(([run, label, note]) => (
+                                <label key={run} className={`flex gap-3 rounded-xl p-3 ${d.settings.run === run ? "border-2 border-orange-500 bg-orange-50/60" : "border border-slate-200"} ${isPublished ? "opacity-70" : "cursor-pointer"}`}>
+                                    <input type="radio" name="run" checked={d.settings.run === run} disabled={Boolean(isPublished)} onChange={() => setRun(run)} className="mt-1 h-4 w-4 accent-orange-600" />
+                                    <span className="space-y-0.5">
+                                        <span className="block text-sm font-bold text-slate-900">{label}</span>
+                                        <span className="block text-xs text-slate-600">{note}</span>
+                                    </span>
+                                </label>
+                            ))}
+                        </div>
+                    </Section>
+
                     <Section title="Basics">
                         <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-3">
                             <div className="space-y-1">
@@ -209,6 +226,9 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
                         </div>
                     </Section>
 
+                    {targets ? (
+                        <TargetSettingsEditor settings={d.settings} windows={d.windows} onSettings={s => set("settings", s)} onWindows={w => set("windows", w)} />
+                    ) : <>
                     <Section title="When it's open" note="Stores can submit only while a window is open. Add one window per period, e.g. 5 Oct 10:00 am to 7 Oct 6:00 pm, then the same in November.">
                         <div className="space-y-2">
                             {d.windows.map((w, i) => (
@@ -536,6 +556,7 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
                             return <Input value={r.reward} onChange={e => set("rewards", { ...r, reward: e.target.value })} placeholder="₹500 or a gift voucher" className="sm:max-w-xs" aria-label="Reward per entry" />;
                         })()}
                     </Section>
+                    </>}
 
                     <Section title="What the store reads">
                         <div className="space-y-1">

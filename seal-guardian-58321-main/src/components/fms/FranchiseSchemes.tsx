@@ -17,6 +17,7 @@ import {
     CATEGORY_LABEL, STATE_META, ENTRY_META, FORMAT_LABEL, FORMAT_ACCEPT, formatDay, rewardSummary, formatWindow, formatStamp, formatMonth,
     type Scheme, type SchemeCategory, type SchemeState, type EntryFile, type EntryLine, type SchemeWindow, type Club,
 } from "@/lib/schemes";
+import { SchemeTargetView, type StorePeriod, type StoreTargets } from "./SchemeTargetView";
 
 /**
  * Offers & Schemes for a franchise: the schemes it can take part in, joining
@@ -31,6 +32,8 @@ interface Listed {
     starts_on: string; ends_on: string; state: SchemeState;
     windows: SchemeWindow[]; open_window: SchemeWindow | null; next_window: SchemeWindow | null;
     has_score: boolean; joined: boolean; achieved: Achieved | null;
+    /* A scheme run by targets: this period's figures, as far as the scheme shows them. */
+    run?: "targets"; target_now?: StorePeriod | null;
 }
 interface MyEntry {
     id: string; answers: Record<string, string>; files: Record<string, EntryFile[]>;
@@ -43,6 +46,8 @@ interface Detail {
     months: { month: string; points: number }[];
     distributors: { id: string; name: string; city: string | null }[];
     entries: MyEntry[]; leaderboard: { rank: number; name: string; score: number; me: boolean; club?: Club | null }[] | null;
+    /* Only on a scheme run by targets, which has no entries. */
+    targets?: StoreTargets;
 }
 
 const when = (d: string) => new Date(d).toLocaleString("en-IN", { hour: "numeric", minute: "2-digit" });
@@ -192,7 +197,24 @@ export const FranchiseSchemes = () => {
                                         {s.windows.length > 1 && <span className="text-slate-400">· {tr(`${s.windows.length} windows`, `${s.windows.length} बार`)}</span>}
                                     </p>
 
-                                    {s.joined && a && (
+                                    {s.run === "targets" && (() => {
+                                        const n = s.target_now;
+                                        const cells = n ? [
+                                            n.target !== null ? [t("Target"), n.target.toLocaleString("en-IN")] : null,
+                                            n.achieved !== null ? [t("Achieved"), n.achieved.toLocaleString("en-IN")] : null,
+                                            n.pct !== null ? ["%", `${n.pct}%`] : null,
+                                            [t("Benefit"), n.benefit ?? "—"],
+                                        ].filter(Boolean) as [string, string][] : [];
+                                        return cells.length ? (
+                                            <div className="space-y-1">
+                                                <p className="text-xs font-semibold text-slate-500">{n!.label}</p>
+                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-px rounded-lg border border-slate-100 bg-slate-200 overflow-hidden text-sm [&>div]:bg-slate-50">
+                                                    {cells.map(([l, v]) => <div key={l} className="px-3 py-2 min-w-0"><p className="text-xs text-slate-500">{l}</p><p className="font-bold text-slate-900 tabular-nums truncate">{v}</p></div>)}
+                                                </div>
+                                            </div>
+                                        ) : <p className="text-sm text-slate-500">{t("Your target shows here once it's set.")}</p>;
+                                    })()}
+                                    {s.run !== "targets" && s.joined && a && (
                                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-px rounded-lg border border-slate-100 bg-slate-200 overflow-hidden text-sm [&>div]:bg-slate-50">
                                             {s.has_score && <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Points")}</p><p className="font-bold text-slate-900 tabular-nums">{a.score}</p></div>}
                                             {a.club !== undefined && <div className="px-3 py-2 min-w-0"><p className="text-xs text-slate-500">{t("Club")}</p>{a.club ? <ClubBadge club={a.club} className="mt-0.5" /> : <p className="text-slate-400">—</p>}</div>}
@@ -200,7 +222,7 @@ export const FranchiseSchemes = () => {
                                             <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Approved")}</p><p className="font-bold text-slate-900 tabular-nums">{a.approved}</p></div>
                                         </div>
                                     )}
-                                    {s.joined && !a && <p className="text-sm text-slate-500">{t("You've joined. Your points show here once an entry is approved.")}</p>}
+                                    {s.run !== "targets" && s.joined && !a && <p className="text-sm text-slate-500">{t("You've joined. Your points show here once an entry is approved.")}</p>}
 
                                     <div className="mt-auto flex flex-col-reverse sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 pt-1 [&>button]:w-full sm:[&>button]:w-auto">
                                         <Button variant="ghost" size="sm" className="text-slate-600" onClick={() => open(s.id)}>
@@ -254,6 +276,7 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
     }, [startSubmit, Boolean(d)]);
 
     if (!d) return <div className="flex items-center justify-center min-h-[400px] gap-3 text-slate-400"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div>;
+    if (d.targets) return <SchemeTargetView scheme={d.scheme} targets={d.targets} onBack={onBack} onRefresh={load} />;
     const s = d.scheme;
     const a = d.achieved;
     const hasScore = s.score_rule.mode !== "none";

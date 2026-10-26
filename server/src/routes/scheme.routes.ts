@@ -52,6 +52,15 @@ router.post('/admin/:id/entries', ...write, entryFiles, SchemeController.adminAd
 router.post('/admin/:id/import', ...write, SchemeController.adminImport);
 router.get('/admin/:id/sell-through', ...read, SchemeController.adminSellThrough);
 router.put('/admin/:id/payouts/:storeId', ...write, SchemeController.adminPayout);
+// A scheme run by targets: its franchises, targets, achievement and payouts.
+router.get('/admin/:id/targets', ...read, SchemeController.adminTargets);
+router.post('/admin/:id/targets/stores', ...write, SchemeController.adminTargetStore);
+router.delete('/admin/:id/targets/stores/:storeId', ...write, SchemeController.adminTargetRemove);
+router.get('/admin/:id/targets/stats', ...read, SchemeController.adminTargetStats);
+router.put('/admin/:id/targets/terms', ...write, SchemeController.adminTargetTerms);
+router.put('/admin/:id/targets/figures', ...write, SchemeController.adminTargetFigures);
+router.put('/admin/:id/targets/paid', ...write, SchemeController.adminTargetPaid);
+router.post('/admin/:id/targets/import', ...write, SchemeController.adminTargetImport);
 
 // Franchise: see, join and enter schemes. Scoped to the signed-in store.
 const store = [authenticateToken, requireRole('vendor')];

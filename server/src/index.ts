@@ -411,6 +411,25 @@ async function runMigrations() {
     await addColumn('scheme_payouts', 'delivery', 'delivery VARCHAR(12) NULL');
     await addColumn('scheme_payouts', 'dispatched_at', 'dispatched_at TIMESTAMP NULL');
     await addColumn('scheme_payouts', 'delivered_at', 'delivered_at TIMESTAMP NULL');
+    // How a scheme runs (services/schemeTargets.ts); a franchise's own terms on
+    // it; and, on a scheme run by targets, each franchise's target and
+    // achievement per period, with every change kept.
+    await addColumn('schemes', 'settings', 'settings JSON NULL');
+    await addColumn('scheme_participants', 'terms', 'terms JSON NULL');
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_targets (
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         period VARCHAR(12) NOT NULL,
+         target DECIMAL(12,2) NULL,
+         achieved DECIMAL(12,2) NULL,
+         paid_at TIMESTAMP NULL,
+         paid_by CHAR(36) NULL,
+         history JSON NULL,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         PRIMARY KEY (scheme_id, store_id, period),
+         KEY idx_st_store (store_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_reminders (
          scheme_id CHAR(36) NOT NULL,
          window_start VARCHAR(16) NOT NULL,

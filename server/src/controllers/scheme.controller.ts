@@ -10,6 +10,11 @@ import {
     type SchemeWindow, type EntryLine, type Club, type ImportRow, type InvoiceIn,
 } from '../services/schemeRules.js';
 import { correctEntry, type EntryEdit } from '../services/schemeCorrection.js';
+import {
+    readSettings, settingsProblems, stepProblems, readSteps, periodsOf, targetResult, planTargetImport,
+    stepsFor, baselineMonths, monthlyAverage, growthTarget,
+    type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period,
+} from '../services/schemeTargets.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -57,6 +62,7 @@ function readScheme(r: any) {
         leaderboard: json<{ show: boolean; names: boolean }>(r.leaderboard, { show: true, names: false }),
         clubs: json<Club[]>(r.clubs, []),
         contact: json<{ name: string; role: string; phone: string; email: string } | null>(r.contact, null),
+        settings: readSettings(r.settings),
         status: r.status as SchemeStatus,
         state: schemeState(r.status, windows, now),
         published_at: r.published_at,
@@ -127,6 +133,7 @@ function schemeFromBody(b: any) {
             };
             return out.name || out.phone || out.email ? out : null;
         })(),
+        settings: readSettings(b.settings),
     };
 }
 
@@ -189,6 +196,7 @@ export async function runSchemeReminders(): Promise<number> {
     let sent = 0;
     for (const r of rows) {
         const s = readScheme(r);
+        if (s.settings.run === 'targets') continue;
         const due = s.windows.filter(w => w.start > now && w.start <= tomorrow);
         for (const w of due) {
             const [claim]: any = await db.execute('INSERT IGNORE INTO scheme_reminders (scheme_id, window_start) VALUES (?, ?)', [s.id, w.start]);
@@ -320,8 +328,452 @@ async function announce(scheme: Scheme) {
     return sent;
 }
 
+/* ─── Schemes run by targets ──────────────────────────────────────────────── */
+
+interface TargetHistory { at: string; by: string | null; field: 'target' | 'achieved' | 'paid'; from: number | string | null; to: number | string | null; reason: string | null }
+const dec = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
+/** Warranties by store and month ("2026-10"): approved, waiting and rejected, from these months on. */
+async function warrantyCounts(storeIds: string[], fromMonth: string) {
+    const out = new Map<string, Record<string, { approved: number; pending: number; rejected: number }>>();
+    if (!storeIds.length) return out;
+    /* created_at already reads in IST (the pool's session zone). */
+    const [rows]: any = await db.execute(
+        `SELECT vendor_details_id AS store_id, DATE_FORMAT(created_at, '%Y-%m') AS month,
+                SUM(status = 'validated') AS approved, SUM(status = 'rejected') AS rejected,
+                SUM(status NOT IN ('validated', 'rejected')) AS pending
+           FROM warranty_registrations
+          WHERE vendor_details_id IN (${storeIds.map(() => '?').join(',')}) AND created_at >= ?
+          GROUP BY vendor_details_id, month`,
+        [...storeIds, `${fromMonth}-01`]
+    );
+    for (const r of rows) {
+        const m = out.get(String(r.store_id)) ?? {};
+        m[r.month] = { approved: Number(r.approved) || 0, pending: Number(r.pending) || 0, rejected: Number(r.rejected) || 0 };
+        out.set(String(r.store_id), m);
+    }
+    return out;
+}
+
+/** The 12 months before a scheme starts, with its months: the window a store's warranty history is shown for. */
+const historyFrom = (scheme: Scheme) => baselineMonths(scheme.starts_on, 12)[0];
+
+/** A store's warranty history and average, as the admin sees it when setting its growth. */
+function warrantyStats(scheme: Scheme, counts: Record<string, { approved: number; pending: number; rejected: number }> = {}) {
+    const base = baselineMonths(scheme.starts_on, scheme.settings.baseline_months);
+    const approved = Object.fromEntries(Object.entries(counts).map(([m, c]) => [m, c.approved]));
+    return {
+        months: baselineMonths(scheme.starts_on, 12).map(m => ({ month: m, ...(counts[m] ?? { approved: 0, pending: 0, rejected: 0 }) })),
+        average: Math.round(monthlyAverage(approved, base) * 10) / 10,
+        average_over: base,
+    };
+}
+
+/** Targets a growth makes for every period, from the store's average. */
+function growthTargets(scheme: Scheme, periods: Period[], average: number, growthPct: number) {
+    return Object.fromEntries(periods.map(p => [p.key, growthTarget(average, growthPct, p.months.length)]));
+}
+
+/** Every franchise on a target scheme, its own terms, and its figures per period with the result. */
+async function schemeTargets(scheme: Scheme) {
+    const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
+    const [members]: any = await db.execute('SELECT store_id, joined_at, terms FROM scheme_participants WHERE scheme_id = ? ORDER BY joined_at', [scheme.id]);
+    const [rows]: any = await db.execute('SELECT * FROM scheme_targets WHERE scheme_id = ?', [scheme.id]);
+    const ids = members.map((m: any) => String(m.store_id));
+    const stores = await storesById(ids);
+    const fromWarranties = scheme.settings.source === 'warranties';
+    const counts = fromWarranties ? await warrantyCounts(ids, historyFrom(scheme)) : new Map();
+    const byStore = new Map<string, any[]>();
+    for (const r of rows) byStore.set(String(r.store_id), [...(byStore.get(String(r.store_id)) ?? []), r]);
+    return {
+        periods,
+        stores: members.map((m: any) => {
+            const id = String(m.store_id);
+            const terms = json<StoreTerms>(m.terms, {});
+            const { steps, benefit } = stepsFor(terms, scheme.settings);
+            const mine = counts.get(id) ?? {};
+            const saved = new Map((byStore.get(id) ?? []).map((r: any) => [r.period, r]));
+            const figures: Record<string, unknown> = {};
+            for (const p of periods) {
+                const r: any = saved.get(p.key);
+                /* With warranties, achieved is what was approved in the period's months, counted live. */
+                const sum = (k: 'approved' | 'pending') => p.months.reduce((n, mo) => n + (mine[mo]?.[k] ?? 0), 0);
+                if (!r && !fromWarranties) continue;
+                const target = dec(r?.target), achieved = fromWarranties ? sum('approved') : dec(r?.achieved);
+                figures[p.key] = {
+                    target, achieved, pending: fromWarranties ? sum('pending') : null,
+                    paid_at: r?.paid_at ?? null, updated_at: r?.updated_at ?? null,
+                    history: json<TargetHistory[]>(r?.history, []),
+                    result: targetResult(target, achieved, steps, benefit),
+                };
+            }
+            return {
+                store_id: id, store_name: stores.get(id)?.name ?? 'Store (removed)',
+                city: stores.get(id)?.city ?? null, state: stores.get(id)?.state ?? null,
+                own_steps: terms.steps?.length ? terms.steps : null, note: terms.note ?? null,
+                growth_pct: terms.growth_pct ?? null, reward: terms.reward ?? null,
+                stats: fromWarranties ? warrantyStats(scheme, mine) : null,
+                joined_at: m.joined_at, figures,
+            };
+        }),
+    };
+}
+
+/** The period today falls in, else the last one (a scheme that has ended), else the first. */
+function currentPeriod(scheme: Scheme, periods: { key: string }[]) {
+    if (!periods.length) return null;
+    if (periods.length === 1) return periods[0].key;
+    const month = istNow().slice(0, 7);
+    const hit = [...periods].reverse().find(p => (p.key.startsWith('Q') ? p.key.slice(1) : p.key) <= month);
+    return (hit ?? periods[0]).key;
+}
+
+/** One store's own targets on a target scheme, showing only what the scheme lets it see. */
+async function storeTargets(scheme: Scheme, storeId: string) {
+    const all = await schemeTargets(scheme);
+    const me = all.stores.find((x: any) => x.store_id === storeId);
+    const show = scheme.settings.show;
+    const { steps, benefit } = stepsFor({ steps: me?.own_steps ?? undefined, reward: me?.reward ?? undefined }, scheme.settings);
+    const periods = all.periods.map(p => {
+        const f: any = me?.figures[p.key];
+        const r = f?.result;
+        return {
+            key: p.key, label: p.label,
+            target: show.target ? f?.target ?? null : null,
+            achieved: show.achieved ? f?.achieved ?? null : null,
+            pending: show.achieved ? f?.pending ?? null : null,
+            pct: show.percent ? r?.pct ?? null : null,
+            step_no: r?.step_no ?? null,
+            benefit: r?.benefit ?? null,
+            to_next: show.to_next ? r?.to_next ?? null : null,
+            paid: Boolean(f?.paid_at),
+            updated_at: f?.updated_at ?? null,
+        };
+    });
+    const nowKey = currentPeriod(scheme, all.periods);
+    return {
+        unit: scheme.settings.unit, benefit, show,
+        steps: show.steps ? steps : [],
+        periods,
+        now: periods.find(p => p.key === nowKey) ?? null,
+    };
+}
+
+/** The verified franchises an admin can add, with what an import matches them by. */
+async function allFranchises() {
+    const [rows]: any = await db.execute(
+        `SELECT vd.id, vd.store_code, vd.store_name, vd.city, vd.state, p.email
+           FROM vendor_details vd
+           JOIN vendor_verification vv ON vv.user_id = vd.user_id AND vv.is_verified = 1
+           LEFT JOIN profiles p ON p.id = vd.user_id
+          WHERE vd.is_franchise = 1 ORDER BY vd.store_name`
+    );
+    return rows.map((r: any) => ({
+        id: String(r.id), code: r.store_code ?? null, name: String(r.store_name ?? '').trim(),
+        city: r.city ?? null, state: r.state ?? null, email: r.email ?? null,
+    }));
+}
+
+/** Put a franchise on a target scheme (it sees the scheme from now on), or update its own terms. */
+async function enrol(scheme: Scheme, storeId: string, terms: StoreTerms | null) {
+    await db.execute(
+        `INSERT INTO scheme_participants (scheme_id, store_id, terms) VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE terms = VALUES(terms)`,
+        [scheme.id, storeId, terms ? JSON.stringify(terms) : null]
+    );
+    const ids = new Set(scheme.eligibility.store_ids ?? []);
+    if (!ids.has(storeId)) {
+        ids.add(storeId);
+        scheme.eligibility = { mode: 'stores', store_ids: [...ids], brand: null };
+        await db.execute('UPDATE schemes SET eligibility = ? WHERE id = ?', [JSON.stringify(scheme.eligibility), scheme.id]);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Write target and achieved figures, keeping each change (who, when, old →
+ * new, why). Changing a figure already set needs a reason; a first figure does not.
+ */
+async function writeFigures(req: Request, scheme: Scheme, changes: TargetChange[], reason: string | null) {
+    const by = (req as any).user?.id ?? null;
+    const byName = (req as any).user?.name ?? null;
+    const [rows]: any = await db.execute('SELECT store_id, period, target, achieved, history FROM scheme_targets WHERE scheme_id = ?', [scheme.id]);
+    const now = new Map<string, any>(rows.map((r: any) => [`${r.store_id}|${r.period}`, r]));
+    const plan: { c: TargetChange; history: TargetHistory[] }[] = [];
+    for (const c of changes) {
+        const old = now.get(`${c.store_id}|${c.period}`);
+        const history = json<TargetHistory[]>(old?.history, []);
+        for (const field of ['target', 'achieved'] as const) {
+            if (!(field in c)) continue;
+            const from = dec(old?.[field]), to = c[field] ?? null;
+            if (from === to) continue;
+            if (from !== null && !reason) throw new Error(`Give a reason for changing ${field === 'target' ? 'a target' : 'an achieved figure'} already set`);
+            history.push({ at: new Date().toISOString(), by: byName ?? by, field, from, to, reason });
+        }
+        plan.push({ c, history });
+    }
+    for (const { c, history } of plan) {
+        await db.execute(
+            `INSERT INTO scheme_targets (scheme_id, store_id, period, target, achieved, history, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                target = ${'target' in c ? 'VALUES(target)' : 'target'},
+                achieved = ${'achieved' in c ? 'VALUES(achieved)' : 'achieved'},
+                history = VALUES(history), updated_by = VALUES(updated_by)`,
+            [scheme.id, c.store_id, c.period, c.target ?? null, c.achieved ?? null, JSON.stringify(history.slice(-200)), by]
+        );
+    }
+    return plan.length;
+}
+
+/** The figures an admin sent, read: numbers or blanks, for this scheme's stores and periods only. */
+function readChanges(raw: unknown, scheme: Scheme, storeIds: Set<string>): TargetChange[] {
+    const periods = new Set(periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period).map(p => p.key));
+    const out: TargetChange[] = [];
+    for (const c of (Array.isArray(raw) ? raw : []).slice(0, 5000)) {
+        const store_id = String(c?.store_id ?? ''), period = String(c?.period ?? '');
+        if (!storeIds.has(store_id)) throw new Error('A figure is for a franchise not on this scheme');
+        if (!periods.has(period)) throw new Error(`"${period}" is not a period of this scheme`);
+        const one: TargetChange = { store_id, period };
+        for (const field of ['target', 'achieved'] as const) {
+            if (!(field in (c ?? {}))) continue;
+            /* Counted from warranties, achievement is never typed. */
+            if (field === 'achieved' && scheme.settings.source === 'warranties') continue;
+            const v = c[field];
+            if (v === null || v === '') { one[field] = null; continue; }
+            const n = Number(v);
+            if (!Number.isFinite(n) || n < 0) throw new Error(`${field === 'target' ? 'Target' : 'Achieved'} must be a number`);
+            one[field] = Math.round(n * 100) / 100;
+        }
+        out.push(one);
+    }
+    return out;
+}
+
 export class SchemeController {
     /* ─── Admin ──────────────────────────────────────────────────────────── */
+
+    /** A target scheme's franchises, their figures per period, and the franchises that can be added. */
+    static async adminTargets(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const t = await schemeTargets(scheme);
+            const on = new Set(t.stores.map((x: any) => x.store_id));
+            res.json({
+                success: true, ...t, settings: scheme.settings, current: currentPeriod(scheme, t.periods),
+                franchises: (await allFranchises()).filter((f: any) => !on.has(f.id)),
+            });
+        } catch (error: any) {
+            console.error('[Schemes] targets:', error);
+            res.status(500).json({ error: 'Could not load the targets' });
+        }
+    }
+
+    /** Add a franchise (or update it): its own steps (none = the scheme's), a note, and targets per period. */
+    static async adminTargetStore(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const storeId = String(req.body?.store_id ?? '');
+            const known = (await allFranchises()).some((f: any) => f.id === storeId)
+                || (scheme.eligibility.store_ids ?? []).includes(storeId);
+            if (!known) return res.status(400).json({ error: 'Choose a verified franchise' });
+            const steps = req.body?.steps ? readSteps(req.body.steps) : [];
+            if (steps.length) {
+                const p = stepProblems(steps, scheme.settings.benefit);
+                if (p.length) return res.status(400).json({ error: p[0], problems: p });
+            }
+            const note = String(req.body?.note ?? '').trim().slice(0, 300);
+            const growth = req.body?.growth_pct === '' || req.body?.growth_pct == null ? null : Number(req.body.growth_pct);
+            if (growth !== null && (!Number.isFinite(growth) || growth < -100 || growth > 1000)) return res.status(400).json({ error: 'Growth must be a % between -100 and 1000' });
+            const reward = String(req.body?.reward ?? '').trim().slice(0, 160);
+            const terms: StoreTerms = {
+                ...(steps.length ? { steps } : {}), ...(note ? { note } : {}),
+                ...(growth !== null ? { growth_pct: growth } : {}), ...(reward ? { reward } : {}),
+            };
+            const added = await enrol(scheme, storeId, Object.keys(terms).length ? terms : null);
+            let typed: Record<string, unknown> = req.body?.targets ?? {};
+            if (growth !== null && scheme.settings.source === 'warranties') {
+                const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
+                const stats = warrantyStats(scheme, (await warrantyCounts([storeId], historyFrom(scheme))).get(storeId));
+                typed = growthTargets(scheme, periods, stats.average, growth);
+            }
+            const targets = Object.entries(typed).filter(([, v]) => v !== '' && v !== null && v !== undefined)
+                .map(([period, target]) => ({ store_id: storeId, period, target }));
+            const changes = readChanges(targets, scheme, new Set([storeId]));
+            await writeFigures(req, scheme, changes, String(req.body?.reason ?? '').trim() || null);
+            log(req, added ? 'SCHEME_TARGET_STORE_ADDED' : 'SCHEME_TARGET_STORE_UPDATED', scheme, { store_id: storeId, steps: steps.length ? steps : 'scheme', targets: changes.length });
+            if (added && scheme.status === 'published' && process.env.DISABLE_SCHEDULERS !== '1') {
+                const [[st]]: any = await db.execute('SELECT user_id FROM vendor_details WHERE id = ?', [storeId]);
+                if (st?.user_id) await NotificationService.notify(st.user_id, {
+                    title: `You're in: ${scheme.title}`, message: 'Your target is set. Open Offers & Schemes to see it.',
+                    type: 'scheme', metadata: { scheme_id: scheme.id },
+                });
+            }
+            res.json({ success: true, added });
+        } catch (error: any) {
+            console.error('[Schemes] target store:', error);
+            res.status(/must|period|franchise/i.test(error?.message) ? 400 : 500).json({ error: error?.message || 'Could not save' });
+        }
+    }
+
+    /** A franchise's warranty history and average, to set its growth before adding it. */
+    static async adminTargetStats(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const storeId = String(req.query.store_id ?? '');
+            const counts = (await warrantyCounts([storeId], historyFrom(scheme))).get(storeId);
+            res.json({ success: true, stats: warrantyStats(scheme, counts), periods: periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period) });
+        } catch (error: any) {
+            console.error('[Schemes] target stats:', error);
+            res.status(500).json({ error: 'Could not load the warranties' });
+        }
+    }
+
+    /**
+     * Growth and reward for many franchises at once, typed in the grid. A growth
+     * sets every period's target from the store's average; changing targets
+     * already set needs a reason.
+     */
+    static async adminTargetTerms(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const on = new Set(scheme.eligibility.store_ids ?? []);
+            const list = (Array.isArray(req.body?.stores) ? req.body.stores : []).slice(0, 2000);
+            const [members]: any = await db.execute('SELECT store_id, terms FROM scheme_participants WHERE scheme_id = ?', [scheme.id]);
+            const termsOf = new Map(members.map((m: any) => [String(m.store_id), json<StoreTerms>(m.terms, {})]));
+            const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
+            const counts = await warrantyCounts([...on], historyFrom(scheme));
+            const changes: TargetChange[] = [];
+            const updates: [string, StoreTerms][] = [];
+            for (const x of list) {
+                const id = String(x?.store_id ?? '');
+                if (!on.has(id)) return res.status(400).json({ error: 'A row is for a franchise not on this scheme' });
+                const t: StoreTerms = { ...(termsOf.get(id) ?? {}) };
+                if ('growth_pct' in (x ?? {})) {
+                    if (x.growth_pct === '' || x.growth_pct === null) delete t.growth_pct;
+                    else {
+                        const g = Number(x.growth_pct);
+                        if (!Number.isFinite(g) || g < -100 || g > 1000) return res.status(400).json({ error: 'Growth must be a % between -100 and 1000' });
+                        t.growth_pct = g;
+                        if (scheme.settings.source === 'warranties') {
+                            const avg = warrantyStats(scheme, counts.get(id)).average;
+                            for (const [period, target] of Object.entries(growthTargets(scheme, periods, avg, g))) changes.push({ store_id: id, period, target });
+                        }
+                    }
+                }
+                if ('reward' in (x ?? {})) {
+                    const r = String(x.reward ?? '').trim().slice(0, 160);
+                    if (r) t.reward = r; else delete t.reward;
+                }
+                updates.push([id, t]);
+            }
+            const reason = String(req.body?.reason ?? '').trim().slice(0, 300) || null;
+            await writeFigures(req, scheme, changes, reason);
+            for (const [id, t] of updates) {
+                await db.execute('UPDATE scheme_participants SET terms = ? WHERE scheme_id = ? AND store_id = ?', [Object.keys(t).length ? JSON.stringify(t) : null, scheme.id, id]);
+            }
+            log(req, 'SCHEME_TARGET_TERMS_UPDATED', scheme, { stores: list, reason });
+            res.json({ success: true, saved: updates.length });
+        } catch (error: any) {
+            res.status(/reason|must|period|franchise/i.test(error?.message) ? 400 : 500).json({ error: error?.message || 'Could not save' });
+        }
+    }
+
+    /** Targets and achieved figures typed in the grid (or many at once). */
+    static async adminTargetFigures(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const changes = readChanges(req.body?.changes, scheme, new Set(scheme.eligibility.store_ids ?? []));
+            const n = await writeFigures(req, scheme, changes, String(req.body?.reason ?? '').trim().slice(0, 300) || null);
+            log(req, 'SCHEME_TARGETS_UPDATED', scheme, { changes, reason: req.body?.reason ?? null });
+            res.json({ success: true, saved: n });
+        } catch (error: any) {
+            res.status(/reason|must|period|franchise/i.test(error?.message) ? 400 : 500).json({ error: error?.message || 'Could not save' });
+        }
+    }
+
+    /** Mark one franchise's benefit for a period paid, or not paid. */
+    static async adminTargetPaid(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const { store_id, period, paid } = req.body ?? {};
+            const [[row]]: any = await db.execute('SELECT history, paid_at FROM scheme_targets WHERE scheme_id = ? AND store_id = ? AND period = ?', [scheme.id, String(store_id), String(period)]);
+            if (!row) return res.status(404).json({ error: 'No figures for that franchise and period' });
+            const history = json<TargetHistory[]>(row.history, []);
+            history.push({ at: new Date().toISOString(), by: (req as any).user?.name ?? null, field: 'paid', from: row.paid_at ? 'paid' : 'to pay', to: paid ? 'paid' : 'to pay', reason: String(req.body?.reason ?? '').trim() || null });
+            await db.execute(
+                'UPDATE scheme_targets SET paid_at = ?, paid_by = ?, history = ? WHERE scheme_id = ? AND store_id = ? AND period = ?',
+                [paid ? new Date() : null, paid ? (req as any).user?.id ?? null : null, JSON.stringify(history), scheme.id, String(store_id), String(period)]
+            );
+            log(req, paid ? 'SCHEME_TARGET_PAID' : 'SCHEME_TARGET_UNPAID', scheme, { store_id, period });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] target paid:', error);
+            res.status(500).json({ error: 'Could not save' });
+        }
+    }
+
+    /** Take a franchise off a target scheme: it no longer sees it. Its figures go into the activity log. */
+    static async adminTargetRemove(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const storeId = String(req.params.storeId);
+            const reason = String(req.body?.reason ?? '').trim();
+            if (reason.length < 3) return res.status(400).json({ error: 'Give a reason for removing the franchise' });
+            const [rows]: any = await db.execute('SELECT * FROM scheme_targets WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
+            await db.execute('DELETE FROM scheme_targets WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
+            await db.execute('DELETE FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
+            const ids = (scheme.eligibility.store_ids ?? []).filter(x => x !== storeId);
+            await db.execute('UPDATE schemes SET eligibility = ? WHERE id = ?', [JSON.stringify({ mode: 'stores', store_ids: ids, brand: null }), scheme.id]);
+            log(req, 'SCHEME_TARGET_STORE_REMOVED', scheme, { store_id: storeId, reason, figures: rows });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] target remove:', error);
+            res.status(500).json({ error: 'Could not remove the franchise' });
+        }
+    }
+
+    /**
+     * Targets and achievement from a sheet: rows of store, period, target,
+     * achieved. `dry_run` shows what would change; otherwise franchises not yet
+     * on the scheme are added (with the scheme's steps) and the figures saved.
+     */
+    static async adminTargetImport(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
+            const rows: TargetImportRow[] = (Array.isArray(req.body?.rows) ? req.body.rows : []).slice(0, 5000).map((r: any, i: number) => ({
+                row: Number(r?.row) || i + 2, store: String(r?.store ?? ''), period: r?.period ?? '', target: r?.target ?? '', achieved: r?.achieved ?? '',
+            }));
+            if (!rows.length) return res.status(400).json({ error: 'The sheet has no rows' });
+            const franchises = await allFranchises();
+            const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
+            const { changes, problems } = planTargetImport(rows, franchises, periods);
+            const on = new Set(scheme.eligibility.store_ids ?? []);
+            const newStores = [...new Set(changes.map(c => c.store_id).filter(id => !on.has(id)))];
+            const names = new Map(franchises.map((f: any) => [f.id, f.name]));
+            const summary = {
+                rows: rows.length, changes: changes.length, problems,
+                new_stores: newStores.map(id => names.get(id) ?? id),
+            };
+            if (req.body?.dry_run) return res.json({ success: true, dry_run: true, ...summary });
+            for (const id of newStores) await enrol(scheme, id, null);
+            await writeFigures(req, scheme, changes, String(req.body?.reason ?? '').trim() || 'Imported from a sheet');
+            log(req, 'SCHEME_TARGETS_IMPORTED', scheme, { rows: rows.length, changes: changes.length, new_stores: newStores.length });
+            res.json({ success: true, ...summary });
+        } catch (error: any) {
+            console.error('[Schemes] target import:', error);
+            res.status(500).json({ error: error?.message || 'Could not import' });
+        }
+    }
 
     static async adminList(_req: Request, res: Response) {
         try {
@@ -446,12 +898,23 @@ export class SchemeController {
         try {
             const id = req.params.id;
             const s = schemeFromBody(req.body ?? {});
-            const problems = schemeProblems(s);
+            const existing = id ? await loadScheme(id) : null;
+            if (id && !existing) return res.status(404).json({ error: 'Scheme not found' });
+            if (existing && existing.status !== 'draft' && existing.settings.run !== s.settings.run) {
+                return res.status(400).json({ error: 'A published scheme keeps the way it runs. Copy it to run it the other way.' });
+            }
+            /* A target scheme is for the franchises the admin adds to it: no store
+               submits, nothing is scored from entries, and its eligibility is
+               the list of those franchises (so every store screen reads it as
+               before). */
+            if (s.settings.run === 'targets') {
+                s.fields = []; s.score = { mode: 'none' }; s.rewards = { mode: 'none' }; s.clubs = [];
+                s.eligibility = { mode: 'stores', store_ids: existing?.settings.run === 'targets' ? existing.eligibility.store_ids ?? [] : [], brand: null };
+            }
+            const problems = [...schemeProblems(s), ...settingsProblems(s.settings)];
             if (problems.length) return res.status(400).json({ error: problems[0], problems });
 
             const span = windowSpan(s.windows);
-            const existing = id ? await loadScheme(id) : null;
-            if (id && !existing) return res.status(404).json({ error: 'Scheme not found' });
 
             const cols = {
                 title: s.title, category: s.category, summary: s.summary, banner_url: s.banner_url,
@@ -461,6 +924,7 @@ export class SchemeController {
                 entries_per_store: s.entries_per_store, score_rule: JSON.stringify(s.score),
                 rewards: JSON.stringify(s.rewards), leaderboard: JSON.stringify(s.leaderboard), clubs: JSON.stringify(s.clubs),
                 contact: s.contact ? JSON.stringify(s.contact) : null,
+                settings: JSON.stringify(s.settings),
             };
             const schemeId = id ?? uuidv4();
             if (existing) {
@@ -496,7 +960,7 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme) return res.status(404).json({ error: 'Scheme not found' });
             if (scheme.status !== 'draft') return res.status(400).json({ error: 'Only a draft can be published' });
-            const problems = schemeProblems({ ...scheme, score: scheme.score_rule });
+            const problems = [...schemeProblems({ ...scheme, score: scheme.score_rule }), ...settingsProblems(scheme.settings)];
             if (problems.length) return res.status(400).json({ error: problems[0], problems });
             await db.execute("UPDATE schemes SET status = 'published', published_at = NOW() WHERE id = ?", [scheme.id]);
             const saved = (await loadScheme(scheme.id))!;
@@ -531,13 +995,20 @@ export class SchemeController {
             const id = uuidv4();
             await db.execute(
                 `INSERT INTO schemes (id, title, category, summary, banner_url, instructions, terms, starts_on, ends_on,
-                                      submit_until, windows, eligibility, fields, entries_per_store, score_rule, rewards, leaderboard, clubs, contact,
+                                      submit_until, windows, eligibility, fields, entries_per_store, score_rule, rewards, leaderboard, clubs, contact, settings,
                                       status, created_by)
                  SELECT ?, CONCAT('Copy of ', title), category, summary, banner_url, instructions, terms, starts_on, ends_on,
-                        submit_until, windows, eligibility, fields, entries_per_store, score_rule, rewards, leaderboard, clubs, contact, 'draft', ?
+                        submit_until, windows, eligibility, fields, entries_per_store, score_rule, rewards, leaderboard, clubs, contact, settings, 'draft', ?
                    FROM schemes WHERE id = ?`,
                 [id, (req as any).user?.id ?? null, scheme.id]
             );
+            /* A target scheme's copy keeps its franchises and their own steps; the targets start empty. */
+            if (scheme.settings.run === 'targets') {
+                await db.execute(
+                    'INSERT INTO scheme_participants (scheme_id, store_id, terms) SELECT ?, store_id, terms FROM scheme_participants WHERE scheme_id = ?',
+                    [id, scheme.id]
+                );
+            }
             log(req, 'SCHEME_COPIED', scheme, { copy: id });
             res.json({ success: true, scheme: await loadScheme(id) });
         } catch (error: any) {
@@ -1033,6 +1504,15 @@ export class SchemeController {
 
             const out = [];
             for (const s of mine) {
+                if (s.settings.run === 'targets') {
+                    const t = await storeTargets(s, store.id);
+                    out.push({
+                        id: s.id, title: s.title, category: s.category, summary: s.summary, banner_url: s.banner_url,
+                        starts_on: s.starts_on, ends_on: s.ends_on, windows: s.windows, open_window: null, next_window: null, state: s.state,
+                        has_score: false, joined: true, achieved: null, run: 'targets', target_now: t.now,
+                    });
+                    continue;
+                }
                 const board = joinedSet.has(s.id) ? await schemeStandings(s) : [];
                 const me = board.find(b => b.store_id === store.id);
                 out.push({
@@ -1057,6 +1537,10 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || scheme.status === 'draft' || !isEligible(scheme.eligibility, store)) {
                 return res.status(404).json({ error: 'Scheme not found' });
+            }
+            if (scheme.settings.run === 'targets') {
+                const { eligibility: _e, ...visible } = scheme;
+                return res.json({ success: true, scheme: visible, joined: true, can_submit: false, targets: await storeTargets(scheme, store.id) });
             }
             const [[joined]]: any = await db.execute(
                 'SELECT joined_at FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, store.id]

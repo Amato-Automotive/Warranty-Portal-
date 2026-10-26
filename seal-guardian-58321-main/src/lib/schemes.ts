@@ -75,9 +75,60 @@ export interface Scheme {
     leaderboard: { show: boolean; names: boolean };
     clubs: Club[];
     contact: SchemeContact | null;
+    settings: SchemeSettings;
     status: "draft" | "published" | "ended";
     state: SchemeState;
 }
+
+/**
+ * How a scheme runs (same as the server's services/schemeTargets.ts). "entries":
+ * stores submit and the admin approves. "targets": the admin adds franchises,
+ * sets each one's target per period and types what it achieved; reaching a
+ * step (a share of the target) earns that step's benefit.
+ */
+export type RunMode = "entries" | "targets";
+export type TargetPeriod = "whole" | "month" | "quarter";
+export type BenefitKind = "per_unit" | "percent" | "fixed";
+/** Where achievement comes from: typed by the admin, or counted from the store's approved warranties. */
+export type TargetSource = "manual" | "warranties";
+export interface TargetStep { pct: number; amount?: number; reward?: string }
+export interface TargetVisibility { target: boolean; achieved: boolean; percent: boolean; steps: boolean; to_next: boolean }
+export interface SchemeSettings {
+    run: RunMode; source: TargetSource; baseline_months: number; unit: string; period: TargetPeriod; benefit: BenefitKind; steps: TargetStep[]; show: TargetVisibility;
+}
+export const DEFAULT_SETTINGS: SchemeSettings = {
+    run: "entries", source: "manual", baseline_months: 3, unit: "sets", period: "month", benefit: "per_unit", steps: [],
+    show: { target: true, achieved: true, percent: true, steps: true, to_next: false },
+};
+export const PERIOD_LABEL: Record<TargetPeriod, string> = { whole: "Whole scheme", month: "Monthly", quarter: "Quarterly" };
+export const BENEFIT_LABEL: Record<BenefitKind, string> = {
+    per_unit: "₹ off per unit (on every unit achieved)", percent: "% off the price", fixed: "A reward (written)",
+};
+/** "₹100 off / set", "5% off", or the reward, for one step. */
+export function stepBenefit(s: TargetStep, benefit: BenefitKind, unit: string): string {
+    if (benefit === "per_unit") return s.amount ? `₹${s.amount.toLocaleString("en-IN")} off / ${unit.replace(/s$/, "")}` : "—";
+    if (benefit === "percent") return s.amount ? `${s.amount}% off` : "—";
+    return s.reward || "—";
+}
+/** Where a franchise stands for one period (the server's targetResult). */
+export interface TargetResult {
+    pct: number | null; step: TargetStep | null; step_no: number | null;
+    benefit: string | null; benefit_rupees: number | null; next: TargetStep | null; to_next: number | null;
+}
+export interface TargetHistory { at: string; by: string | null; field: "target" | "achieved" | "paid"; from: number | string | null; to: number | string | null; reason: string | null }
+export interface TargetFigures { target: number | null; achieved: number | null; pending: number | null; paid_at: string | null; updated_at: string; history: TargetHistory[]; result: TargetResult }
+export interface TargetStore {
+    store_id: string; store_name: string; city: string | null; state: string | null;
+    own_steps: TargetStep[] | null; note: string | null; joined_at: string;
+    /* Counted from warranties: the growth over its average and its reward; the store never sees the growth. */
+    growth_pct: number | null; reward: string | null; stats: WarrantyStats | null;
+    figures: Record<string, TargetFigures>;
+}
+export interface Period { key: string; label: string; months: string[] }
+/** A store's warranties per month before the scheme, and its average of approved ones. */
+export interface WarrantyStats { months: { month: string; approved: number; pending: number; rejected: number }[]; average: number; average_over: string[] }
+/** The target a growth makes (same as the server's growthTarget). */
+export const growthTarget = (average: number, pct: number, months: number) => Math.ceil(average * months * (1 + pct / 100) - 1e-9);
 
 /** Who stores ask about the scheme. */
 export interface SchemeContact { name: string; role: string; phone: string; email: string }
