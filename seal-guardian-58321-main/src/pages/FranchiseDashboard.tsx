@@ -30,7 +30,7 @@ import ECatalogue from "@/components/fms/ECatalogue";
 import B2BOrderManagement from "@/components/fms/B2BOrderManagement";
 import Profile from "./Profile";
 import Terms from "./Terms";
-import ClaimProcess from "./ClaimProcess";
+import { FranchiseClaims } from "@/components/fms/FranchiseClaims";
 import { ClaimProcessAnnouncement } from "@/components/fms/ClaimProcessAnnouncement";
 import { useB2BCart } from "@/contexts/B2BCartContext";
 import CategoryPage from "./eshop/CategoryPage";
@@ -769,7 +769,7 @@ const FranchiseDashboard = () => {
             case 'claim-process':
                 return (
                     <div className="-mt-8 md:-mt-14">
-                        <ClaimProcess />
+                        <FranchiseClaims />
                     </div>
                 );
             case 'manpower':
@@ -908,7 +908,7 @@ const FranchiseDashboard = () => {
             orders: "Order Management",
             grievances: "Complaint Redressal",
             terms: "Terms & Conditions",
-            "claim-process": "Claim Process",
+            "claim-process": "Warranty Claim / Alteration",
             offers: "Offers & Schemes",
             audit: "Audit & Compliance",
             targets: "Targets & Achievements",

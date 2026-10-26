@@ -200,7 +200,7 @@ export const menuGroups = [
             },
             { id: 'grievances' as const, label: "Complaint Redressal", icon: LifeBuoy },
             { id: 'terms' as const, label: "Terms & Conditions", icon: BookOpen },
-            { id: 'claim-process' as const, label: "Claim Process", icon: ClipboardList },
+            { id: 'claim-process' as const, label: "Warranty Claim / Alteration", icon: ClipboardList },
         ]
     },
     {

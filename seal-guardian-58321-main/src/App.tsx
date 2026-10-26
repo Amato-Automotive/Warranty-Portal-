@@ -18,6 +18,7 @@ import NotFound from "./pages/NotFound";
 // Lazy-loaded (code splitting - loaded on demand)
 const Warranty = lazy(() => import("./pages/Warranty"));
 const CustomerDashboard = lazy(() => import("./pages/CustomerDashboard"));
+const CustomerClaims = lazy(() => import("./pages/CustomerClaims"));
 const FranchiseDashboard = lazy(() => import("./pages/FranchiseDashboard"));
 const AdminLayout = lazy(() => import("@/components/admin/layout/AdminLayout").then(m => ({ default: m.AdminLayout })));
 const AdminManagement = lazy(() => import("./pages/AdminManagement"));
@@ -69,6 +70,7 @@ const App = () => (
                 {/* Customer Routes Layout */}
                 <Route element={<CustomerLayout />}>
                   <Route path="/dashboard/customer" element={<CustomerDashboard />} />
+                  <Route path="/dashboard/customer/claims" element={<CustomerClaims />} />
                   <Route path="/profile" element={<Profile />} />
 
                   <Route path="/terms" element={<Terms />} />

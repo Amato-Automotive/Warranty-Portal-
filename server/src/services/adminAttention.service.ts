@@ -18,6 +18,8 @@ export interface AttentionCounts {
     manpower?: number;
     /** ASM expense claims waiting for a decision. */
     asmExpenses?: number;
+    /** Warranty claims the store has checked, waiting for head office. */
+    claims?: number;
 }
 
 type Perms = Record<string, { read: boolean; write: boolean }> | undefined;
@@ -43,6 +45,12 @@ export async function getAttentionCounts(user: { isSuperAdmin?: boolean; permiss
             "SELECT COUNT(*) AS n FROM posm_requests WHERE status = 'open'"
         );
         counts.posm = Number(rows[0]?.n || 0);
+    }
+
+    if (canRead(user, 'claims')) {
+        // Waiting on the plant: to decide, to plan (EDD), to dispatch.
+        const [rows]: any = await db.execute("SELECT COUNT(*) AS n FROM warranty_claims WHERE status IN ('review', 'plan', 'production', 'ready')");
+        counts.claims = Number(rows[0]?.n || 0);
     }
 
     // Both screens sit under the `vendors` permission.

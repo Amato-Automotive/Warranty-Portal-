@@ -4,6 +4,7 @@ import {
     Archive,
     BellRing,
     BookOpen,
+    BadgeCheck,
     BriefcaseBusiness,
     ChartColumn,
     ClipboardCheck,
@@ -51,6 +52,7 @@ export type AdminModule =
     | 'announcements'
     | 'notification-settings'
     | 'posm'
+    | 'claims'
     | 'feedback'
     | 'schemes'
     | 'uid-management'
@@ -84,6 +86,7 @@ const moduleToPermKey: Record<string, string> = {
     'notification-settings': 'announcements',
     'grievances': 'grievances',
     'posm': 'posm',
+    'claims': 'claims',
     'feedback': 'feedback',
     'schemes': 'schemes',
     'ecatalogue': 'ecatalogue',
@@ -129,7 +132,8 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
     {
         label: "Warranty",
         items: [
-            { id: 'warranties', label: "Warranty Management", icon: ShieldCheck, keywords: ['warranties', 'claims', 'approve', 'reject', 'resubmission'] },
+            { id: 'warranties', label: "Warranty Management", icon: ShieldCheck, keywords: ['warranties', 'approve', 'reject', 'resubmission'] },
+            { id: 'claims', label: "Warranty Claim / Alteration", icon: BadgeCheck, keywords: ['claims', 'replacement', 'repair', 'alteration', 'complaint', 'service centre'] },
             { id: 'warranty-form', label: "New Registration", icon: PenTool, keywords: ['register', 'add warranty', 'form'] },
             { id: 'old-warranties', label: "Old Warranties", icon: Archive, keywords: ['legacy', 'archive'] },
         ]

@@ -11,7 +11,8 @@ import {
     ChevronLeft,
     ChevronRight,
     User,
-    LayoutDashboard
+    LayoutDashboard,
+    ShieldCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,7 @@ const CustomerLayout = () => {
 
     const navItems = [
         { path: "/dashboard/customer", label: "Dashboard", icon: LayoutDashboard, badge: dashboardUpdates },
+        { path: "/dashboard/customer/claims", label: "My Claims", icon: ShieldCheck, badge: 0 },
         { path: "/terms", label: "Terms", icon: FileText, badge: termsUpdates },
     ];
 

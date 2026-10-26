@@ -22,6 +22,8 @@ export interface AttentionCounts {
     manpower?: number;
     /** ASM expense claims waiting for a decision. */
     asmExpenses?: number;
+    /** Warranty claims the store has checked, waiting for head office. */
+    claims?: number;
 }
 
 const POLL_MS = 60_000;

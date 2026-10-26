@@ -38,6 +38,7 @@ const AdminPortalActivity = lazy(() => import("../modules/AdminPortalActivity").
 const AdminOldWarranties = lazy(() => import("../modules/AdminOldWarranties").then(({ AdminOldWarranties }) => ({ default: AdminOldWarranties })));
 const AdminWarrantyProducts = lazy(() => import("../modules/AdminWarrantyProducts").then(({ AdminWarrantyProducts }) => ({ default: AdminWarrantyProducts })));
 const AdminPOSM = lazy(() => import("../modules/AdminPOSM").then(({ AdminPOSM }) => ({ default: AdminPOSM })));
+const AdminClaims = lazy(() => import("../modules/AdminClaims").then(({ AdminClaims }) => ({ default: AdminClaims })));
 const AdminSchemes = lazy(() => import("../modules/AdminSchemes").then(({ AdminSchemes }) => ({ default: AdminSchemes })));
 const AdminECatalogue = lazy(() => import("../modules/AdminECatalogue").then(({ AdminECatalogue }) => ({ default: AdminECatalogue })));
 const AdminUIDManagement = lazy(() => import("../modules/AdminUIDManagement"));
@@ -115,6 +116,8 @@ export const AdminLayout = () => {
                 return <AdminAsmExpenses />;
             case 'posm':
                 return <AdminPOSM />;
+            case 'claims':
+                return <AdminClaims />;
             case 'feedback':
                 return <AdminFeedback />;
             case 'schemes':

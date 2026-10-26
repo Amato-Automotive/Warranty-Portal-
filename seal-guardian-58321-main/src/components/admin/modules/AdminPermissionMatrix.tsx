@@ -28,6 +28,19 @@ const PERMISSION_GROUPS: { label: string; modules: PermissionModule[] }[] = [
         ]
     },
     {
+        // The plant (MFU). Read on the first row lets someone see every claim
+        // (Anurag sir, Himanshu sir, the depots); Write on each step row is
+        // what lets a person take that step.
+        label: "Warranty Claims (plant)",
+        modules: [
+            { key: "claims", label: "Warranty Claims", description: "Read: see every claim and its activity" },
+            { key: "claims_decide", label: "Claims: decide", description: "Write: approve, reject, hold, ask the store; FOC or chargeable" },
+            { key: "claims_plan", label: "Claims: EDD, alteration no. & ready", description: "Write: set the EDD and alteration number, mark it ready" },
+            { key: "claims_dispatch", label: "Claims: dispatch", description: "Write: dispatch date and docket number" },
+            { key: "claims_edit", label: "Claims: edit & undo", description: "Write: change any detail or undo a step, with a reason" },
+        ]
+    },
+    {
         label: "Network & Orders",
         modules: [
             { key: "vendors", label: "Franchises", description: "Franchise profiles & verification" },
