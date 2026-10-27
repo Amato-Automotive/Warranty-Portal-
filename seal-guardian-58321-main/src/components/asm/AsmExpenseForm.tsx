@@ -7,8 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn, getISTTodayISO } from "@/lib/utils";
 import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
+import { budgetOverspend, type BudgetSummary } from "@/lib/asmExpenses";
 import {
-    ArrowLeft, Bus, Car, CarTaxiFront, Check, FileText, Hotel, Loader2, MapPin, Paperclip, Plane, Plus, TrainFront, Trash2, X
+    AlertTriangle, ArrowLeft, Bus, Car, CarTaxiFront, Check, FileText, Hotel, Loader2, MapPin, Paperclip, Plane, Plus, TrainFront, Trash2, X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -134,11 +135,13 @@ const BillPicker = ({ label, file, onChange }: { label: string; file?: File; onC
 // ── The form ─────────────────────────────────────────────────────────────────
 
 interface Props {
+    /** This quarter's budget, to warn when a claim goes over it. */
+    budget?: BudgetSummary | null;
     onCancel: () => void;
     onSubmitted: () => void;
 }
 
-export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
+export const AsmExpenseForm = ({ budget = null, onCancel, onSubmitted }: Props) => {
     const { toast } = useToast();
     const today = getISTTodayISO();
     const earliest = shiftDay(today, -BACKDATE_DAYS);
@@ -196,6 +199,12 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
         if (hotelStay) t += amountOf(hotelAmount);
         return t + others.reduce((s, o) => s + amountOf(o.amount), 0);
     }, [type, trips, paidBySelf, onwardAmount, oneWay, returnAmount, hotelStay, hotelAmount, others]);
+
+    // Going over is allowed; the ASM is only told, and HR sees it when deciding.
+    const over = type && total > 0 ? budgetOverspend(budget, type, type === "local" ? date : startDate, total) : null;
+    const poolName = type === "local"
+        ? `${budget?.months.find(m => date.startsWith(m.key))?.label ?? "this month"}'s local budget`
+        : `your ${budget?.quarter.label ?? ""} tour budget`;
 
     const pickStart = (v: string) => {
         setStartDate(v);
@@ -447,7 +456,14 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
 
             {/* Total and submit, kept in reach on a phone */}
             {type && (
-                <div className="fixed md:sticky bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-3 right-3 md:left-0 md:right-0 md:bottom-4 z-30 rounded-[24px] border border-orange-100 bg-white/95 backdrop-blur px-5 py-3 md:px-6 md:py-4 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] flex items-center justify-between gap-4 animate-in slide-in-from-bottom-8 fade-in duration-500">
+                <div className="fixed md:sticky bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-3 right-3 md:left-0 md:right-0 md:bottom-4 z-30 rounded-[24px] border border-orange-100 bg-white/95 backdrop-blur px-5 py-3 md:px-6 md:py-4 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] animate-in slide-in-from-bottom-8 fade-in duration-500">
+                    {!!over && (
+                        <p className="mb-2 flex items-start gap-1.5 text-xs font-bold text-amber-700 animate-in fade-in duration-300">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                            This goes {rupees(over)} over {poolName}. You can still submit; head office will decide.
+                        </p>
+                    )}
+                    <div className="flex items-center justify-between gap-4">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Total claim</p>
                         <p key={total} className="text-2xl font-black text-slate-900 tabular-nums animate-in zoom-in-90 fade-in duration-300">{rupees(total)}</p>
@@ -457,6 +473,7 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
                         {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                         Submit claim
                     </Button>
+                    </div>
                 </div>
             )}
         </div>

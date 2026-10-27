@@ -75,6 +75,10 @@ router.delete('/areas/:id', ...adminAuth, requirePermission('leads', 'write'), A
 router.get('/expenses', ...adminAuth, requirePermission('asm_expenses', 'read'), AsmExpenseController.adminList);
 router.put('/expenses/:id/decision', ...adminAuth, requirePermission('asm_expenses', 'write'), signalAdminAttentionOnSuccess, AsmExpenseController.decide);
 router.put('/expenses/:id/paid', ...adminAuth, requirePermission('asm_expenses', 'write'), AsmExpenseController.markPaid);
+// Quarterly budgets, set by HR on the same screen.
+router.get('/expense-budgets', ...adminAuth, requirePermission('asm_expenses', 'read'), AsmExpenseController.adminBudgets);
+router.put('/expense-budgets/:asmId/:quarter', ...adminAuth, requirePermission('asm_expenses', 'write'), AsmExpenseController.setBudget);
+router.delete('/expense-budgets/:asmId/:quarter', ...adminAuth, requirePermission('asm_expenses', 'write'), AsmExpenseController.removeBudget);
 
 // ── Admin: ASMs ─────────────────────────────────────────────────────────────
 // ASMs are managed from ASM Management (`asms`). The list is also what Lead
