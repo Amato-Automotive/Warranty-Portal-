@@ -73,6 +73,7 @@ router.get('/grievances/:id/remarks', ...asmOnly, GrievanceController.getRemarks
 router.post('/grievances/:id/remarks', ...asmOnly, GrievanceController.addRemarks);
 
 router.get('/expenses', ...asmOnly, AsmExpenseController.listMine);
+router.get('/expenses/budget', ...asmOnly, AsmExpenseController.myBudget);
 // A new claim raises the ASM Management badge for admins.
 router.post('/expenses', ...asmOnly, signalAdminAttentionOnSuccess, billUpload, AsmExpenseController.submit);
 

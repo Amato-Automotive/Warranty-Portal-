@@ -40,6 +40,69 @@ export interface ExpenseClaim {
     asm_phone?: string | null;
     created_at: string;
     items: ExpenseItem[];
+    /** Head office's list only: the pool this claim draws on. Null when no budget is set. */
+    budget?: ClaimBudgetPosition | null;
+}
+
+// ── Quarterly budgets (server: services/asmExpenseBudget.ts) ─────────────────
+
+export interface BudgetPool {
+    allocated: number;
+    used: number;
+    pending: number;
+    left: number;
+    over: number;
+}
+
+export interface BudgetMonth extends BudgetPool {
+    key: string;
+    label: string;
+    state: "past" | "current" | "future";
+    lapsed: number;
+}
+
+export interface BudgetQuarter {
+    key: string;
+    label: string;
+    span: string;
+    start: string;
+    end: string;
+}
+
+export interface BudgetSummary {
+    quarter: BudgetQuarter;
+    set: boolean;
+    total: number;
+    local_monthly: number;
+    local_quarter: number;
+    tour: BudgetPool;
+    months: BudgetMonth[];
+    used: number;
+    pending: number;
+    lapsed: number;
+    remaining: number;
+    over: number;
+}
+
+export interface ClaimBudgetPosition {
+    pool: "local" | "tour";
+    label: string;
+    allocated: number;
+    used_by_others: number;
+    this_claim: number;
+    over: number;
+}
+
+/**
+ * How far a new claim would take its pool over, counting what is already
+ * approved and awaiting approval — 0 if it fits, null if the budget doesn't
+ * cover that date. Over is allowed; the ASM is only told.
+ */
+export function budgetOverspend(budget: BudgetSummary | null, type: "local" | "tour", date: string, amount: number) {
+    if (!budget?.set || date < budget.quarter.start || date > budget.quarter.end) return null;
+    const pool = type === "tour" ? budget.tour : budget.months.find(m => date.startsWith(m.key));
+    if (!pool) return null;
+    return Math.max(0, Math.round((pool.used + pool.pending + amount - pool.allocated) * 100) / 100);
 }
 
 export const EXPENSE_STATUS: Record<string, { label: string; tone: string }> = {

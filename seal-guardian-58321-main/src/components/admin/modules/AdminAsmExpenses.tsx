@@ -10,9 +10,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { ExpenseClaimLines } from "@/components/asm/ExpenseClaimLines";
+import { AdminAsmBudgets } from "./AdminAsmBudgets";
 import { EXPENSE_STATUS, claimDates, rupees, type ExpenseClaim } from "@/lib/asmExpenses";
 import {
-    Banknote, CheckCircle2, CircleDashed, Pencil, FileText, Loader2, MapPin, Plane, RefreshCw, Scissors, XCircle
+    AlertTriangle, Banknote, CheckCircle2, CircleDashed, Pencil, FileText, Loader2, MapPin, Plane, RefreshCw, Receipt, Scissors, Wallet, XCircle
 } from "lucide-react";
 
 /**
@@ -24,6 +25,9 @@ import {
  * be changed until the claim is marked paid, which only an approved or partly
  * approved claim can be. The ASM sees each step on their portal, and on
  * WhatsApp once that template is switched on.
+ *
+ * The Budgets tab sets each ASM's quarterly budget (AdminAsmBudgets), and the
+ * review shows how a claim sits against it. Over budget is allowed — HR decides.
  */
 
 type Filter = "submitted" | "approved" | "partially_approved" | "rejected" | "paid" | "all";
@@ -63,6 +67,7 @@ export const AdminAsmExpenses = () => {
     const [paying, setPaying] = useState(false);
     const [paidOn, setPaidOn] = useState(istToday());
     const [paymentRef, setPaymentRef] = useState("");
+    const [view, setView] = useState<"claims" | "budgets">("claims");
 
     const load = async (silent = false) => {
         if (silent) setRefreshing(true);
@@ -152,6 +157,17 @@ export const AdminAsmExpenses = () => {
 
     return (
         <div className="space-y-5">
+            <div className="inline-flex rounded-xl border border-orange-100 bg-white p-1">
+                {([["claims", "Claims", Receipt], ["budgets", "Budgets", Wallet]] as const).map(([id, label, Icon]) => (
+                    <button key={id} onClick={() => setView(id)}
+                        className={cn("flex items-center gap-1.5 px-4 h-8 rounded-lg text-sm font-bold transition-colors",
+                            view === id ? "bg-orange-500 text-white" : "text-slate-500 hover:text-orange-600")}>
+                        <Icon className="h-4 w-4" /> {label}
+                    </button>
+                ))}
+            </div>
+
+            {view === "budgets" ? <AdminAsmBudgets canEdit={canEdit} /> : <>
             {/* Filter cards double as the counts */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                 {FILTERS.map((f, i) => {
@@ -272,6 +288,23 @@ export const AdminAsmExpenses = () => {
                                     {" · "}filed {new Date(selected.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                                 </DialogDescription>
                             </DialogHeader>
+
+                            {selected.budget && (
+                                <div className={cn("rounded-xl border px-4 py-2.5 text-xs tabular-nums flex flex-wrap items-center gap-x-3 gap-y-1",
+                                    selected.budget.over > 0 ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-100 bg-slate-50 text-slate-600")}>
+                                    <span className="font-black uppercase tracking-wider text-[10px]">{selected.budget.label}</span>
+                                    <span>{rupees(selected.budget.allocated)} budget</span>
+                                    <span>{rupees(selected.budget.used_by_others)} approved on other claims</span>
+                                    <span>this claim {rupees(selected.budget.this_claim)}</span>
+                                    {selected.budget.over > 0 ? (
+                                        <span className="font-bold flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" /> {rupees(selected.budget.over)} over</span>
+                                    ) : (
+                                        <span className="font-bold text-emerald-700">
+                                            {rupees(selected.budget.allocated - selected.budget.used_by_others - selected.budget.this_claim)} left after
+                                        </span>
+                                    )}
+                                </div>
+                            )}
 
                             {mode === "partial" ? (
                                 <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -412,6 +445,7 @@ export const AdminAsmExpenses = () => {
                     )}
                 </DialogContent>
             </Dialog>
+            </>}
         </div>
     );
 };
