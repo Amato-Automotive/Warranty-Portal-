@@ -1,29 +1,22 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { rupees, type BudgetPool, type BudgetSummary } from "@/lib/asmExpenses";
-import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, MapPin, Plane, Wallet } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronLeft, ChevronRight, MapPin, Plane, Wallet } from "lucide-react";
 
 /**
- * An ASM's budget for a quarter: what's left, split into the tour pool and
- * local conveyance by month. The same card on the ASM's Expenses and Home and
- * on HR's Budgets tab, so both read one set of numbers.
+ * An ASM's budget for a quarter: what's left, the tour pool, and local
+ * conveyance by month. The same card on the ASM's Expenses and Home and on
+ * HR's Budgets tab, so both read one set of numbers.
  *
- * Only approved amounts are "used"; claims awaiting approval show as a lighter
- * band. Local is a monthly cap, and what a month leaves unspent lapses.
+ * Local is a fixed allowance: each month's amount comes off on the 1st, so a
+ * month is either deducted or upcoming. Tours are claimed; only approved
+ * amounts are "used", and claims awaiting approval show as a lighter band.
  *
  * Laid out for a phone first: one line per pool with what's left, the months
  * as three small cells, and the explanation folded away.
  */
 
 const pct = (n: number, of: number) => (of > 0 ? Math.min(100, (n / of) * 100) : 0);
-
-/** ₹6.2K, ₹1.5L — for the month cells, where a full amount doesn't fit. */
-const short = (n: number) => {
-    const trim = (v: number) => String(Math.round(v * 10) / 10).replace(/\.0$/, "");
-    if (n >= 100000) return `₹${trim(n / 100000)}L`;
-    if (n >= 1000) return `₹${trim(n / 1000)}K`;
-    return `₹${Math.round(n)}`;
-};
 
 /** Used, then awaiting approval, on one track. */
 const Bar = ({ pool, tone, className }: { pool: BudgetPool; tone: string; className?: string }) => {
@@ -37,12 +30,12 @@ const Bar = ({ pool, tone, className }: { pool: BudgetPool; tone: string; classN
     );
 };
 
-/** One pool: name on the left, what's left on the right, the bar beneath. */
+/** One pool: name on the left, a figure on the right, detail beneath. */
 const PoolRow = ({ icon: Icon, iconTone, name, right, children }: {
-    icon: typeof Plane; iconTone: string; name: string; right: React.ReactNode; children: React.ReactNode;
+    icon: typeof Plane; iconTone: string; name: string; right: React.ReactNode; children?: React.ReactNode;
 }) => (
     <div className="py-3.5 first:pt-0 last:pb-0">
-        <div className="flex items-center gap-2 mb-2">
+        <div className={cn("flex items-center gap-2", children && "mb-2")}>
             <Icon className={cn("h-4 w-4 shrink-0", iconTone)} />
             <span className="text-sm font-bold text-slate-700 truncate">{name}</span>
             <span className="ml-auto shrink-0 text-sm tabular-nums">{right}</span>
@@ -54,7 +47,7 @@ const PoolRow = ({ icon: Icon, iconTone, name, right, children }: {
 interface Props {
     budget: BudgetSummary | null;
     loading?: boolean;
-    /** A smaller card: the headline and one bar per pool. */
+    /** A smaller card: the headline, the tour bar and one line for local. */
     compact?: boolean;
     onPrevious?: () => void;
     onNext?: () => void;
@@ -70,7 +63,6 @@ export const BudgetCard = ({ budget, loading, compact, onPrevious, onNext, onOpe
     if (!budget) return null;
 
     const q = budget.quarter;
-    const current = budget.months.find(m => m.state === "current");
     const ended = budget.months.every(m => m.state === "past");
 
     const wrap = (children: React.ReactNode) => onOpen ? (
@@ -115,7 +107,7 @@ export const BudgetCard = ({ budget, loading, compact, onPrevious, onNext, onOpe
     const headline = (
         <div className="mt-4 flex items-end justify-between gap-3">
             <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{ended ? "Quarter over" : "Left to spend"}</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{ended ? "Quarter over" : "Left this quarter"}</p>
                 <p className="text-3xl font-black text-slate-900 tabular-nums leading-tight">{rupees(budget.remaining)}</p>
             </div>
             <p className="text-xs text-slate-400 tabular-nums pb-1 shrink-0">of {rupees(budget.total)}</p>
@@ -123,10 +115,18 @@ export const BudgetCard = ({ budget, loading, compact, onPrevious, onNext, onOpe
     );
 
     const left = (n: number) => <><span className="font-black text-slate-900">{rupees(n)}</span><span className="text-xs text-slate-400"> left</span></>;
-    const overLine = (n: number) => n > 0 && (
-        <p className="mt-1.5 flex items-center gap-1 text-xs font-bold text-rose-600">
-            <AlertTriangle className="h-3.5 w-3.5" /> {rupees(n)} over budget
-        </p>
+    const perMonth = <span className="text-xs text-slate-400"><span className="font-black text-sm text-slate-900">{rupees(budget.local_monthly)}</span> a month</span>;
+
+    const tourRow = (detail: boolean) => (
+        <PoolRow icon={Plane} iconTone="text-purple-500" name={detail ? "Outstation tours" : "Tours"} right={left(budget.tour.left)}>
+            <Bar pool={budget.tour} tone="bg-purple-500" />
+            {detail && <p className="mt-1.5 text-xs text-slate-400 tabular-nums">{rupees(budget.tour.used)} used of {rupees(budget.tour.allocated)}</p>}
+            {budget.tour.over > 0 && (
+                <p className="mt-1.5 flex items-center gap-1 text-xs font-bold text-rose-600">
+                    <AlertTriangle className="h-3.5 w-3.5" /> {rupees(budget.tour.over)} over budget
+                </p>
+            )}
+        </PoolRow>
     );
 
     if (compact) {
@@ -134,14 +134,8 @@ export const BudgetCard = ({ budget, loading, compact, onPrevious, onNext, onOpe
             {header}
             {headline}
             <div className="mt-4 divide-y divide-slate-100">
-                <PoolRow icon={Plane} iconTone="text-purple-500" name="Tours" right={left(budget.tour.left)}>
-                    <Bar pool={budget.tour} tone="bg-purple-500" />
-                </PoolRow>
-                {current && (
-                    <PoolRow icon={MapPin} iconTone="text-orange-500" name={`Local · ${current.label}`} right={left(current.left)}>
-                        <Bar pool={current} tone="bg-orange-500" />
-                    </PoolRow>
-                )}
+                {tourRow(false)}
+                <PoolRow icon={MapPin} iconTone="text-orange-500" name="Local · fixed" right={perMonth} />
             </div>
         </>);
     }
@@ -151,26 +145,16 @@ export const BudgetCard = ({ budget, loading, compact, onPrevious, onNext, onOpe
         {headline}
 
         <div className="mt-4 divide-y divide-slate-100 md:divide-y-0 md:grid md:grid-cols-2 md:gap-6">
-            <PoolRow icon={Plane} iconTone="text-purple-500" name="Outstation tours" right={left(budget.tour.left)}>
-                <Bar pool={budget.tour} tone="bg-purple-500" />
-                <p className="mt-1.5 text-xs text-slate-400 tabular-nums">{rupees(budget.tour.used)} used of {rupees(budget.tour.allocated)}</p>
-                {overLine(budget.tour.over)}
-            </PoolRow>
+            {tourRow(true)}
 
-            <PoolRow icon={MapPin} iconTone="text-orange-500" name="Local conveyance"
-                right={<span className="text-xs text-slate-400"><span className="font-black text-sm text-slate-900">{rupees(budget.local_monthly)}</span> a month</span>}>
+            <PoolRow icon={MapPin} iconTone="text-orange-500" name="Local conveyance" right={perMonth}>
                 <div className="grid grid-cols-3 gap-2">
                     {budget.months.map(m => (
                         <div key={m.key} className={cn("rounded-xl px-2.5 py-2",
-                            m.state === "current" ? "bg-orange-50 ring-1 ring-orange-200" : "bg-slate-50",
-                            m.state === "future" && "opacity-60")}>
+                            m.state === "current" ? "bg-orange-50 ring-1 ring-orange-200" : "bg-slate-50")}>
                             <p className={cn("text-[11px] font-black", m.state === "current" ? "text-orange-600" : "text-slate-500")}>{m.label}</p>
-                            <Bar pool={m} tone="bg-orange-500" className="h-1.5 my-1.5" />
-                            <p className="text-xs font-bold tabular-nums truncate">
-                                {m.state === "future" ? <span className="text-slate-400">Upcoming</span>
-                                    : m.over > 0 ? <span className="text-rose-600">{short(m.over)} over</span>
-                                    : m.state === "past" ? <span className="text-slate-400">{m.lapsed > 0 ? `${short(m.lapsed)} lapsed` : "Used"}</span>
-                                    : <span className="text-slate-800">{short(m.left)} left</span>}
+                            <p className={cn("mt-1 text-xs font-bold flex items-center gap-1", m.deducted ? "text-slate-700" : "text-slate-400")}>
+                                {m.deducted ? <><Check className="h-3 w-3 text-emerald-600 shrink-0" /> Deducted</> : "Upcoming"}
                             </p>
                         </div>
                     ))}
@@ -180,7 +164,7 @@ export const BudgetCard = ({ budget, loading, compact, onPrevious, onNext, onOpe
 
         {budget.pending > 0 && (
             <p className="mt-3 text-xs text-slate-500 tabular-nums">
-                <span className="font-bold text-slate-700">{rupees(budget.pending)}</span> awaiting approval — counted once approved.
+                <span className="font-bold text-slate-700">{rupees(budget.pending)}</span> in tour claims awaiting approval — counted once approved.
             </p>
         )}
 
@@ -190,9 +174,9 @@ export const BudgetCard = ({ budget, loading, compact, onPrevious, onNext, onOpe
         </button>
         {explain && (
             <p className="mt-1.5 text-xs text-slate-500 leading-relaxed animate-in fade-in duration-200">
-                {rupees(budget.local_monthly)} a month is fixed for local conveyance ({rupees(budget.local_quarter)} for the quarter);
-                the other {rupees(budget.tour.allocated)} is for outstation tours. Local you don't use in a month lapses when the month ends.
-                A claim counts once head office approves it, in the month you travelled.
+                {rupees(budget.local_monthly)} a month is fixed for local conveyance ({rupees(budget.local_quarter)} for the quarter) and
+                comes off on the 1st of each month. The other {rupees(budget.tour.allocated)} is for outstation tours: a tour claim
+                counts once head office approves it. Tour money not used by the end of the quarter lapses.
             </p>
         )}
     </>);

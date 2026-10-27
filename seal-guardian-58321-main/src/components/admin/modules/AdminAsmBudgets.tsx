@@ -130,7 +130,7 @@ export const AdminAsmBudgets = ({ canEdit }: { canEdit: boolean }) => {
                 )}
                 {data && (
                     <p className="ml-auto text-xs text-slate-500 tabular-nums">
-                        {set.length} of {rows.length} ASMs set · {rupees(totals.allocated)} allocated · {rupees(totals.used)} approved
+                        {set.length} of {rows.length} ASMs set · {rupees(totals.allocated)} allocated · {rupees(totals.used)} used
                         {totals.pending > 0 && <> · {rupees(totals.pending)} awaiting</>}
                     </p>
                 )}
@@ -162,11 +162,11 @@ export const AdminAsmBudgets = ({ canEdit }: { canEdit: boolean }) => {
                                             <Figure label="Total" value={rupees(s.total)} />
                                             <Figure label="Local / month" value={rupees(s.local_monthly)} />
                                             <Figure label="Tours" value={rupees(s.tour.allocated)} />
-                                            <Figure label="Approved" value={rupees(s.used)} tone={s.over > 0 ? "text-rose-600" : undefined} />
+                                            <Figure label="Used" value={rupees(s.used)} tone={s.over > 0 ? "text-rose-600" : undefined} />
                                             <Figure label="Left" value={rupees(s.remaining)} tone="text-emerald-700" />
                                         </div>
                                     ) : (
-                                        <span className="text-xs text-slate-400">No budget set{s.used > 0 ? ` · ${rupees(s.used)} approved this quarter` : ""}</span>
+                                        <span className="text-xs text-slate-400">No budget set{s.tour.used > 0 ? ` · ${rupees(s.tour.used)} in tours approved this quarter` : ""}</span>
                                     )}
                                     {canEdit && (
                                         <Button variant={s.set ? "outline" : "default"} size="sm" onClick={() => edit(r)}
@@ -219,8 +219,8 @@ export const AdminAsmBudgets = ({ canEdit }: { canEdit: boolean }) => {
                                     </div>
                                 )}
                                 <p className="text-xs text-slate-500">
-                                    Unused local lapses at the end of each month. Claims are counted once approved, by their travel date.
-                                    {editing.summary.used > 0 && ` ${rupees(editing.summary.used)} is already approved this quarter.`}
+                                    Local is a fixed allowance, deducted on the 1st of each month. Tour claims count once approved, by their start date.
+                                    {editing.summary.tour.used > 0 && ` ${rupees(editing.summary.tour.used)} in tours is already approved this quarter.`}
                                 </p>
                             </div>
                             <div className="flex items-center gap-2 pt-2">

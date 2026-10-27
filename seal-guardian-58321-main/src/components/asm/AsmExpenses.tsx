@@ -98,7 +98,7 @@ export const AsmExpenses = () => {
                     </div>
                     <h3 className="text-lg font-black tracking-tight text-slate-800 uppercase mb-2">No claims yet</h3>
                     <p className="text-sm text-slate-500 max-w-sm mx-auto">
-                        Tap New claim to file local conveyance or an outstation tour. Claims must be filed within 7 days of travel.
+                        Tap New claim to file an outstation tour. Claims must be filed within 7 days of travel.
                     </p>
                 </div>
             ) : (

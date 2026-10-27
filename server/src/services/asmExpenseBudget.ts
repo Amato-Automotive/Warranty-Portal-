@@ -10,16 +10,15 @@
  *
  *   total ₹90,000, local ₹8,000/month → local ₹24,000, tours ₹66,000
  *
- * The rules (owner's decisions, 26 Oct 2026):
- *  - A claim counts once head office approves it, at the approved amount.
- *    Submitted claims are shown apart, as "awaiting approval".
- *  - Local is a cap per month. What a month leaves unspent lapses when the
- *    month ends; it does not roll into the next month or into tours. So the
- *    quarter's remaining budget comes down month by month even if unspent.
- *  - The pools are separate: going over on local does not eat into tours, or
- *    the other way. Going over is allowed — the ASM is warned and HR decides.
- *  - A claim belongs to the month (and quarter) of its travel date — the
- *    start date for a tour — not the day it was filed or approved.
+ * The rules (owner's decisions, 26-27 Oct 2026):
+ *  - Local is a fixed allowance, not claimed: each month's amount is deducted
+ *    in full on the 1st. Months still to come are the only local left. Local
+ *    claims filed before this changed are not counted.
+ *  - Tours are claimed. A claim counts once head office approves it, at the
+ *    approved amount; submitted ones are shown apart as "awaiting approval".
+ *    It belongs to the quarter of its start date, not the day it was filed.
+ *  - Going over the tour pool is allowed — the ASM is warned and HR decides.
+ *    It never eats into local. When the quarter ends, unused tour money lapses.
  *
  * Quarters are the Indian financial year's: Q1 Apr–Jun, Q2 Jul–Sep,
  * Q3 Oct–Dec, Q4 Jan–Mar. FY 2026-27 starts April 2026, so "Q3 26-27" is
@@ -157,12 +156,13 @@ export interface Pool {
     over: number;
 }
 
-export interface MonthPool extends Pool {
+export interface LocalMonth {
     key: string;
     label: string;
     state: 'past' | 'current' | 'future';
-    /** For a past month: what it left unspent, now gone. */
-    lapsed: number;
+    allocated: number;
+    /** Deducted on the 1st: true for this month and those before it. */
+    deducted: boolean;
 }
 
 export interface BudgetSummary {
@@ -173,15 +173,20 @@ export interface BudgetSummary {
     local_monthly: number;
     local_quarter: number;
     tour: Pool;
-    months: MonthPool[];
-    /** Approved across both pools. */
+    months: LocalMonth[];
+    /** Local deducted so far: the months that have started. */
+    local_deducted: number;
+    /** Local still to come: the months that haven't. */
+    local_upcoming: number;
+    /** Deducted local plus approved tours. */
     used: number;
+    /** Tour claims awaiting approval. */
     pending: number;
-    /** Local that past months left unspent, and tours' too once the quarter is over. */
+    /** Tour money left unused when the quarter ended. */
     lapsed: number;
-    /** Still available to spend: tours left + this month's local left + months to come. */
+    /** Still to come: tours left + local for the months not yet started. */
     remaining: number;
-    /** Approved beyond a pool's allocation, both pools together. */
+    /** Approved tours beyond the tour pool. */
     over: number;
 }
 
@@ -211,14 +216,12 @@ export function summariseBudget(
     const thisMonth = today.slice(0, 7);
     const inQuarter = claims.filter(c => c.start_date >= quarter.start && c.start_date <= quarter.end);
 
-    const months: MonthPool[] = quarter.months.map(m => {
-        const own = inQuarter.filter(c => c.type === 'local' && c.start_date.startsWith(m.key));
-        const p = pool(localMonthly,
-            own.reduce((t, c) => t + usedBy(c), 0),
-            own.reduce((t, c) => t + pendingBy(c), 0));
+    const months: LocalMonth[] = quarter.months.map(m => {
         const state = m.key < thisMonth ? 'past' : m.key === thisMonth ? 'current' : 'future';
-        return { ...p, key: m.key, label: m.label, state, lapsed: state === 'past' ? p.left : 0 };
+        return { key: m.key, label: m.label, state, allocated: exact(localMonthly), deducted: state !== 'future' };
     });
+    const localDeducted = exact(months.filter(m => m.deducted).length * localMonthly);
+    const localUpcoming = exact(months.filter(m => !m.deducted).length * localMonthly);
 
     const tours = inQuarter.filter(c => c.type === 'tour');
     const tour = pool(total - localMonthly * 3,
@@ -226,8 +229,6 @@ export function summariseBudget(
         tours.reduce((t, c) => t + pendingBy(c), 0));
 
     const ended = quarter.end < today;
-    const sum = (f: (p: Pool) => number) => exact(f(tour) + months.reduce((t, m) => t + f(m), 0));
-
     return {
         quarter,
         set: !!budget,
@@ -236,18 +237,19 @@ export function summariseBudget(
         local_quarter: exact(localMonthly * 3),
         tour,
         months,
-        used: sum(p => p.used),
-        pending: sum(p => p.pending),
-        // Once the quarter is over, what tours left lapses with it.
-        lapsed: exact(months.reduce((t, m) => t + m.lapsed, 0) + (ended ? tour.left : 0)),
-        remaining: ended ? 0 : exact(tour.left + months.filter(m => m.state !== 'past').reduce((t, m) => t + m.left, 0)),
-        over: sum(p => p.over),
+        local_deducted: localDeducted,
+        local_upcoming: localUpcoming,
+        used: exact(localDeducted + tour.used),
+        pending: tour.pending,
+        lapsed: ended ? tour.left : 0,
+        remaining: ended ? 0 : exact(tour.left + localUpcoming),
+        over: tour.over,
     };
 }
 
 export interface ClaimBudgetPosition {
-    pool: 'local' | 'tour';
-    /** "Oct local" or "Q3 26-27 tours" */
+    pool: 'tour';
+    /** "Q3 26-27 tours" */
     label: string;
     allocated: number;
     /** Approved on the pool's other claims. */
@@ -259,28 +261,25 @@ export interface ClaimBudgetPosition {
 }
 
 /**
- * For HR reviewing a claim: the pool it draws on, what the ASM's other
- * approved claims have used, and whether this one takes it over. Null when no
- * budget is set for that quarter.
+ * For HR reviewing a tour claim: the quarter's tour pool, what the ASM's other
+ * approved tours have used, and whether this one takes it over. Null when no
+ * budget is set for that quarter, and for a local claim — local is a fixed
+ * allowance, so a local claim draws on no pool.
  */
 export function claimBudgetPosition(
     budget: BudgetInput | null,
     claims: BudgetClaim[],
     claim: BudgetClaim & { id: string },
 ): ClaimBudgetPosition | null {
-    if (!budget) return null;
+    if (!budget || claim.type !== 'tour') return null;
     const quarter = quarterOf(claim.start_date);
-    const month = claim.start_date.slice(0, 7);
-    const samePool = (c: BudgetClaim) => claim.type === 'local'
-        ? c.type === 'local' && c.start_date.startsWith(month)
-        : c.type === 'tour' && c.start_date >= quarter.start && c.start_date <= quarter.end;
-    const others = claims.filter(c => c.id !== claim.id && samePool(c)).reduce((t, c) => t + usedBy(c), 0);
-    const allocated = claim.type === 'local' ? budget.local_monthly : budget.total - budget.local_monthly * 3;
+    const inPool = (c: BudgetClaim) => c.type === 'tour' && c.start_date >= quarter.start && c.start_date <= quarter.end;
+    const others = claims.filter(c => c.id !== claim.id && inPool(c)).reduce((t, c) => t + usedBy(c), 0);
+    const allocated = budget.total - budget.local_monthly * 3;
     const mine = claim.status === 'submitted' ? Number(claim.total_amount) : usedBy(claim);
-    const monthLabel = quarter.months.find(m => m.key === month)?.label ?? month;
     return {
-        pool: claim.type,
-        label: claim.type === 'local' ? `${monthLabel} local` : `${quarter.label} tours`,
+        pool: 'tour',
+        label: `${quarter.label} tours`,
         allocated: exact(allocated),
         used_by_others: exact(others),
         this_claim: exact(mine),

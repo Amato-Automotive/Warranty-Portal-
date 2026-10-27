@@ -54,11 +54,13 @@ export interface BudgetPool {
     over: number;
 }
 
-export interface BudgetMonth extends BudgetPool {
+/** Local is a fixed allowance: each month's amount comes off on the 1st. */
+export interface BudgetMonth {
     key: string;
     label: string;
     state: "past" | "current" | "future";
-    lapsed: number;
+    allocated: number;
+    deducted: boolean;
 }
 
 export interface BudgetQuarter {
@@ -77,6 +79,8 @@ export interface BudgetSummary {
     local_quarter: number;
     tour: BudgetPool;
     months: BudgetMonth[];
+    local_deducted: number;
+    local_upcoming: number;
     used: number;
     pending: number;
     lapsed: number;
@@ -85,7 +89,7 @@ export interface BudgetSummary {
 }
 
 export interface ClaimBudgetPosition {
-    pool: "local" | "tour";
+    pool: "tour";
     label: string;
     allocated: number;
     used_by_others: number;
@@ -94,14 +98,13 @@ export interface ClaimBudgetPosition {
 }
 
 /**
- * How far a new claim would take its pool over, counting what is already
- * approved and awaiting approval — 0 if it fits, null if the budget doesn't
- * cover that date. Over is allowed; the ASM is only told.
+ * How far a new tour claim would take the tour pool over, counting what is
+ * already approved and awaiting approval — 0 if it fits, null if the budget
+ * doesn't cover that date. Over is allowed; the ASM is only told.
  */
-export function budgetOverspend(budget: BudgetSummary | null, type: "local" | "tour", date: string, amount: number) {
+export function budgetOverspend(budget: BudgetSummary | null, date: string, amount: number) {
     if (!budget?.set || date < budget.quarter.start || date > budget.quarter.end) return null;
-    const pool = type === "tour" ? budget.tour : budget.months.find(m => date.startsWith(m.key));
-    if (!pool) return null;
+    const pool = budget.tour;
     return Math.max(0, Math.round((pool.used + pool.pending + amount - pool.allocated) * 100) / 100);
 }
 
