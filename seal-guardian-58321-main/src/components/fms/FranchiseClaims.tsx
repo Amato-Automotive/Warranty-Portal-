@@ -8,7 +8,7 @@ import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { decisionText, day, NEEDS_DESCRIPTION, PROBLEMS, type Claim, type ClaimStatus, type ClaimWarranty } from "@/lib/claims";
 import {
-    ChipRow, ClaimStatusPill, ClaimTimeline, ConsentBox, FormStep, EMPTY_VEHICLE, FilePicker, MediaGrid,
+    ChipRow, ClaimStatusPill, ClaimTimeline, ConsentBox, FormStep, VehiclePhoto, EMPTY_VEHICLE, FilePicker, MediaGrid,
     MobileActionBar, ProblemPicker, STEP_ID, StepJump, VehicleFields, claimForm, missingForRequest, vehicleValueOf, type VehicleValue,
 } from "@/components/claims/ClaimParts";
 import { CompareTable, StageDates, StatusHero } from "@/components/claims/ClaimView";
@@ -122,6 +122,7 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
     const [c, setC] = useState(claim);
     const [busy, setBusy] = useState(false);
     const [photos, setPhotos] = useState<File[]>([]);
+    const [vehiclePhoto, setVehiclePhoto] = useState<File[]>([]);
     const [note, setNote] = useState('');
     // The store's corrections, starting from what the customer sent.
     const [vehicle, setVehicle] = useState<VehicleValue>(vehicleOf(claim));
@@ -138,10 +139,10 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
     const step = async (fields: Record<string, unknown>, title: string, files: File[] = []) => {
         setBusy(true);
         try {
-            const fd = await claimForm(fields, { photos: files });
+            const fd = await claimForm(fields, { photos: files, vehicle_photo: vehiclePhoto });
             const r = await api.post(`/claims/${c.id}/action`, fd);
             const n = { ...c, ...r.data.claim };
-            setC(n); onChange(n); setPhotos([]); setNote('');
+            setC(n); onChange(n); setPhotos([]); setVehiclePhoto([]); setNote('');
             toast({ title });
         } catch (e) {
             toast({ variant: "destructive", title: "Not saved", description: getErrorMessage(e, "Try again in a moment.") });
@@ -216,7 +217,8 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
                         {ask?.note && <p className="rounded-xl bg-orange-50 px-4 py-2.5 text-sm text-orange-900"><b>The plant asks:</b> {ask.note}</p>}
                         <div className="space-y-1.5">
                             <p className="text-sm font-semibold">Vehicle (correct it if needed)</p>
-                            <VehicleFields value={vehicle} onChange={setVehicle} airbags={airbags} registered={c.snapshot?.car} />
+                            <VehicleFields value={vehicle} onChange={setVehicle} airbags={airbags} registered={c.snapshot?.car} plant />
+                            {!c.vehicle?.photo && <VehiclePhoto files={vehiclePhoto} onChange={setVehiclePhoto} />}
                         </div>
                         <div className="space-y-1.5">
                             <p className="text-sm font-semibold">Issue (correct it if needed)</p>
@@ -283,6 +285,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
     const [problem, setProblem] = useState('');
     const [description, setDescription] = useState('');
     const [media, setMedia] = useState<File[]>([]);
+    const [vehiclePhoto, setVehiclePhoto] = useState<File[]>([]);
     const [remarks, setRemarks] = useState('');
     const [sending, setSending] = useState(false);
 
@@ -327,7 +330,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
         if (missing) return toast({ variant: "destructive", title: missing });
         setSending(true);
         try {
-            const fd = await claimForm({ warranty_uid: w.uid, problem, description, remarks, ...vehicle }, { media });
+            const fd = await claimForm({ warranty_uid: w.uid, problem, description, remarks, ...vehicle }, { media, vehicle_photo: vehiclePhoto });
             const r = await api.post('/claims/store', fd);
             toast({ title: `Claim ${r.data.claim.claim_no} sent to the plant`, description: 'The customer is told too.' });
             onDone(r.data.claim);
@@ -395,7 +398,8 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
             {w && (
                 <>
                     <FormStep n={2} title="Vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour)))}>
-                        <VehicleFields value={vehicle} onChange={setVehicle} airbags={w.asks_airbags} registered={w.car} />
+                        <VehicleFields value={vehicle} onChange={setVehicle} airbags={w.asks_airbags} registered={w.car} plant />
+                        <VehiclePhoto files={vehiclePhoto} onChange={setVehiclePhoto} />
                     </FormStep>
                     <FormStep n={3} title="Issue" done={!!problem}>
                         <ProblemPicker options={options} value={problem} onChange={setProblem} />

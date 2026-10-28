@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import db from '../config/database.js';
 import { modelList } from '../services/carModels.js';
+import { PLANT_VEHICLES } from '../services/plantVehicles.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { vendorRepository } from '../repositories/vendor.repository.js';
 import { NotificationService } from '../services/notification.service.js';
@@ -365,6 +366,9 @@ export default class ClaimsController {
             if ('error' in fields) return bad(res, fields.error);
             const media = filesOf(req, 'media');
             if (!media.some(isPhoto)) return bad(res, 'Add at least one photo of the problem');
+            const vehiclePhoto = filesOf(req, 'vehicle_photo').find(isPhoto);
+            if (!vehiclePhoto) return bad(res, 'Add a photo of the vehicle');
+            fields.vehicle = { ...fields.vehicle, photo: vehiclePhoto };
             let storeId: string | null = w.vendor_details_id ?? null;
             if (b.store_id) {
                 const [s]: any = await db.execute('SELECT id FROM vendor_details WHERE id = ?', [String(b.store_id)]);
@@ -464,6 +468,8 @@ export default class ClaimsController {
             if ('error' in fields) return bad(res, fields.error);
             const media = filesOf(req, 'media');
             if (!media.some(isPhoto)) return bad(res, 'Add at least one photo of the problem');
+            const vehiclePhoto = filesOf(req, 'vehicle_photo').find(isPhoto);
+            if (vehiclePhoto) fields.vehicle = { ...fields.vehicle, photo: vehiclePhoto };
 
             const c = await createClaim(req, w, { ...fields, storeId: v.id, via: 'store', media });
             const done = applyClaimAction(c, 'verify', { actor: 'vendor' }, { note: b.remarks });
@@ -597,7 +603,7 @@ export default class ClaimsController {
             const u = String(req.query.u ?? '');
             const reg = await registrationFor(c, whoOf(req).actor);
             const allowed = new Set<string>([
-                ...(c.media ?? []), ...(c.verification?.photos ?? []), ...(c.fitted?.photos ?? []), ...(c.change_request?.photos ?? []),
+                ...(c.media ?? []), ...(c.vehicle?.photo ? [c.vehicle.photo] : []), ...(c.verification?.photos ?? []), ...(c.fitted?.photos ?? []), ...(c.change_request?.photos ?? []),
                 ...(reg?.photos ?? []).map((p: any) => p.url),
             ]);
             if (!u || !allowed.has(u)) return bad(res, 'File not found', 404);
@@ -632,6 +638,11 @@ export default class ClaimsController {
             const r = applyClaimAction({ ...c, trail: c.trail ?? [] }, action, who, input);
             if ('error' in r) return bad(res, r.error);
             const next: any = r.claim;
+            const vehiclePhoto = filesOf(req, 'vehicle_photo').find(isPhoto);
+            if (vehiclePhoto && ['verify', 'change', 'resend'].includes(action)) {
+                next.vehicle = { ...(next.vehicle ?? {}), photo: vehiclePhoto };
+                r.changes.push('Vehicle photo added');
+            }
 
             const history: HistoryEntry[] = [...(c.history ?? [])];
             if (action === 'undo') {
@@ -706,6 +717,8 @@ export default class ClaimsController {
             problems: PROBLEMS, reasons: REJECT_REASONS, hold_reasons: HOLD_REASONS, statuses: STATUS_TEXT,
             rights: whoOf(req).rights ?? [], old_part: OLD_PART_ENABLED,
             models: modelList(whoOf(req).actor === 'customer'),
+            // The plant's own vehicle names, for the store and the plant (they hold Maruti names, so never the customer).
+            ...(whoOf(req).actor !== 'customer' && { plant_vehicles: PLANT_VEHICLES }),
         });
     }
 }

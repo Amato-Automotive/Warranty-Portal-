@@ -48,6 +48,8 @@ export const OLD_PART_ENABLED = false;
 export interface Vehicle {
     make: string; model: string; airbags: 'with' | 'sab' | 'without' | null;
     major_colour?: string | null; minor_colour?: string | null;
+    /** A photo of the vehicle: the customer's, needed; the store's, if it adds one. */
+    photo?: string | null;
 }
 
 export interface Verification { remarks: string | null; corrections: string[]; photos: string[]; at: string }
@@ -260,7 +262,8 @@ function correctDetails(c: FlowClaim, input: ClaimInput): { patch: Partial<Claim
         if ('error' in v) return v;
         if (vehicleText(v) !== vehicleText(c.vehicle)) {
             changes.push(`Vehicle: ${vehicleText(c.vehicle)} → ${vehicleText(v)}`);
-            patch.vehicle = v;
+            // A correction keeps the vehicle's photo.
+            patch.vehicle = { ...v, photo: c.vehicle?.photo ?? null };
         }
     }
     if (input.problem !== undefined && input.problem !== c.problem) {

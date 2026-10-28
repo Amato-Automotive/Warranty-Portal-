@@ -17,7 +17,7 @@ export interface ClaimHistory {
     by_role: 'customer' | 'vendor' | 'admin'; by_name?: string | null; undone?: boolean;
 }
 
-export interface Vehicle { make: string; model: string; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null }
+export interface Vehicle { make: string; model: string; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null; photo?: string | null }
 
 export interface Claim {
     id: number;

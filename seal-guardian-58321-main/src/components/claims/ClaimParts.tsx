@@ -123,17 +123,23 @@ export const vehicleValueOf = (v: Vehicle | null | undefined): VehicleValue => (
     vehicle_make: v?.make ?? '', vehicle_model: v?.model ?? '', airbags: v?.airbags ?? '', major_colour: v?.major_colour ?? '', minor_colour: v?.minor_colour ?? '',
 });
 
-/* The make → model list, loaded once a page; a customer gets no Maruti Suzuki models and types it. */
-let modelsOnce: Promise<Record<string, string[]>> | null = null;
-function useCarModels() {
-    const [models, setModels] = useState<Record<string, string[]>>({});
+/*
+ * The vehicle lists, loaded once a page: make → model for everyone (a customer
+ * gets no Maruti Suzuki models and types it), and the plant's own vehicle
+ * names for the store and the plant.
+ */
+type Lists = { models: Record<string, string[]>; plant: Record<string, string[]> };
+let listsOnce: Promise<Lists> | null = null;
+function useVehicleLists() {
+    const [lists, setLists] = useState<Lists>({ models: {}, plant: {} });
     useEffect(() => {
-        modelsOnce ??= api.get('/claims/meta').then(r => r.data.models ?? {}).catch(() => { modelsOnce = null; return {}; });
+        listsOnce ??= api.get('/claims/meta').then(r => ({ models: r.data.models ?? {}, plant: r.data.plant_vehicles ?? {} }))
+            .catch(() => { listsOnce = null; return { models: {}, plant: {} }; });
         let alive = true;
-        modelsOnce.then(m => alive && setModels(m));
+        listsOnce.then(l => alive && setLists(l));
         return () => { alive = false; };
     }, []);
-    return models;
+    return lists;
 }
 
 const OTHER = '__other';
@@ -162,18 +168,23 @@ const PickOrType = ({ label, options, value, onChange, placeholder }: {
     );
 };
 
-/** Make and model from the list, and for seat covers the airbags and the cover's colours. */
-export const VehicleFields = ({ value, onChange, airbags, registered }: {
-    value: VehicleValue; onChange: (v: VehicleValue) => void; airbags: boolean; registered?: string | null;
+/**
+ * Make and model from the list, and for seat covers the airbags and the
+ * cover's colours. The store and the plant pick from the plant's own vehicle
+ * names (plant), the customer from the plain make → model list.
+ */
+export const VehicleFields = ({ value, onChange, airbags, registered, plant = false }: {
+    value: VehicleValue; onChange: (v: VehicleValue) => void; airbags: boolean; registered?: string | null; plant?: boolean;
 }) => {
-    const models = useCarModels();
+    const lists = useVehicleLists();
+    const models = plant && Object.keys(lists.plant).length ? lists.plant : lists.models;
     const makes = Object.keys(models);
     return (
         <div className="space-y-2">
             <div className="grid grid-cols-2 gap-2">
                 <PickOrType label="Make" options={makes} value={value.vehicle_make} placeholder="Make"
                     onChange={v => onChange({ ...value, vehicle_make: v, vehicle_model: v === value.vehicle_make ? value.vehicle_model : '' })} />
-                <PickOrType key={value.vehicle_make} label="Model" options={models[value.vehicle_make] ?? []} value={value.vehicle_model} placeholder="Model"
+                <PickOrType key={value.vehicle_make} label={plant ? 'Vehicle' : 'Model'} options={models[value.vehicle_make] ?? []} value={value.vehicle_model} placeholder={plant ? 'Vehicle' : 'Model'}
                     onChange={v => onChange({ ...value, vehicle_model: v })} />
             </div>
             {airbags && (
@@ -190,6 +201,14 @@ export const VehicleFields = ({ value, onChange, airbags, registered }: {
         </div>
     );
 };
+
+/** A photo of the vehicle, with what it should show. */
+export const VehiclePhoto = ({ files, onChange, required }: { files: File[]; onChange: (f: File[]) => void; required?: boolean }) => (
+    <div className="space-y-1.5">
+        <p className="text-sm font-semibold">Photo of the vehicle{required ? ' *' : ' (optional)'}</p>
+        <FilePicker files={files} onChange={onChange} max={1} label="Add photo" hint="The whole vehicle from the front, with the number plate showing." />
+    </div>
+);
 
 /** What a new request is missing, in the words a toast shows; null when complete. */
 export function missingForRequest(f: { problem: string; description: string; vehicle: VehicleValue; airbags: boolean; photos: number }): string | null {

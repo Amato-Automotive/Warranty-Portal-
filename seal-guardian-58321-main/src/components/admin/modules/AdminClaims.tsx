@@ -836,7 +836,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                             <details className="rounded-2xl border border-gray-200 p-4">
                                 <summary className="cursor-pointer text-sm font-bold text-gray-900">Edit details (with a reason)</summary>
                                 <div className="mt-3 space-y-3">
-                                    <VehicleFields value={vehicle} onChange={setVehicle} airbags={c.snapshot?.product_type === 'seat-cover'} />
+                                    <VehicleFields value={vehicle} onChange={setVehicle} airbags={c.snapshot?.product_type === 'seat-cover'} plant />
                                     <ProblemPicker options={Object.keys(PROBLEMS)} value={f.e_problem} onChange={set('e_problem')} />
                                     <Textarea value={f.e_description} onChange={e => set('e_description')(e.target.value)} rows={2} placeholder="Description" aria-label="Description" />
                                     {d && !has('redecide') && (

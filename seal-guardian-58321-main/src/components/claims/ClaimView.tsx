@@ -182,8 +182,11 @@ export const CompareTable = ({ c, who }: { c: Claim; who: Who }) => {
                     {inside && r?.photos.length ? <div className="mt-2"><DownloadAll items={r.photos.map(p => ({ ...p, claimId: c.id }))} /></div> : null}
                 </div>
                 <div className="p-2 sm:p-3 min-w-0 border-l border-gray-200 sm:border-l-0">
-                    {c.media?.length ? <MediaGrid urls={c.media} claimId={c.id} className="grid-cols-2 sm:grid-cols-3" /> : dash}
-                    {inside && c.media?.length ? <div className="mt-2"><DownloadAll items={mediaItems(c.media, c.id)} /></div> : null}
+                    {c.vehicle?.photo && <LabeledPhotos photos={[{ label: 'Vehicle', url: c.vehicle.photo }]} claimId={c.id} className="mb-2 grid-cols-2 sm:grid-cols-3" />}
+                    {c.media?.length ? <MediaGrid urls={c.media} claimId={c.id} className="grid-cols-2 sm:grid-cols-3" /> : !c.vehicle?.photo && dash}
+                    {inside && (c.media?.length || c.vehicle?.photo) ? (
+                        <div className="mt-2"><DownloadAll items={[...(c.vehicle?.photo ? [{ url: c.vehicle.photo, label: 'Vehicle', claimId: c.id }] : []), ...mediaItems(c.media ?? [], c.id)]} /></div>
+                    ) : null}
                 </div>
             </div>
             {rows.map(x => (

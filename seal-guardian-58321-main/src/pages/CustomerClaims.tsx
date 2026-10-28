@@ -10,7 +10,7 @@ import { decisionText, day, NEEDS_DESCRIPTION, type Claim, type ClaimWarranty } 
 import { CompareTable, StageDates, StatusHero } from "@/components/claims/ClaimView";
 import { ChangeRequestBox, ClaimChange } from "@/components/claims/ClaimChange";
 import {
-    ClaimStatusPill, ClaimTimeline, ConsentBox, EMPTY_VEHICLE, FilePicker, FormStep, MobileActionBar, ProblemPicker,
+    ClaimStatusPill, ClaimTimeline, ConsentBox, EMPTY_VEHICLE, FilePicker, FormStep, VehiclePhoto, MobileActionBar, ProblemPicker,
     StepJump, VehicleFields, claimForm, missingForRequest, type VehicleValue,
 } from "@/components/claims/ClaimParts";
 
@@ -98,6 +98,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
     const [vehicle, setVehicle] = useState<VehicleValue>(EMPTY_VEHICLE);
     const [description, setDescription] = useState('');
     const [photos, setPhotos] = useState<File[]>([]);
+    const [vehiclePhoto, setVehiclePhoto] = useState<File[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
     const [storeId, setStoreId] = useState('');
     const [changing, setChanging] = useState(false);
@@ -118,10 +119,11 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
         if (!w) return toast({ variant: "destructive", title: "Choose the product" });
         const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: photos.length });
         if (missing) return toast({ variant: "destructive", title: missing });
+        if (!vehiclePhoto.length) return toast({ variant: "destructive", title: "Add a photo of the vehicle" });
         if (!storeId) return toast({ variant: "destructive", title: "Choose the store to check it" });
         setSending(true);
         try {
-            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId, ...vehicle }, { media: photos });
+            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId, ...vehicle }, { media: photos, vehicle_photo: vehiclePhoto });
             const r = await api.post('/claims', fd);
             toast({ title: `Claim ${r.data.claim.claim_no} requested`, description: 'The store will check it and call you.' });
             onDone(r.data.claim);
@@ -184,8 +186,9 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
                             placeholder={NEEDS_DESCRIPTION.includes(problem) ? 'Tell us more (needed)' : 'Tell us more (optional)'} aria-label="Tell us more" />
                     </FormStep>
 
-                    <FormStep n={4} title="Photos" note="1 to 5 photos" done={photos.length > 0}>
+                    <FormStep n={4} title="Photos" note="1 to 5 photos of the problem, and one of the vehicle" done={photos.length > 0 && vehiclePhoto.length > 0}>
                         <FilePicker files={photos} onChange={setPhotos} max={5} hint="A close-up of the problem and one of the whole seat or part." />
+                        <VehiclePhoto files={vehiclePhoto} onChange={setVehiclePhoto} required />
                     </FormStep>
 
                     <FormStep n={5} title="Store to check it" done={!!storeId}>

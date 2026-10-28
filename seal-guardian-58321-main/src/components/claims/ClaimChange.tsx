@@ -62,7 +62,7 @@ export const ClaimChange = ({ c, who, onSaved }: { c: Claim; who: Who; onSaved: 
             <p className="text-base font-extrabold text-gray-900">{m.title}</p>
             <div className="space-y-1.5">
                 <p className="text-sm font-semibold">Vehicle</p>
-                <VehicleFields value={vehicle} onChange={setVehicle} airbags={airbags} registered={who === 'store' ? c.snapshot?.car : null} />
+                <VehicleFields value={vehicle} onChange={setVehicle} airbags={airbags} registered={who === 'store' ? c.snapshot?.car : null} plant={who === 'store'} />
             </div>
             <div className="space-y-1.5">
                 <p className="text-sm font-semibold">Issue</p>
