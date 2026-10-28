@@ -3,6 +3,7 @@ import { io, Socket } from "socket.io-client";
 import { useAuth } from "./AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import api, { API_URL } from "@/lib/api";
+import { TRAINING } from "@/training/flag";
 
 export interface Notification {
     id: number;
@@ -108,6 +109,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
             // Skip socket connection for Vercel/serverless backends (they don't support Socket.io)
             const isVercelBackend = baseUrl.includes('vercel.app') || apiUrl.startsWith('/');
+
+            // A training tab has no live notifications (and must not reach the API).
+            if (TRAINING) return;
 
             if (isVercelBackend) {
                 console.log("⚠️ Socket.io disabled for Vercel backend - using HTTP polling for notifications");
