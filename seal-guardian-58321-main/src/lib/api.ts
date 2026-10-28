@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { TRAINING, trainingAdapter, guardNetwork } from '@/training/flag';
 
 // ---------------------------------------------------------------------------
 // API Base URL
@@ -28,6 +29,12 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
   withCredentials: true,
 });
+
+// Training tab: every call is answered in the browser, nothing reaches the API.
+if (TRAINING) {
+  api.defaults.adapter = trainingAdapter;
+  guardNetwork(API_URL);
+}
 
 // ---------------------------------------------------------------------------
 // Request — attach token from localStorage

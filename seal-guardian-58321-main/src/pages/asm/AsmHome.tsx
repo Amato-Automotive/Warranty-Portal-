@@ -17,7 +17,7 @@ import { rupees, type BudgetSummary } from "@/lib/asmExpenses";
 import { BudgetCard } from "@/components/asm/BudgetCard";
 import {
     Loader2, LogOut, Home, Receipt, User, ChevronLeft, ChevronRight, BriefcaseBusiness,
-    Inbox, MapPinned, CalendarDays, ArrowUpRight, Store
+    Inbox, MapPinned, CalendarDays, ArrowUpRight, Store, GraduationCap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -28,7 +28,8 @@ import type { LucideIcon } from "lucide-react";
 
 type AsmModule = "home" | "leads" | "stores" | "areas" | "expenses" | "profile";
 
-const MENU: { label: string; items: { id: AsmModule; label: string; icon: LucideIcon; comingSoon?: boolean }[] }[] = [
+/* "training" is not a module: it opens the training store in its own tab. */
+const MENU: { label: string; items: { id: AsmModule | "training"; label: string; icon: LucideIcon; comingSoon?: boolean }[] }[] = [
     { label: "Overview", items: [{ id: "home", label: "Home", icon: Home }] },
     {
         label: "Sales",
@@ -39,6 +40,7 @@ const MENU: { label: string; items: { id: AsmModule; label: string; icon: Lucide
         ],
     },
     { label: "Operations", items: [{ id: "expenses", label: "Expenses", icon: Receipt }] },
+    { label: "Learn", items: [{ id: "training", label: "Training Store", icon: GraduationCap }] },
 ];
 
 const TITLES: Record<AsmModule, string> = {
@@ -145,7 +147,7 @@ const AsmHome = () => {
                         icon={item.icon}
                         label={item.label}
                         active={active === item.id}
-                        onClick={() => go(item.id)}
+                        onClick={() => item.id === "training" ? window.open("/training", "_blank") : go(item.id)}
                         isCollapsed={isCollapsed}
                         comingSoon={item.comingSoon}
                         badge={item.id === "leads" && summary?.leads.today ? String(summary.leads.today) : undefined}
