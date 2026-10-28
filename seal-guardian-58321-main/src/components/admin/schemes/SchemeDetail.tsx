@@ -413,7 +413,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                 </div>
             </div>
 
-            {byTargets ? <TargetsTab scheme={s} refreshKey={reloadKey} /> : <>
+            {byTargets ? <TargetsTab scheme={s} refreshKey={reloadKey} onEditDetails={() => onEdit(s)} onChanged={() => { load(); onChanged(); }} /> : <>
             <div className="flex gap-1 overflow-x-auto border-b border-slate-200">
                 {([
                     ["overview", "Overview"],

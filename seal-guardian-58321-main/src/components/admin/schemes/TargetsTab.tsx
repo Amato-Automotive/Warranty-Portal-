@@ -1,608 +1,521 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Combobox } from "@/components/ui/combobox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertTriangle, Check, Download, FileSpreadsheet, History, Loader2, Pencil, Plus, Search, Trash2, Undo2 } from "lucide-react";
+import { Check, Download, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-    formatMonth, growthTarget, stepBenefit,
-    type Period, type Scheme, type SchemeSettings, type TargetStep, type TargetStore, type WarrantyStats,
+    BASIS_LABEL, averageOn, formatMonth, growthTarget,
+    type AverageBasis, type Averages, type Period, type Scheme, type SchemeSettings, type TargetFigures, type TargetStore,
 } from "@/lib/schemes";
-import { StepsEditor } from "./TargetSettingsEditor";
 
 /**
- * A scheme run by targets, for the admin. Counted from warranties (the usual
- * case): each franchise's approved warranties per period are counted for
- * you; you see its monthly history and average, give it a growth % (which
- * makes its target) and its reward. Typed figures: you enter targets and
- * achievement yourself. Either way the grid saves together, changing a
- * figure already set needs a reason, and every change is kept.
+ * A target scheme ("More You Sell, Less It Costs") for the admin, as plain
+ * steps: (1) details, in the scheme form; (2) choose the franchises, each with
+ * its warranty average; (3) give each a growth % — the target works itself
+ * out — and a reward, then start it; and the results while it runs: who has
+ * reached, who is on track, who is behind, and which rewards are to pay.
  */
 
-interface Data {
-    periods: Period[]; stores: TargetStore[]; settings: SchemeSettings; current: string | null;
-    franchises: { id: string; code: string | null; name: string; city: string | null; state: string | null }[];
+interface Franchise {
+    id: string; code: string | null; name: string; city: string | null; state: string | null;
+    averages: Averages | null; last_month: number | null; best_month: number | null;
 }
-type Cell = { target?: string; achieved?: string };
+interface Data { periods: Period[]; stores: TargetStore[]; settings: SchemeSettings; current: string | null; franchises: Franchise[] }
 type Terms = { growth_pct?: string; reward?: string };
-const ALL = "__all";
-const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "" : Number(n).toLocaleString("en-IN"));
-const rupees = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
-const when = (d: string) => new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+type View = "pick" | "targets" | "results";
+type Status = "reached" | "on_track" | "behind" | "missed" | "upcoming" | "no_target";
 
-export function TargetsTab({ scheme, refreshKey }: { scheme: Scheme; refreshKey: number }) {
+const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "—" : Number(n).toLocaleString("en-IN"));
+const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+const dayDiff = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+
+/** Where a franchise stands in a period: reached, on track (keeping the period's pace), behind, missed, or not started. */
+function statusOf(f: TargetFigures | undefined, p: Period | undefined, today = istToday()): Status {
+    if (!f?.target) return "no_target";
+    if ((f.achieved ?? 0) >= f.target) return "reached";
+    if (p?.from && today < p.from) return "upcoming";
+    if (p?.to && today > p.to) return "missed";
+    if (!p?.from || !p?.to) return "on_track";
+    const total = dayDiff(p.from, p.to) + 1;
+    const gone = Math.min(dayDiff(p.from, today) + 1, total);
+    return (f.achieved ?? 0) >= (f.target * gone) / total ? "on_track" : "behind";
+}
+const STATUS: Record<Status, { label: string; tone: string; bar: string }> = {
+    reached: { label: "Reached", tone: "bg-emerald-100 text-emerald-800", bar: "bg-emerald-600" },
+    on_track: { label: "On track", tone: "bg-blue-100 text-blue-800", bar: "bg-blue-600" },
+    behind: { label: "Behind", tone: "bg-amber-100 text-amber-900", bar: "bg-amber-500" },
+    missed: { label: "Missed", tone: "bg-rose-100 text-rose-800", bar: "bg-rose-500" },
+    upcoming: { label: "Not started", tone: "bg-slate-100 text-slate-700", bar: "bg-slate-400" },
+    no_target: { label: "No target", tone: "bg-slate-100 text-slate-500", bar: "bg-slate-300" },
+};
+
+/** The steps of a target scheme, done ones ticked. */
+export function Stepper({ at, onGo, canGo = [] }: { at: 1 | 2 | 3 | 4; onGo?: (n: 1 | 2 | 3 | 4) => void; canGo?: number[] }) {
+    const steps = ["Details", "Franchises", "Targets & rewards", "Results"] as const;
+    return (
+        <ol className="flex items-center gap-2 overflow-x-auto no-scrollbar text-sm">
+            {steps.map((label, i) => {
+                const n = (i + 1) as 1 | 2 | 3 | 4;
+                const done = n < at, now = n === at, go = onGo && canGo.includes(n) && !now;
+                return (
+                    <li key={label} className="flex shrink-0 items-center gap-2">
+                        {i > 0 && <span className={cn("h-0.5 w-6 sm:w-10", n <= at ? "bg-orange-600" : "bg-slate-300")} aria-hidden />}
+                        <button type="button" disabled={!go} onClick={() => go && onGo!(n)}
+                            className={cn("rounded-full px-3.5 py-2 font-bold whitespace-nowrap",
+                                now ? "bg-orange-600 text-white" : done ? "bg-emerald-100 text-emerald-800" : "border border-slate-300 bg-white text-slate-600",
+                                go && "hover:ring-2 hover:ring-orange-300")}>
+                            {done ? "✓ " : `${n} `}{label}
+                        </button>
+                    </li>
+                );
+            })}
+        </ol>
+    );
+}
+
+/** Which average to look at: overall, the last 3 or 6 months, or dates of one's own. */
+function BasisPicker({ basis, onChange }: { basis: AverageBasis; onChange: (b: AverageBasis) => void }) {
+    const [range, setRange] = useState({ from: basis.from ?? "", to: basis.to ?? "" });
+    return (
+        <div className="flex flex-wrap items-end gap-2">
+            <label className="space-y-1"><span className="block text-xs font-semibold text-slate-600">Average of</span>
+                <select value={basis.mode} onChange={e => { const m = e.target.value as AverageBasis["mode"]; onChange(m === "custom" ? { mode: m, from: range.from, to: range.to } : { mode: m }); }}
+                    className="h-11 rounded-xl border-2 border-orange-500 bg-orange-50 px-3 text-sm font-bold text-slate-900" aria-label="Average of">
+                    <option value="m3">Last 3 months</option><option value="m6">Last 6 months</option><option value="overall">Since it joined</option><option value="custom">Dates I choose…</option>
+                </select>
+            </label>
+            {basis.mode === "custom" && <>
+                <label className="space-y-1"><span className="block text-xs text-slate-500">From</span><Input type="date" value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} className="h-11" /></label>
+                <label className="space-y-1"><span className="block text-xs text-slate-500">To</span><Input type="date" value={range.to} min={range.from || undefined} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} className="h-11" /></label>
+                <Button variant="outline" className="h-11" disabled={!range.from || !range.to || range.to < range.from} onClick={() => onChange({ mode: "custom", ...range })}>Show</Button>
+            </>}
+        </div>
+    );
+}
+
+export function TargetsTab({ scheme, refreshKey, onEditDetails, onChanged }: {
+    scheme: Scheme; refreshKey: number; onEditDetails?: () => void; onChanged?: () => void;
+}) {
     const { toast } = useToast();
     const [data, setData] = useState<Data | null>(null);
-    const [period, setPeriod] = useState<string>("");
-    const [q, setQ] = useState("");
-    const [edits, setEdits] = useState<Record<string, Cell>>({});
-    const [terms, setTerms] = useState<Record<string, Terms>>({});
-    const [bulk, setBulk] = useState({ growth: "", reward: "" });
-    const [reason, setReason] = useState("");
-    const [saving, setSaving] = useState(false);
-    const [editing, setEditing] = useState<TargetStore | "new" | null>(null);
+    const [view, setView] = useState<View | null>(null);
+    const [basis, setBasis] = useState<AverageBasis>({ mode: "m3" });
+    const [months, setMonths] = useState<TargetStore | null>(null);
     const [removing, setRemoving] = useState<TargetStore | null>(null);
-    const [history, setHistory] = useState<TargetStore | null>(null);
-    const [importOpen, setImportOpen] = useState(false);
+    const chosen = useRef(false);
 
-    const load = useCallback(() => api.get(`/schemes/admin/${scheme.id}/targets`).then(r => {
+    const load = useCallback(() => api.get(`/schemes/admin/${scheme.id}/targets`, {
+        params: basis.mode === "custom" && basis.from && basis.to ? { avg_from: basis.from, avg_to: basis.to } : undefined,
+    }).then(r => {
         setData(r.data);
-        setPeriod(p => p || r.data.current || r.data.periods[0]?.key || "");
-    }).catch(e => toast({ title: "Could not load the targets", description: getErrorMessage(e, ""), variant: "destructive" })), [scheme.id]);
+        /* Open where the admin left off: no franchises yet → choose them; a draft → targets; running → results. */
+        if (!chosen.current) {
+            chosen.current = true;
+            setView(!r.data.stores.length ? "pick" : scheme.status === "draft" ? "targets" : "results");
+        }
+    }).catch(e => toast({ title: "Could not load", description: getErrorMessage(e, ""), variant: "destructive" })), [scheme.id, scheme.status, basis]);
     useEffect(() => { load(); }, [load, refreshKey]);
 
-    const settings = data?.settings ?? scheme.settings;
-    const byWarranty = settings.source === "warranties";
-    const unit = settings.unit || "sets";
-    const many = (data?.periods.length ?? 0) > 1;
-    const whole = period === ALL;
-    const periodMonths = data?.periods.find(p => p.key === period)?.months.length ?? 1;
+    if (!data || !view) return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>;
+    const has = data.stores.length > 0;
+    const at = view === "pick" ? 2 : view === "targets" ? 3 : 4;
+    const go = (n: 1 | 2 | 3 | 4) => (n === 1 ? onEditDetails?.() : setView(n === 2 ? "pick" : n === 3 ? "targets" : "results"));
 
-    const shown = useMemo(() => {
+    return (
+        <div className="space-y-5">
+            <Stepper at={at} onGo={go} canGo={[1, 2, ...(has ? [3] : []), ...(has && scheme.status !== "draft" ? [4] : [])]} />
+            {view === "pick" && <PickView scheme={scheme} data={data} basis={basis} setBasis={setBasis} onBack={() => onEditDetails?.()}
+                onDone={async () => { await load(); setView("targets"); }} />}
+            {view === "targets" && <TargetsView scheme={scheme} data={data} basis={basis} setBasis={setBasis} onMonths={setMonths} onRemove={setRemoving}
+                onBack={() => setView("pick")} onSaved={async started => { await load(); onChanged?.(); if (started) setView("results"); }} />}
+            {view === "results" && <ResultsView scheme={scheme} data={data} onMonths={setMonths} onReload={load}
+                onEdit={() => setView("targets")} onAdd={() => setView("pick")} />}
+            <MonthsDialog store={months} settings={data.settings} basis={basis} onClose={() => setMonths(null)} />
+            <RemoveDialog scheme={scheme} store={removing} onClose={() => setRemoving(null)} onDone={() => { setRemoving(null); load(); }} />
+        </div>
+    );
+}
+
+/* ─── Step 2: choose the franchises ───────────────────────────────────────── */
+
+function PickView({ scheme, data, basis, setBasis, onBack, onDone }: {
+    scheme: Scheme; data: Data; basis: AverageBasis; setBasis: (b: AverageBasis) => void; onBack: () => void; onDone: () => Promise<void>;
+}) {
+    const { toast } = useToast();
+    const [q, setQ] = useState("");
+    const [state, setState] = useState("");
+    const [picked, setPicked] = useState<Set<string>>(new Set());
+    const [busy, setBusy] = useState(false);
+    const states = useMemo(() => [...new Set(data.franchises.map(f => (f.state ?? "").trim()).filter(Boolean))].sort(), [data.franchises]);
+    const list = useMemo(() => {
         const n = q.trim().toLowerCase();
-        return (data?.stores ?? []).filter(s => !n || [s.store_name, s.city, s.state].some(v => String(v ?? "").toLowerCase().includes(n)));
-    }, [data, q]);
+        return data.franchises
+            .filter(f => (!state || (f.state ?? "").trim() === state) && (!n || [f.name, f.city, f.code].some(v => String(v ?? "").toLowerCase().includes(n))))
+            .sort((a, b) => averageOn(b.averages, basis) - averageOn(a.averages, basis) || a.name.localeCompare(b.name));
+    }, [data.franchises, q, state, basis]);
+    const shown = list.slice(0, 200);
+    const toggle = (id: string) => setPicked(p => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
-    /* Each franchise's figures for the chosen period, or its totals over the whole scheme. */
-    const rowOf = (s: TargetStore) => {
-        if (!whole) {
-            const f = s.figures[period];
-            return { target: f?.target ?? null, achieved: f?.achieved ?? null, pending: f?.pending ?? null, result: f?.result ?? null, paid: Boolean(f?.paid_at), reached: 0, earned: 0 };
-        }
-        const fs = Object.values(s.figures);
-        const sum = (k: "target" | "achieved" | "pending") => fs.some(f => f[k] !== null) ? fs.reduce((n, f) => n + (f[k] ?? 0), 0) : null;
-        return {
-            target: sum("target"), achieved: sum("achieved"), pending: sum("pending"), result: null, paid: false,
-            reached: fs.filter(f => f.result.step).length, earned: fs.reduce((n, f) => n + (f.result.benefit_rupees ?? 0), 0),
-        };
-    };
-
-    const totals = useMemo(() => {
-        let target = 0, achieved = 0, benefit = 0, reached = 0;
-        for (const s of data?.stores ?? []) {
-            for (const [k, f] of Object.entries(s.figures)) {
-                if (!whole && k !== period) continue;
-                target += f.target ?? 0; achieved += f.achieved ?? 0;
-                benefit += f.result.benefit_rupees ?? 0;
-                if (f.result.benefit) reached++;
-            }
-        }
-        return { target, achieved, benefit, reached };
-    }, [data, period, whole]);
-
-    /* ─── Edits ─── */
-    const key = (s: TargetStore) => `${s.store_id}|${period}`;
-    const cellValue = (s: TargetStore, field: "target" | "achieved") => {
-        const e = edits[key(s)]?.[field];
-        return e !== undefined ? e : String(s.figures[period]?.[field] ?? "");
-    };
-    const setCell = (s: TargetStore, field: "target" | "achieved", v: string) => {
-        const saved = s.figures[period]?.[field];
-        setEdits(prev => {
-            const next = { ...prev, [key(s)]: { ...prev[key(s)], [field]: v } };
-            if ((v === "" && (saved === null || saved === undefined)) || (v !== "" && Number(v) === saved)) delete next[key(s)]![field];
-            if (!Object.keys(next[key(s)]!).length) delete next[key(s)];
-            return next;
-        });
-    };
-    const termValue = (s: TargetStore, field: "growth_pct" | "reward") => {
-        const e = terms[s.store_id]?.[field];
-        return e !== undefined ? e : String(s[field] ?? "");
-    };
-    const setTerm = (s: TargetStore, field: "growth_pct" | "reward", v: string) => {
-        const saved = String(s[field] ?? "");
-        setTerms(prev => {
-            const next = { ...prev, [s.store_id]: { ...prev[s.store_id], [field]: v } };
-            if (v.trim() === saved) delete next[s.store_id]![field];
-            if (!Object.keys(next[s.store_id]!).length) delete next[s.store_id];
-            return next;
-        });
-    };
-    const applyBulk = (field: "growth_pct" | "reward", v: string) => { for (const s of shown) setTerm(s, field, v); };
-
-    const termChanges = Object.entries(terms).map(([store_id, t]) => ({ store_id, ...t }));
-    const regrown = new Set(termChanges.filter(t => t.growth_pct !== undefined).map(t => t.store_id));
-    /* A store whose growth changed gets its targets from the growth, not from typed cells. */
-    const changes = Object.entries(edits).map(([k, c]) => {
-        const [store_id, p] = k.split("|");
-        return {
-            store_id, period: p,
-            ...(c.target !== undefined ? { target: c.target === "" ? null : Number(c.target) } : {}),
-            ...(c.achieved !== undefined ? { achieved: c.achieved === "" ? null : Number(c.achieved) } : {}),
-        };
-    }).filter(c => !regrown.has(c.store_id));
-    const count = new Set([...changes.map(c => c.store_id), ...termChanges.map(t => t.store_id)]).size;
-    /* A reason is needed when a figure already set is changed — a new growth changes the targets set from the old one. */
-    const needsReason = changes.some(c => {
-        const f = data?.stores.find(x => x.store_id === c.store_id)?.figures[c.period];
-        return ("target" in c && f?.target != null) || ("achieved" in c && f?.achieved != null);
-    }) || [...regrown].some(id => Object.values(data?.stores.find(x => x.store_id === id)?.figures ?? {}).some(f => f.target != null));
-
-    const save = async () => {
-        if (termChanges.some(t => t.growth_pct !== undefined && t.growth_pct !== "" && !Number.isFinite(Number(t.growth_pct)))) {
-            return toast({ title: "Growth must be a number", variant: "destructive" });
-        }
-        setSaving(true);
+    const next = async () => {
+        if (!picked.size) { if (data.stores.length) return onDone(); return toast({ title: "Tick at least one franchise", variant: "destructive" }); }
+        setBusy(true);
         try {
-            if (termChanges.length) await api.put(`/schemes/admin/${scheme.id}/targets/terms`, { stores: termChanges, reason: reason.trim() || undefined });
-            if (changes.length) await api.put(`/schemes/admin/${scheme.id}/targets/figures`, { changes, reason: reason.trim() || undefined });
-            toast({ title: `Saved ${count} ${count === 1 ? "franchise" : "franchises"}` });
-            setEdits({}); setTerms({}); setReason("");
-            await load();
+            for (const id of picked) await api.post(`/schemes/admin/${scheme.id}/targets/stores`, { store_id: id });
+            toast({ title: `${picked.size} ${picked.size === 1 ? "franchise" : "franchises"} added` });
+            setPicked(new Set());
+            await onDone();
+        } catch (e) {
+            toast({ title: "Not all were added", description: getErrorMessage(e, "Try again"), variant: "destructive" });
+        } finally { setBusy(false); }
+    };
+
+    return (
+        <div className="space-y-4">
+            <div>
+                <h2 className="text-2xl font-extrabold text-slate-900">Which franchises are in it?</h2>
+                <p className="mt-1 text-sm text-slate-600">Tick the stores. The number next to each is how many warranties it does in a month, so you can decide.
+                    {data.stores.length > 0 && <> <b>{data.stores.length}</b> already in this scheme.</>}</p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+                <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name or city" className="h-11 pl-9" aria-label="Search franchises" />
+                </div>
+                <select value={state} onChange={e => setState(e.target.value)} aria-label="State" className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm">
+                    <option value="">All states</option>{states.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <div className="sm:ml-auto"><BasisPicker basis={basis} onChange={setBasis} /></div>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="hidden md:grid grid-cols-[48px_2.4fr_1fr_1fr_1fr] gap-2 bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    <input type="checkbox" aria-label="Tick all shown" className="h-4 w-4 accent-orange-600"
+                        checked={shown.length > 0 && shown.every(f => picked.has(f.id))}
+                        onChange={e => setPicked(p => { const s = new Set(p); for (const f of shown) e.target.checked ? s.add(f.id) : s.delete(f.id); return s; })} />
+                    <span>Franchise</span><span>Avg / month</span><span>Last month</span><span>Best month</span>
+                </div>
+                <div className="max-h-[52vh] divide-y divide-slate-100 overflow-y-auto">
+                    {shown.map(f => (
+                        <label key={f.id} className={cn("grid cursor-pointer grid-cols-[32px_1fr_auto] items-center gap-2 px-4 py-3 md:grid-cols-[48px_2.4fr_1fr_1fr_1fr]", picked.has(f.id) && "bg-orange-50")}>
+                            <input type="checkbox" checked={picked.has(f.id)} onChange={() => toggle(f.id)} className="h-4 w-4 accent-orange-600" />
+                            <span className="min-w-0"><span className="block truncate font-semibold text-slate-900">{f.name}</span><span className="block text-xs text-slate-500">{[f.city, f.state].filter(Boolean).join(", ")}</span></span>
+                            <span className="text-right md:text-left"><b className="text-base tabular-nums">{fmt(averageOn(f.averages, basis))}</b><span className="ml-1 text-xs text-slate-500 md:hidden">/ month</span></span>
+                            <span className="hidden tabular-nums md:block">{fmt(f.last_month)}</span>
+                            <span className="hidden tabular-nums md:block">{fmt(f.best_month)}</span>
+                        </label>
+                    ))}
+                    {!shown.length && <p className="p-8 text-center text-sm text-slate-500">No franchise matches.</p>}
+                </div>
+                <p className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-500">Showing {shown.length} of {list.length} · highest average first</p>
+            </div>
+
+            <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
+                <span className="text-sm"><b>{picked.size}</b> ticked</span>
+                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+                    <Button variant="outline" className="h-12" onClick={onBack}>← Back</Button>
+                    <Button className="h-12 bg-orange-600 px-6 font-bold hover:bg-orange-700" disabled={busy} onClick={next}>
+                        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Next: set targets →"}
+                    </Button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* ─── Step 3: growth and reward → target ──────────────────────────────────── */
+
+function TargetsView({ scheme, data, basis, setBasis, onMonths, onRemove, onBack, onSaved }: {
+    scheme: Scheme; data: Data; basis: AverageBasis; setBasis: (b: AverageBasis) => void;
+    onMonths: (s: TargetStore) => void; onRemove: (s: TargetStore) => void; onBack: () => void; onSaved: (started: boolean) => Promise<void>;
+}) {
+    const { toast } = useToast();
+    const [terms, setTerms] = useState<Record<string, Terms>>({});
+    const [all, setAll] = useState({ growth: "", reward: "" });
+    const [reason, setReason] = useState("");
+    const [busy, setBusy] = useState<"save" | "start" | null>(null);
+    const draft = scheme.status === "draft";
+    const first = data.periods[0];
+
+    const value = (s: TargetStore, k: "growth_pct" | "reward") => terms[s.store_id]?.[k] ?? String(s[k] ?? "");
+    const set = (s: TargetStore, k: "growth_pct" | "reward", v: string) => setTerms(prev => {
+        const next = { ...prev, [s.store_id]: { ...prev[s.store_id], [k]: v } };
+        if (v.trim() === String(s[k] ?? "")) delete next[s.store_id]![k];
+        if (!Object.keys(next[s.store_id]!).length) delete next[s.store_id];
+        return next;
+    });
+    /* The target shown: what the growth on the average shown makes, or the one saved. */
+    const targetOf = (s: TargetStore) => {
+        const g = value(s, "growth_pct");
+        if (terms[s.store_id]?.growth_pct !== undefined && g !== "") return { n: growthTarget(averageOn(s.stats?.averages, basis), Number(g), first?.months.length ?? 1), fresh: true };
+        return { n: first ? s.figures[first.key]?.target ?? null : null, fresh: false };
+    };
+    const total = data.stores.reduce((n, s) => n + (targetOf(s).n ?? 0), 0);
+    const missing = data.stores.filter(s => value(s, "growth_pct") === "" || !value(s, "reward").trim());
+    const needsReason = Object.entries(terms).some(([id, t]) => t.growth_pct !== undefined && data.stores.find(x => x.store_id === id)?.growth_pct != null);
+
+    const save = async (start: boolean) => {
+        if (start && missing.length) return toast({ title: `${missing.length} ${missing.length === 1 ? "franchise needs" : "franchises need"} a growth % and a reward`, variant: "destructive" });
+        setBusy(start ? "start" : "save");
+        try {
+            const changed = Object.entries(terms);
+            if (changed.length) await api.put(`/schemes/admin/${scheme.id}/targets/terms`, { stores: changed.map(([store_id, t]) => ({ store_id, ...t })), basis, reason: reason.trim() || undefined });
+            if (start && draft) await api.post(`/schemes/admin/${scheme.id}/publish`);
+            toast({ title: start && draft ? "Scheme started" : "Saved", description: start && draft ? "The franchises can see their targets now." : undefined });
+            setTerms({}); setReason("");
+            await onSaved(start);
         } catch (e) {
             toast({ title: "Not saved", description: getErrorMessage(e, "Try again"), variant: "destructive" });
-        } finally { setSaving(false); }
+        } finally { setBusy(null); }
     };
 
+    return (
+        <div className="space-y-4">
+            <div>
+                <h2 className="text-2xl font-extrabold text-slate-900">How much more should each one do?</h2>
+                <p className="mt-1 text-sm text-slate-600">Type the growth % and the reward. The target is worked out for you: <b>average × (1 + growth %)</b>, for every {first?.from ? "period" : "month"}.</p>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+                <BasisPicker basis={basis} onChange={setBasis} />
+                <span className="hidden h-11 w-px bg-slate-200 md:block" aria-hidden />
+                <span className="self-center text-sm font-bold text-slate-800">Same for everyone:</span>
+                <label className="space-y-1"><span className="block text-xs text-slate-500">Growth %</span>
+                    <Input type="number" inputMode="decimal" value={all.growth} onChange={e => setAll(a => ({ ...a, growth: e.target.value }))} className="h-11 w-24" /></label>
+                <label className="space-y-1"><span className="block text-xs text-slate-500">Reward</span>
+                    <Input value={all.reward} onChange={e => setAll(a => ({ ...a, reward: e.target.value }))} placeholder="e.g. ₹5,000" className="h-11 w-40" /></label>
+                <Button className="h-11 bg-slate-900 font-bold" disabled={all.growth === "" && !all.reward.trim()}
+                    onClick={() => { for (const s of data.stores) { if (all.growth !== "") set(s, "growth_pct", all.growth); if (all.reward.trim()) set(s, "reward", all.reward); } }}>
+                    Apply to all
+                </Button>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="hidden md:grid grid-cols-[2.2fr_1fr_1fr_1.3fr_1.6fr_44px] gap-3 bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    <span>Franchise</span><span>Avg / month</span><span>Growth</span><span>Target {first?.from ? "each period" : "each month"}</span><span>Reward on reaching it</span><span />
+                </div>
+                <div className="divide-y divide-slate-100">
+                    {data.stores.map(s => {
+                        const t = targetOf(s);
+                        const avg = averageOn(s.stats?.averages, basis);
+                        return (
+                            <div key={s.store_id} className={cn("grid grid-cols-2 items-center gap-3 px-4 py-3.5 md:grid-cols-[2.2fr_1fr_1fr_1.3fr_1.6fr_44px]", terms[s.store_id] && "bg-orange-50/50")}>
+                                <span className="col-span-2 min-w-0 md:col-span-1"><b className="block truncate text-slate-900">{s.store_name}</b><span className="text-xs text-slate-500">{s.city}</span></span>
+                                <button type="button" onClick={() => onMonths(s)} className="text-left" title="See its months">
+                                    <span className="text-xs text-slate-500 md:hidden">Avg / month </span>
+                                    <b className="text-base tabular-nums underline decoration-dotted underline-offset-4">{fmt(avg)}</b>
+                                </button>
+                                <label className="flex items-center gap-1.5"><span className="text-xs text-slate-500 md:hidden">Growth</span>
+                                    <Input type="number" inputMode="decimal" value={value(s, "growth_pct")} onChange={e => set(s, "growth_pct", e.target.value)} placeholder="0"
+                                        aria-label={`Growth % for ${s.store_name}`} className={cn("h-11 w-20", terms[s.store_id]?.growth_pct !== undefined && "border-orange-500 bg-orange-50")} />
+                                    <span className="text-sm text-slate-500">%</span>
+                                </label>
+                                <span>
+                                    <span className="text-xs text-slate-500 md:hidden">Target </span>
+                                    <b className={cn("text-xl tabular-nums", t.fresh ? "text-orange-700" : "text-slate-900")}>{fmt(t.n)}</b>
+                                    {t.fresh && <span className="block text-xs text-slate-500">{fmt(avg)} × {(1 + Number(value(s, "growth_pct")) / 100).toFixed(2)}</span>}
+                                </span>
+                                <Input value={value(s, "reward")} onChange={e => set(s, "reward", e.target.value)} placeholder="e.g. ₹5,000" maxLength={160}
+                                    aria-label={`Reward for ${s.store_name}`} className={cn("col-span-2 h-11 md:col-span-1", terms[s.store_id]?.reward !== undefined && "border-orange-500 bg-orange-50")} />
+                                <Button size="icon" variant="ghost" className="h-10 w-10 text-rose-600" onClick={() => onRemove(s)} aria-label={`Remove ${s.store_name}`}><Trash2 className="h-4 w-4" /></Button>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="sticky bottom-0 z-20 space-y-2 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-sm"><b>{data.stores.length} franchises</b> · target <b>{fmt(total)}</b> warranties {first?.from ? "per period" : "a month"} in all{data.periods.length ? ` · ${data.periods[0].label}${data.periods.length > 1 ? ` + ${data.periods.length - 1} more` : ""}` : ""}</span>
+                    <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto">
+                        <Button variant="outline" className="h-12" onClick={onBack}>← Back</Button>
+                        <Button variant="outline" className="h-12" disabled={busy !== null || (needsReason && reason.trim().length < 3)} onClick={() => save(false)}>
+                            {busy === "save" ? <Loader2 className="h-4 w-4 animate-spin" /> : draft ? "Save as draft" : "Save changes"}
+                        </Button>
+                        {draft && (
+                            <Button className="h-12 bg-orange-600 px-6 font-bold hover:bg-orange-700" disabled={busy !== null || (needsReason && reason.trim().length < 3)} onClick={() => save(true)}>
+                                {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start the scheme"}
+                            </Button>
+                        )}
+                    </div>
+                </div>
+                {needsReason && <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Why the growth changed (needed — it changes targets already set)" maxLength={300} className="h-11" aria-label="Reason" />}
+                {draft && missing.length > 0 && <p className="text-xs text-slate-500">{missing.length} still need a growth % and a reward before you can start.</p>}
+            </div>
+        </div>
+    );
+}
+
+/* ─── Results: while it runs, and after ───────────────────────────────────── */
+
+function ResultsView({ scheme, data, onMonths, onReload, onEdit, onAdd }: {
+    scheme: Scheme; data: Data; onMonths: (s: TargetStore) => void; onReload: () => Promise<unknown>; onEdit: () => void; onAdd: () => void;
+}) {
+    const { toast } = useToast();
+    const [period, setPeriod] = useState(data.current ?? data.periods[0]?.key ?? "");
+    const [filter, setFilter] = useState<Status | "to_pay" | null>(null);
+    const [q, setQ] = useState("");
+    const today = istToday();
+    const p = data.periods.find(x => x.key === period);
+    const counted = data.settings.count === "registered" ? "registered" : "approved";
+
+    const rows = data.stores.map(s => ({ s, f: s.figures[period], st: statusOf(s.figures[period], p, today) }));
+    const n = (st: Status) => rows.filter(r => r.st === st).length;
+    const toPay = rows.filter(r => r.st === "reached" && !r.f?.paid_at).length;
+    const paidN = rows.filter(r => r.f?.paid_at).length;
+    const shown = rows
+        .filter(r => !filter || (filter === "to_pay" ? r.st === "reached" && !r.f?.paid_at : r.st === filter))
+        .filter(r => !q.trim() || [r.s.store_name, r.s.city].some(v => String(v ?? "").toLowerCase().includes(q.trim().toLowerCase())))
+        .sort((a, b) => ((b.f?.achieved ?? 0) / (b.f?.target || 1)) - ((a.f?.achieved ?? 0) / (a.f?.target || 1)));
+
+    const left = (x: Period) => {
+        if (!x.from || !x.to) return "";
+        if (today < x.from) return " · starts " + x.from.slice(8) + " " + x.label.split(" ")[1];
+        if (today > x.to) return " · ended";
+        const d = dayDiff(today, x.to);
+        return d === 0 ? " · last day" : ` · ${d} days left`;
+    };
     const setPaid = async (s: TargetStore, paid: boolean) => {
-        try {
-            await api.put(`/schemes/admin/${scheme.id}/targets/paid`, { store_id: s.store_id, period, paid });
-            toast({ title: paid ? `${s.store_name}: marked paid` : `${s.store_name}: back to "to pay"` });
-            load();
-        } catch (e) { toast({ title: "Not saved", description: getErrorMessage(e, ""), variant: "destructive" }); }
+        try { await api.put(`/schemes/admin/${scheme.id}/targets/paid`, { store_id: s.store_id, period, paid }); await onReload(); }
+        catch (e) { toast({ title: "Not saved", description: getErrorMessage(e, ""), variant: "destructive" }); }
     };
-
     const exportSheet = () => {
-        if (!data) return;
-        const head = ["Store code", "Store", "City", ...(byWarranty ? ["Average / month", "Growth %", "Reward"] : []), "Period", `Target (${unit})`, `Achieved (${unit})`, ...(byWarranty ? ["Waiting approval"] : []), "% of target", "Result", "Paid"];
-        const rows: (string | number)[][] = [head];
-        const codes = new Map(data.franchises.map(f => [f.id, f.code]));
-        for (const s of data.stores) for (const p of data.periods) {
-            const f = s.figures[p.key];
-            rows.push([
-                codes.get(s.store_id) ?? "", s.store_name, s.city ?? "",
-                ...(byWarranty ? [s.stats?.average ?? "", s.growth_pct ?? "", s.reward ?? ""] : []),
-                p.label, f?.target ?? "", f?.achieved ?? "", ...(byWarranty ? [f?.pending ?? ""] : []),
-                f?.result.pct ?? "", f?.result.benefit ?? "", f?.paid_at ? "Paid" : "",
-            ]);
+        const out: (string | number)[][] = [["Franchise", "City", "Period", "Target", `Done (${counted})`, "Status", "Reward", "Paid"]];
+        for (const s of data.stores) for (const x of data.periods) {
+            const f = s.figures[x.key];
+            out.push([s.store_name, s.city ?? "", x.label, f?.target ?? "", f?.achieved ?? "", STATUS[statusOf(f, x, today)].label, s.reward ?? "", f?.paid_at ? "Paid" : ""]);
         }
-        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "Targets");
-        XLSX.writeFile(wb, `${scheme.title.replace(/[^\w]+/g, "-")}-targets.xlsx`);
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(out), "Results");
+        XLSX.writeFile(wb, `${scheme.title.replace(/[^\w]+/g, "-")}-results.xlsx`);
     };
 
-    if (!data) return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>;
-    const label = data.periods.find(p => p.key === period)?.label ?? "Whole scheme";
-    const dirty = count > 0;
-    const pickPeriod = (k: string) => { if (dirty) toast({ title: "Save or discard your changes first" }); else setPeriod(k); };
-
-    /* ─── Cells ─── */
-    type Row = ReturnType<typeof rowOf>;
-    const pctOf = (r: Row) => r.result?.pct ?? (r.target ? Math.round(((r.achieved ?? 0) / r.target) * 100) : null);
-    const resultCell = (r: Row) => {
-        if (whole) return <span className="text-xs text-slate-600">{r.reached ? `Reached in ${r.reached} ${r.reached === 1 ? "period" : "periods"}` : "—"}</span>;
-        const res = r.result;
-        if (!res || !r.target) return <span className="text-xs text-slate-400">No target</span>;
-        if (res.benefit) return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800"><Check className="h-3.5 w-3.5" />{byWarranty ? "Reached" : `Step ${res.step_no}`}</span>;
-        const left = Math.max(r.target - (r.achieved ?? 0), 0);
-        return <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{byWarranty ? `${fmt(left)} to go` : "Not yet"}</span>;
-    };
-    const benefitText = (s: TargetStore, r: Row) => whole ? (r.earned ? rupees(r.earned) : "—") : r.result?.benefit ?? (byWarranty ? "—" : "—");
-    const paidCell = (s: TargetStore, r: Row) => whole || !r.result?.benefit ? <span className="text-xs text-slate-400">—</span>
-        : r.paid ? (
-            <button type="button" onClick={() => setPaid(s, false)} title="Mark not paid" className="inline-flex h-9 items-center gap-1 rounded-full bg-sky-100 px-3 text-xs font-bold text-sky-800 hover:bg-sky-200">
-                <Check className="h-3.5 w-3.5" /> Paid
-            </button>
-        ) : <Button size="sm" variant="outline" className="h-9" onClick={() => setPaid(s, true)}>Mark paid</Button>;
-    const numInput = (s: TargetStore, field: "target" | "achieved", className = "") => {
-        if (whole || (field === "achieved" && byWarranty)) {
-            const r = rowOf(s);
-            return (
-                <span className="tabular-nums">
-                    <span className="font-semibold">{fmt(r[field]) || (field === "achieved" ? "0" : "—")}</span>
-                    {field === "achieved" && byWarranty && r.pending ? <span className="block text-xs text-amber-700">+{fmt(r.pending)} waiting</span> : null}
-                </span>
-            );
-        }
-        /* A changed growth shows the target it will make. */
-        const g = terms[s.store_id]?.growth_pct;
-        if (field === "target" && g !== undefined && g !== "" && s.stats) {
-            return <span className="tabular-nums font-semibold text-orange-700" title="From the new growth">→ {fmt(growthTarget(s.stats.average, Number(g), periodMonths))}</span>;
-        }
-        return <Input type="number" inputMode="decimal" min={0} value={cellValue(s, field)} onChange={e => setCell(s, field, e.target.value)}
-            aria-label={`${field === "target" ? "Target" : "Achieved"} for ${s.store_name}`}
-            className={cn("h-10 w-24 tabular-nums", edits[key(s)]?.[field] !== undefined && "border-orange-400 bg-orange-50", className)} />;
-    };
-    const growthInput = (s: TargetStore, className = "") => (
-        <div className="relative">
-            <Input type="number" inputMode="decimal" value={termValue(s, "growth_pct")} onChange={e => setTerm(s, "growth_pct", e.target.value)} placeholder="0"
-                aria-label={`Growth % for ${s.store_name}`} className={cn("h-10 w-20 pr-6 tabular-nums", terms[s.store_id]?.growth_pct !== undefined && "border-orange-400 bg-orange-50", className)} />
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500">%</span>
-        </div>
-    );
-    const rewardInput = (s: TargetStore, className = "") => (
-        <Input value={termValue(s, "reward")} onChange={e => setTerm(s, "reward", e.target.value)} placeholder="e.g. ₹5,000" maxLength={160}
-            aria-label={`Reward for ${s.store_name}`} className={cn("h-10 w-36", terms[s.store_id]?.reward !== undefined && "border-orange-400 bg-orange-50", className)} />
-    );
-    const actions = (s: TargetStore) => (
-        <div className="flex justify-end gap-1">
-            <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setHistory(s)} aria-label={`Warranties and changes for ${s.store_name}`}><History className="h-4 w-4" /></Button>
-            <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setEditing(s)} aria-label={`Edit ${s.store_name}`}><Pencil className="h-4 w-4" /></Button>
-            <Button size="icon" variant="ghost" className="h-9 w-9 text-rose-600" onClick={() => setRemoving(s)} aria-label={`Remove ${s.store_name}`}><Trash2 className="h-4 w-4" /></Button>
-        </div>
+    const card = (key: Status | "to_pay", label: string, count: number, note: string, tone: string) => (
+        <button type="button" onClick={() => setFilter(f => (f === key ? null : key))} aria-pressed={filter === key}
+            className={cn("rounded-2xl border bg-white p-4 text-left", filter === key ? "border-2 border-slate-900" : "border-slate-200 hover:border-slate-400")}>
+            <span className={cn("block text-sm font-bold", tone)}>{label}</span>
+            <span className="block text-3xl font-extrabold tabular-nums text-slate-900">{count}</span>
+            <span className="block text-xs text-slate-500">{note}</span>
+        </button>
     );
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 [&>*]:shrink-0">
-                    {data.periods.map(p => (
-                        <button key={p.key} type="button" onClick={() => pickPeriod(p.key)}
-                            className={cn("h-10 rounded-full px-4 text-sm font-semibold whitespace-nowrap", period === p.key ? "bg-slate-900 text-white" : "border border-slate-300 bg-white text-slate-800")}>
-                            {p.label}
-                        </button>
-                    ))}
-                    {many && (
-                        <button type="button" onClick={() => pickPeriod(ALL)}
-                            className={cn("h-10 rounded-full px-4 text-sm font-semibold whitespace-nowrap", whole ? "bg-slate-900 text-white" : "border border-dashed border-slate-400 bg-white text-slate-800")}>
-                            Whole scheme
-                        </button>
-                    )}
-                </div>
+            <div className="flex flex-wrap items-end justify-between gap-3">
+                <h2 className="text-2xl font-extrabold text-slate-900">Results</h2>
                 <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto">
-                    {!byWarranty && <Button variant="outline" onClick={() => setImportOpen(true)}><FileSpreadsheet className="h-4 w-4 mr-1" />Import</Button>}
-                    <Button variant="outline" onClick={exportSheet} disabled={!data.stores.length}><Download className="h-4 w-4 mr-1" />Export</Button>
-                    <Button className={cn("bg-orange-500 hover:bg-orange-600", byWarranty && "col-span-2")} onClick={() => setEditing("new")}><Plus className="h-4 w-4 mr-1" />Add franchise</Button>
+                    <Button variant="outline" className="h-11" onClick={onEdit}><Pencil className="h-4 w-4 mr-1" />Edit targets</Button>
+                    <Button variant="outline" className="h-11" onClick={onAdd}><Plus className="h-4 w-4 mr-1" />Add franchises</Button>
+                    <Button variant="outline" className="h-11" onClick={exportSheet}><Download className="h-4 w-4 mr-1" />Excel</Button>
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {([
-                    ["Franchises", fmt(data.stores.length)],
-                    [`Target · ${label}`, `${fmt(totals.target) || 0} ${unit}`],
-                    [byWarranty ? "Approved so far" : "Achieved", `${fmt(totals.achieved) || 0} ${unit}`],
-                    byWarranty || settings.benefit !== "per_unit" ? ["Reached the target", `${totals.reached}`] : ["Benefit earned", rupees(totals.benefit)],
-                ] as const).map(([l, v]) => (
-                    <div key={l} className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs font-semibold text-slate-500">{l}</p>
-                        <p className="text-lg font-extrabold text-slate-900 tabular-nums">{v}</p>
-                    </div>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 [&>*]:shrink-0">
+                {data.periods.map(x => (
+                    <button key={x.key} type="button" onClick={() => setPeriod(x.key)}
+                        className={cn("h-10 rounded-full px-4 text-sm font-semibold whitespace-nowrap", period === x.key ? "bg-slate-900 text-white" : "border border-slate-300 bg-white text-slate-800")}>
+                        {x.label}{x.key === period ? left(x) : ""}
+                    </button>
                 ))}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Search franchise or city" className="h-10 pl-9" aria-label="Search franchises" />
-                </div>
-                {byWarranty ? (
-                    <div className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="text-xs font-semibold text-slate-600">For all {q ? "shown" : ""}:</span>
-                        <Input type="number" value={bulk.growth} onChange={e => setBulk(b => ({ ...b, growth: e.target.value }))} placeholder="Growth %" className="h-10 w-28" aria-label="Growth % for all" />
-                        <Button variant="outline" className="h-10" disabled={bulk.growth === ""} onClick={() => applyBulk("growth_pct", bulk.growth)}>Apply</Button>
-                        <Input value={bulk.reward} onChange={e => setBulk(b => ({ ...b, reward: e.target.value }))} placeholder="Reward" className="h-10 w-32" aria-label="Reward for all" />
-                        <Button variant="outline" className="h-10" disabled={!bulk.reward.trim()} onClick={() => applyBulk("reward", bulk.reward)}>Apply</Button>
-                    </div>
-                ) : (
-                    <p className="text-xs text-slate-500">Steps: {settings.steps.map(st => `${st.pct}% → ${stepBenefit(st, settings.benefit, unit)}`).join(" · ") || "none set"}</p>
-                )}
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {card("reached", "Reached", n("reached"), "rewards earned", "text-emerald-700")}
+                {card("on_track", "On track", n("on_track"), "keeping the pace", "text-blue-700")}
+                {card(today > (p?.to ?? "9999") ? "missed" : "behind", today > (p?.to ?? "9999") ? "Missed" : "Behind", today > (p?.to ?? "9999") ? n("missed") : n("behind"), today > (p?.to ?? "9999") ? "didn't reach it" : "need a push · call them", "text-amber-700")}
+                {card("to_pay", "Rewards to pay", toPay, `${paidN} already paid`, "text-slate-700")}
             </div>
-            {byWarranty && (
-                <p className="text-xs text-slate-500">
-                    Average = approved warranties a month over {settings.baseline_months === 1 ? "the month" : `the ${settings.baseline_months} months`} before the scheme starts. Target = average × (1 + growth %). The franchise sees only its target number and reward.
-                </p>
-            )}
 
-            {!data.stores.length ? (
-                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
-                    <p className="font-semibold text-slate-900">No franchises on this scheme yet</p>
-                    <p className="text-sm text-slate-500">{byWarranty ? "Add a franchise to see its warranties, then give it a growth % and a reward." : "Add them one by one, or import a sheet of stores and targets."}</p>
+            <div className="relative max-w-xs">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Search franchise" className="h-10 pl-9" aria-label="Search franchises" />
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="hidden md:grid grid-cols-[2fr_0.8fr_0.8fr_1.8fr_1.3fr_1.4fr_1fr] gap-3 bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    <span>Franchise</span><span>Target</span><span>Done</span><span>Progress</span><span>Status</span><span>Reward</span><span>Paid</span>
                 </div>
-            ) : (
-                <>
-                    {/* Phone: a card per franchise. */}
-                    <div className="space-y-2 md:hidden">
-                        {shown.map(s => {
-                            const r = rowOf(s);
-                            return (
-                                <div key={s.store_id} className={cn("rounded-xl border bg-white p-3 space-y-3", terms[s.store_id] || edits[key(s)] ? "border-orange-300" : "border-slate-200")}>
-                                    <div className="flex items-start justify-between gap-2">
-                                        <div className="min-w-0">
-                                            <p className="font-semibold text-slate-900">{s.store_name}</p>
-                                            <p className="text-xs text-slate-500">{[s.city, byWarranty && s.stats ? `avg ${fmt(s.stats.average)} / month` : s.own_steps ? "own steps" : null].filter(Boolean).join(" · ")}</p>
-                                        </div>
-                                        {resultCell(r)}
-                                    </div>
-                                    {byWarranty && (
-                                        <div className="grid grid-cols-[auto_1fr] gap-2">
-                                            <label className="space-y-1 text-xs font-semibold text-slate-600">Growth{growthInput(s)}</label>
-                                            <label className="space-y-1 text-xs font-semibold text-slate-600">Reward{rewardInput(s, "w-full")}</label>
-                                        </div>
-                                    )}
-                                    <div className="grid grid-cols-3 gap-2 items-end">
-                                        <label className="space-y-1 text-xs font-semibold text-slate-600">Target{numInput(s, "target", "w-full")}</label>
-                                        <div className="space-y-1 text-xs font-semibold text-slate-600">{byWarranty ? "Approved" : "Achieved"}<div className="text-sm">{numInput(s, "achieved", "w-full")}</div></div>
-                                        <div className="text-right"><p className="text-xs font-semibold text-slate-600">%</p><p className="text-lg font-extrabold tabular-nums">{pctOf(r) === null ? "—" : `${pctOf(r)}%`}</p></div>
-                                    </div>
-                                    <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
-                                        <div className="min-w-0"><p className="text-xs text-slate-500">{byWarranty ? "Earned" : "Benefit"}</p><p className="truncate font-bold text-slate-900">{benefitText(s, r)}</p></div>
-                                        <div className="flex items-center gap-1">{paidCell(s, r)}{actions(s)}</div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
+                <div className="divide-y divide-slate-100">
+                    {shown.map(({ s, f, st }) => {
+                        const pct = f?.target ? Math.min(100, Math.round(((f.achieved ?? 0) / f.target) * 100)) : 0;
+                        const togo = f?.target ? Math.max(f.target - (f.achieved ?? 0), 0) : 0;
+                        return (
+                            <div key={s.store_id} className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-2 px-4 py-3.5 md:grid-cols-[2fr_0.8fr_0.8fr_1.8fr_1.3fr_1.4fr_1fr]">
+                                <button type="button" onClick={() => onMonths(s)} className="min-w-0 text-left"><b className="block truncate text-slate-900 hover:underline">{s.store_name}</b><span className="text-xs text-slate-500">{s.city}</span></button>
+                                <b className="hidden tabular-nums md:block">{fmt(f?.target)}</b>
+                                <span className="hidden tabular-nums md:block"><b>{fmt(f?.achieved ?? 0)}</b>{f?.pending ? <span className="block text-xs text-amber-700">+{f.pending} waiting</span> : null}</span>
+                                <span className="col-span-2 flex items-center gap-2 md:col-span-1">
+                                    <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className={cn("block h-full rounded-full", STATUS[st].bar)} style={{ width: `${pct}%` }} /></span>
+                                    <span className="w-24 text-right text-xs tabular-nums text-slate-600 md:hidden">{fmt(f?.achieved ?? 0)} / {fmt(f?.target)}</span>
+                                </span>
+                                <span className={cn("justify-self-start rounded-full px-2.5 py-1 text-xs font-bold row-start-1 col-start-2 md:row-auto md:col-auto", STATUS[st].tone)}>
+                                    {st === "reached" ? "✓ Reached" : st === "on_track" || st === "behind" ? `${STATUS[st].label} · ${fmt(togo)} to go` : STATUS[st].label}
+                                </span>
+                                <span className="truncate text-sm text-slate-700">{s.reward ?? "—"}</span>
+                                <span>
+                                    {st === "reached" && (f?.paid_at
+                                        ? <button type="button" onClick={() => setPaid(s, false)} className="inline-flex h-9 items-center gap-1 rounded-full bg-sky-100 px-3 text-xs font-bold text-sky-800" title="Mark not paid"><Check className="h-3.5 w-3.5" />Paid</button>
+                                        : <Button size="sm" variant="outline" className="h-9" onClick={() => setPaid(s, true)}>Mark paid</Button>)}
+                                </span>
+                            </div>
+                        );
+                    })}
+                    {!shown.length && <p className="p-8 text-center text-sm text-slate-500">Nobody here.</p>}
+                </div>
+            </div>
 
-                    {/* Wider screens: the grid. */}
-                    <div className="hidden md:block rounded-xl border border-slate-200 bg-white overflow-x-auto">
+            <div className="grid gap-3 text-sm text-slate-700 md:grid-cols-3">
+                <p className="rounded-2xl border border-slate-200 bg-white p-4"><b className="text-emerald-700">Reached</b> — done is at or above the target. The reward is due; mark it paid once given.</p>
+                <p className="rounded-2xl border border-slate-200 bg-white p-4"><b className="text-blue-700">On track</b> — keeping the period's pace (e.g. 12 of 30 days gone → at least 40% of the target).</p>
+                <p className="rounded-2xl border border-slate-200 bg-white p-4"><b className="text-amber-700">Behind</b> — below that pace. When the period ends, anyone not reached shows <b>Missed</b>; the next one starts fresh.</p>
+            </div>
+            <p className="text-xs text-slate-500">Counts {counted} warranties, by {data.settings.date_by === "purchase" ? "purchase" : "registration"} date.</p>
+        </div>
+    );
+}
+
+/* ─── A franchise's warranties by month ──────────────────────────────────── */
+
+function MonthsDialog({ store, settings, basis, onClose }: { store: TargetStore | null; settings: SchemeSettings; basis: AverageBasis; onClose: () => void }) {
+    const stats = store?.stats ?? null;
+    const cells: [AverageBasis["mode"], number | null][] = stats ? [["overall", stats.averages.overall], ["m3", stats.averages.m3], ["m6", stats.averages.m6], ["custom", stats.averages.custom]] : [];
+    return (
+        <Dialog open={Boolean(store)} onOpenChange={o => { if (!o) onClose(); }}>
+            <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto">
+                <DialogHeader>
+                    <DialogTitle>{store?.store_name}</DialogTitle>
+                    <DialogDescription>
+                        {settings.count === "registered" ? "Registered" : "Approved"} warranties a month, by {settings.date_by === "purchase" ? "purchase" : "registration"} date.
+                        {store?.basis_average != null && store.basis ? ` Its growth is on ${BASIS_LABEL[store.basis.mode].toLowerCase()}: ${fmt(store.basis_average)}.` : ""}
+                    </DialogDescription>
+                </DialogHeader>
+                {stats && (
+                    <>
+                        <div className="grid grid-cols-2 gap-2">
+                            {cells.filter(([m, v]) => m !== "custom" || v !== null).map(([m, v]) => (
+                                <div key={m} className={cn("rounded-xl border p-3", basis.mode === m ? "border-orange-400 bg-orange-50" : "border-slate-200")}>
+                                    <p className="text-xs font-semibold text-slate-500">{BASIS_LABEL[m]}</p>
+                                    <p className="text-lg font-extrabold tabular-nums">{fmt(v)}</p>
+                                </div>
+                            ))}
+                        </div>
                         <table className="w-full text-sm">
-                            <thead className="bg-slate-50 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                                <tr>
-                                    <th className="px-4 py-3">Franchise</th>
-                                    {byWarranty && <><th className="px-3 py-3">Avg / month</th><th className="px-3 py-3">Growth</th></>}
-                                    <th className="px-3 py-3">Target</th>
-                                    <th className="px-3 py-3">{byWarranty ? "Approved" : "Achieved"}</th>
-                                    <th className="px-3 py-3">%</th>
-                                    {byWarranty && <th className="px-3 py-3">Reward</th>}
-                                    <th className="px-3 py-3">Result</th>
-                                    {!byWarranty && <th className="px-3 py-3">Benefit</th>}
-                                    <th className="px-3 py-3">Paid</th><th className="px-3 py-3" />
-                                </tr>
-                            </thead>
+                            <thead className="text-left text-xs text-slate-500"><tr><th className="py-2">Month</th><th className="py-2 text-right">Approved</th><th className="py-2 text-right">Waiting</th><th className="py-2 text-right">Rejected</th></tr></thead>
                             <tbody>
-                                {shown.map(s => {
-                                    const r = rowOf(s);
-                                    const pct = pctOf(r);
-                                    return (
-                                        <tr key={s.store_id} className={cn("border-t border-slate-100", (terms[s.store_id] || edits[key(s)]) && "bg-orange-50/40")}>
-                                            <td className="px-4 py-2.5">
-                                                <p className="font-semibold text-slate-900">{s.store_name}</p>
-                                                <p className="text-xs text-slate-500">{[s.city, !byWarranty ? (s.own_steps ? "own steps" : "scheme steps") : null].filter(Boolean).join(" · ")}</p>
-                                            </td>
-                                            {byWarranty && <>
-                                                <td className="px-3 py-2.5 tabular-nums">
-                                                    <button type="button" onClick={() => setHistory(s)} className="font-semibold text-slate-900 underline decoration-dotted underline-offset-2 hover:text-orange-700" title="See its months">
-                                                        {fmt(s.stats?.average ?? 0)}
-                                                    </button>
-                                                </td>
-                                                <td className="px-3 py-2.5">{growthInput(s)}</td>
-                                            </>}
-                                            <td className="px-3 py-2.5">{numInput(s, "target")}</td>
-                                            <td className="px-3 py-2.5">{numInput(s, "achieved")}</td>
-                                            <td className="px-3 py-2.5 font-bold tabular-nums">{pct === null ? "—" : `${pct}%`}</td>
-                                            {byWarranty && <td className="px-3 py-2.5">{rewardInput(s)}</td>}
-                                            <td className="px-3 py-2.5">{resultCell(r)}</td>
-                                            {!byWarranty && (
-                                                <td className="px-3 py-2.5">
-                                                    <p className="font-semibold text-slate-900">{benefitText(s, r)}</p>
-                                                    {!whole && r.result?.step && settings.benefit === "per_unit" && <p className="text-xs text-slate-500">{fmt(r.achieved)} × {stepBenefit(r.result.step, settings.benefit, unit)}</p>}
-                                                </td>
-                                            )}
-                                            <td className="px-3 py-2.5">{paidCell(s, r)}</td>
-                                            <td className="px-3 py-2.5">{actions(s)}</td>
-                                        </tr>
-                                    );
-                                })}
+                                {[...stats.months].reverse().map(m => (
+                                    <tr key={m.month} className="border-t border-slate-100">
+                                        <td className="py-2 pl-1 font-medium">{formatMonth(m.month)}</td>
+                                        <td className="py-2 text-right font-bold tabular-nums">{m.approved}</td>
+                                        <td className="py-2 text-right tabular-nums text-amber-700">{m.pending || ""}</td>
+                                        <td className="py-2 pr-1 text-right tabular-nums text-rose-600">{m.rejected || ""}</td>
+                                    </tr>
+                                ))}
                             </tbody>
                         </table>
-                    </div>
-                </>
-            )}
-
-            {dirty && (
-                <>
-                    <div className="h-28 md:h-20" aria-hidden />
-                    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-orange-200 bg-white/95 backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-                        <div className="mx-auto flex max-w-5xl flex-col gap-2 md:flex-row md:items-center">
-                            <p className="text-sm font-semibold text-slate-900 shrink-0">{count} {count === 1 ? "franchise" : "franchises"} changed</p>
-                            <Input value={reason} onChange={e => setReason(e.target.value)} maxLength={300}
-                                placeholder={needsReason ? "Reason for the change (needed)" : "Note (optional)"} aria-label="Reason for the change" className="h-11 md:flex-1" />
-                            <div className="grid grid-cols-2 gap-2 md:flex">
-                                <Button variant="outline" className="h-11" onClick={() => { setEdits({}); setTerms({}); setReason(""); }}><Undo2 className="h-4 w-4 mr-1" />Discard</Button>
-                                <Button className="h-11 bg-orange-500 hover:bg-orange-600" disabled={saving || (needsReason && reason.trim().length < 3)} onClick={save}>
-                                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-                </>
-            )}
-
-            <StoreDialog scheme={scheme} data={data} store={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); load(); }} />
-            <RemoveDialog scheme={scheme} store={removing} onClose={() => setRemoving(null)} onDone={() => { setRemoving(null); load(); }} />
-            <HistoryDialog store={history} periods={data.periods} unit={unit} settings={settings} onClose={() => setHistory(null)} />
-            {!byWarranty && <TargetImportDialog open={importOpen} scheme={scheme} data={data} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }} />}
-        </div>
-    );
-}
-
-/* ─── A store's warranties by month ───────────────────────────────────────── */
-
-function WarrantyMonths({ stats, months }: { stats: WarrantyStats; months: number }) {
-    const base = new Set(stats.average_over);
-    return (
-        <div className="space-y-2">
-            <div className="flex items-baseline justify-between gap-2">
-                <p className="text-xs font-semibold text-slate-700">Warranties per month</p>
-                <p className="text-sm">Average <b className="tabular-nums">{stats.average.toLocaleString("en-IN")}</b> approved / month <span className="text-xs text-slate-500">({months === 1 ? "last month" : `last ${months} months`})</span></p>
-            </div>
-            <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200">
-                <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-slate-50 text-left text-slate-500"><tr><th className="px-3 py-2">Month</th><th className="px-2 py-2 text-right">Approved</th><th className="px-2 py-2 text-right">Waiting</th><th className="px-2 py-2 text-right">Rejected</th></tr></thead>
-                    <tbody>
-                        {[...stats.months].reverse().map(m => (
-                            <tr key={m.month} className={cn("border-t border-slate-100", base.has(m.month) && "bg-orange-50/60")}>
-                                <td className="px-3 py-1.5 font-medium text-slate-800">{formatMonth(m.month)}{base.has(m.month) && <span className="ml-1 text-[10px] font-bold text-orange-700">avg</span>}</td>
-                                <td className="px-2 py-1.5 text-right font-bold tabular-nums">{m.approved}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums text-amber-700">{m.pending || ""}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums text-rose-600">{m.rejected || ""}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    );
-}
-
-/* ─── Add or edit a franchise ─────────────────────────────────────────────── */
-
-function StoreDialog({ scheme, data, store, onClose, onDone }: {
-    scheme: Scheme; data: Data; store: TargetStore | "new" | null; onClose: () => void; onDone: () => void;
-}) {
-    const { toast } = useToast();
-    const existing = store && store !== "new" ? store : null;
-    const isNew = store === "new";
-    const settings = data.settings;
-    const byWarranty = settings.source === "warranties";
-    const unit = settings.unit || "sets";
-    const [storeId, setStoreId] = useState("");
-    const [stats, setStats] = useState<WarrantyStats | null>(null);
-    const [growth, setGrowth] = useState("");
-    const [reward, setReward] = useState("");
-    const [targets, setTargets] = useState<Record<string, string>>({});
-    const [own, setOwn] = useState(false);
-    const [steps, setSteps] = useState<TargetStep[]>([]);
-    const [note, setNote] = useState("");
-    const [reason, setReason] = useState("");
-    const [saving, setSaving] = useState(false);
-
-    useEffect(() => {
-        if (!store) return;
-        setStoreId(existing?.store_id ?? "");
-        setStats(existing?.stats ?? null);
-        setGrowth(existing?.growth_pct != null ? String(existing.growth_pct) : "");
-        setReward(existing?.reward ?? "");
-        setTargets(Object.fromEntries(data.periods.map(p => [p.key, existing?.figures[p.key]?.target != null ? String(existing.figures[p.key].target) : ""])));
-        setOwn(Boolean(existing?.own_steps));
-        setSteps(existing?.own_steps ?? settings.steps.map(x => ({ ...x })));
-        setNote(existing?.note ?? ""); setReason("");
-    }, [store]);
-    /* A franchise being added: its warranties, to set its growth from. */
-    useEffect(() => {
-        if (!isNew || !storeId || !byWarranty) return;
-        setStats(null);
-        api.get(`/schemes/admin/${scheme.id}/targets/stats`, { params: { store_id: storeId } }).then(r => setStats(r.data.stats)).catch(() => setStats(null));
-    }, [storeId, isNew]);
-
-    const preview = byWarranty && stats && growth !== "" && Number.isFinite(Number(growth))
-        ? data.periods.map(p => ({ label: p.label, target: growthTarget(stats.average, Number(growth), p.months.length) })) : null;
-    const hadTargets = Boolean(existing && Object.values(existing.figures).some(f => f.target != null));
-    const changedSet = Boolean(existing) && (byWarranty
-        ? hadTargets && growth !== String(existing!.growth_pct ?? "")
-        : data.periods.some(p => { const was = existing!.figures[p.key]?.target; return was != null && targets[p.key] !== String(was); }));
-
-    const save = async () => {
-        if (!storeId) return toast({ title: "Choose the franchise", variant: "destructive" });
-        setSaving(true);
-        try {
-            const before = existing?.figures ?? {};
-            const body = byWarranty
-                ? { store_id: storeId, growth_pct: growth === "" ? null : Number(growth), reward, note, reason: reason.trim() || undefined }
-                : {
-                    store_id: storeId, note, reason: reason.trim() || undefined, steps: own ? steps : null,
-                    targets: Object.fromEntries(Object.entries(targets).filter(([k, v]) => v !== "" && Number(v) !== before[k]?.target)),
-                };
-            const r = await api.post(`/schemes/admin/${scheme.id}/targets/stores`, body);
-            toast({ title: r.data.added ? "Franchise added" : "Saved", description: r.data.added && scheme.status === "published" ? "It can see the scheme now." : undefined });
-            onDone();
-        } catch (e) {
-            toast({ title: "Not saved", description: getErrorMessage(e, "Try again"), variant: "destructive" });
-        } finally { setSaving(false); }
-    };
-    const first = data.periods[0]?.key;
-
-    return (
-        <Dialog open={Boolean(store)} onOpenChange={o => { if (!o && !saving) onClose(); }}>
-            <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
-                <DialogHeader>
-                    <DialogTitle>{isNew ? "Add a franchise" : existing?.store_name}</DialogTitle>
-                    <DialogDescription>{byWarranty ? "See its warranties, then give it a growth % and a reward. It sees only the number and the reward." : isNew ? "It sees this scheme once it's published." : "Targets, its steps and a note."}</DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4">
-                    {isNew && (
-                        <div className="space-y-1">
-                            <p className="text-xs font-semibold text-slate-700">Franchise</p>
-                            <Combobox
-                                options={data.franchises.map(f => ({ value: f.id, label: [f.name, f.city, f.code].filter(Boolean).join(" · ") }))}
-                                value={storeId} onChange={setStoreId}
-                                placeholder="Choose a franchise" searchPlaceholder="Type a name, city or code…" emptyMessage="No franchise matches."
-                                className="h-11 font-normal text-sm" />
-                        </div>
-                    )}
-
-                    {byWarranty ? (
-                        <>
-                            {storeId && (stats ? <WarrantyMonths stats={stats} months={settings.baseline_months} /> : <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div>)}
-                            <div className="grid grid-cols-[110px_1fr] gap-3">
-                                <label className="space-y-1"><span className="block text-xs font-semibold text-slate-700">Growth %</span>
-                                    <Input type="number" inputMode="decimal" value={growth} onChange={e => setGrowth(e.target.value)} placeholder="e.g. 20" /></label>
-                                <label className="space-y-1"><span className="block text-xs font-semibold text-slate-700">Reward on reaching the target</span>
-                                    <Input value={reward} onChange={e => setReward(e.target.value)} placeholder="e.g. ₹5,000 or 2 seat covers free" maxLength={160} /></label>
-                            </div>
-                            {preview && (
-                                <div className="rounded-lg bg-orange-50 px-3 py-2 text-sm text-orange-950">
-                                    <p className="text-xs font-semibold">Its target (what the franchise sees)</p>
-                                    <p className="mt-0.5">{preview.slice(0, 6).map(p => `${p.label}: ${p.target.toLocaleString("en-IN")}`).join(" · ")}{preview.length > 6 ? " …" : ""} {unit}</p>
-                                </div>
-                            )}
-                        </>
-                    ) : (
-                        <>
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between gap-2">
-                                    <p className="text-xs font-semibold text-slate-700">Target in {unit}{data.periods.length > 1 ? ", each period" : ""}</p>
-                                    {data.periods.length > 1 && first && (
-                                        <button type="button" className="text-xs font-semibold text-orange-600 hover:underline"
-                                            onClick={() => setTargets(t => Object.fromEntries(data.periods.map(p => [p.key, t[first]])))}>
-                                            Same as {data.periods[0].label} for all
-                                        </button>
-                                    )}
-                                </div>
-                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                                    {data.periods.map(p => (
-                                        <label key={p.key} className="space-y-1">
-                                            <span className="block text-xs text-slate-500">{p.label}</span>
-                                            <Input type="number" inputMode="decimal" min={0} value={targets[p.key] ?? ""} onChange={e => setTargets(t => ({ ...t, [p.key]: e.target.value }))} className="h-10" />
-                                        </label>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <p className="text-xs font-semibold text-slate-700">Reward steps</p>
-                                <label className="flex items-center gap-2 text-sm"><input type="radio" checked={!own} onChange={() => setOwn(false)} className="accent-orange-600" />
-                                    The scheme's: {settings.steps.map(st => `${st.pct}% → ${stepBenefit(st, settings.benefit, unit)}`).join(" · ")}</label>
-                                <label className="flex items-center gap-2 text-sm"><input type="radio" checked={own} onChange={() => setOwn(true)} className="accent-orange-600" />Own steps for this franchise</label>
-                                {own && <div className="rounded-lg border border-slate-200 p-3"><StepsEditor steps={steps} benefit={settings.benefit} unit={unit} onChange={setSteps} /></div>}
-                            </div>
-                        </>
-                    )}
-                    <label className="block space-y-1"><span className="block text-xs font-semibold text-slate-700">Note (only the head office sees it)</span>
-                        <Input value={note} onChange={e => setNote(e.target.value)} maxLength={300} /></label>
-                    {changedSet && (
-                        <label className="block space-y-1"><span className="block text-xs font-semibold text-slate-700">Reason for changing its target (needed)</span>
-                            <Input value={reason} onChange={e => setReason(e.target.value)} maxLength={300} /></label>
-                    )}
-                </div>
-                <DialogFooter className="gap-2">
-                    <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-                    <Button className="bg-orange-500 hover:bg-orange-600" onClick={save} disabled={saving || (changedSet && reason.trim().length < 3)}>
-                        {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}{isNew ? "Add to the scheme" : "Save"}
-                    </Button>
-                </DialogFooter>
+                    </>
+                )}
             </DialogContent>
         </Dialog>
     );
@@ -618,7 +531,7 @@ function RemoveDialog({ scheme, store, onClose, onDone }: { scheme: Scheme; stor
         setBusy(true);
         try {
             await api.delete(`/schemes/admin/${scheme.id}/targets/stores/${store.store_id}`, { data: { reason } });
-            toast({ title: `${store.store_name} removed from the scheme` });
+            toast({ title: `${store.store_name} removed` });
             onDone();
         } catch (e) { toast({ title: "Not removed", description: getErrorMessage(e, ""), variant: "destructive" }); }
         finally { setBusy(false); }
@@ -628,124 +541,12 @@ function RemoveDialog({ scheme, store, onClose, onDone }: { scheme: Scheme; stor
             <DialogContent className="max-w-md">
                 <DialogHeader>
                     <DialogTitle>Remove {store?.store_name}?</DialogTitle>
-                    <DialogDescription>It stops seeing this scheme, and its targets are taken off. They stay in the activity log.</DialogDescription>
+                    <DialogDescription>It stops seeing this scheme.</DialogDescription>
                 </DialogHeader>
                 <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Why (needed)" maxLength={300} aria-label="Reason" />
                 <DialogFooter className="gap-2">
                     <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
                     <Button variant="destructive" onClick={remove} disabled={busy || reason.trim().length < 3}>{busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}Remove</Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-    );
-}
-
-function HistoryDialog({ store, periods, unit, settings, onClose }: { store: TargetStore | null; periods: Period[]; unit: string; settings: SchemeSettings; onClose: () => void }) {
-    const items = store ? periods.flatMap(p => (store.figures[p.key]?.history ?? []).map(h => ({ ...h, period: p.label }))).sort((a, b) => b.at.localeCompare(a.at)) : [];
-    const FIELD = { target: "Target", achieved: "Achieved", paid: "Payment" } as const;
-    return (
-        <Dialog open={Boolean(store)} onOpenChange={o => { if (!o) onClose(); }}>
-            <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
-                <DialogHeader>
-                    <DialogTitle>{store?.store_name}</DialogTitle>
-                    <DialogDescription>{store?.stats ? "Its warranties, and every change to its targets and payments." : "Every target, achieved figure and payment, newest first."}</DialogDescription>
-                </DialogHeader>
-                {store?.stats && <WarrantyMonths stats={store.stats} months={settings.baseline_months} />}
-                {store?.growth_pct != null && <p className="text-sm">Growth <b>{store.growth_pct}%</b>{store.reward ? <> · reward <b>{store.reward}</b></> : null}</p>}
-                <p className="text-xs font-semibold text-slate-700">Changes</p>
-                {!items.length ? <p className="text-sm text-slate-500">Nothing yet.</p> : (
-                    <ol className="space-y-2.5">
-                        {items.map((h, i) => (
-                            <li key={i} className="text-sm">
-                                <p className="font-semibold text-slate-900">{h.period} · {FIELD[h.field]}: {h.from ?? "—"} → {h.to ?? "—"}{h.field !== "paid" ? ` ${unit}` : ""}</p>
-                                <p className="text-xs text-slate-500">{when(h.at)}{h.by ? ` · ${h.by}` : ""}</p>
-                                {h.reason && <p className="mt-0.5 rounded bg-slate-50 px-2 py-1 text-xs text-slate-700">{h.reason}</p>}
-                            </li>
-                        ))}
-                    </ol>
-                )}
-            </DialogContent>
-        </Dialog>
-    );
-}
-
-/* ─── Import from a sheet (typed figures) ─────────────────────────────────── */
-
-interface Plan { rows: number; changes: number; new_stores: string[]; problems: { row: number; problem: string }[] }
-
-function TargetImportDialog({ open, scheme, data, onClose, onDone }: { open: boolean; scheme: Scheme; data: Data; onClose: () => void; onDone: () => void }) {
-    const { toast } = useToast();
-    const [rows, setRows] = useState<{ row: number; store: string; period: unknown; target: unknown; achieved: unknown }[]>([]);
-    const [plan, setPlan] = useState<Plan | null>(null);
-    const [busy, setBusy] = useState(false);
-    useEffect(() => { if (open) { setRows([]); setPlan(null); } }, [open]);
-
-    const template = () => {
-        const out: (string | number)[][] = [["Store code or name", "Period", "Target", "Achieved"]];
-        const codes = new Map(data.franchises.map(f => [f.id, f.code]));
-        for (const s of data.stores) for (const p of data.periods) out.push([codes.get(s.store_id) || s.store_name, p.label, s.figures[p.key]?.target ?? "", s.figures[p.key]?.achieved ?? ""]);
-        if (out.length === 1) out.push(["AF-101", data.periods[0]?.label ?? "", 100, ""]);
-        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(out), "Targets");
-        XLSX.writeFile(wb, "targets-template.xlsx");
-    };
-    const read = async (file: File) => {
-        setBusy(true); setPlan(null);
-        try {
-            const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-            const grid = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: "" });
-            const head = (grid[0] ?? []).map(h => String(h).toLowerCase());
-            const col = (...names: string[]) => head.findIndex(h => names.some(n => h.includes(n)));
-            const c = { store: col("store", "code", "franchise"), period: col("period", "month", "quarter"), target: col("target"), achieved: col("achieved", "sold", "actual") };
-            if (c.store < 0 || (c.target < 0 && c.achieved < 0)) throw new Error("The first row needs a Store column and a Target or Achieved column");
-            const found = grid.slice(1).map((r, i) => ({
-                row: i + 2, store: String(r[c.store] ?? "").trim(), period: c.period >= 0 ? r[c.period] : "",
-                target: c.target >= 0 ? r[c.target] : "", achieved: c.achieved >= 0 ? r[c.achieved] : "",
-            })).filter(r => r.store || r.target || r.achieved);
-            setRows(found);
-            const p = await api.post(`/schemes/admin/${scheme.id}/targets/import`, { rows: found, dry_run: true });
-            setPlan(p.data);
-        } catch (e) {
-            toast({ title: "Could not read the sheet", description: getErrorMessage(e, "Check the file"), variant: "destructive" });
-        } finally { setBusy(false); }
-    };
-    const run = async () => {
-        setBusy(true);
-        try {
-            const r = await api.post(`/schemes/admin/${scheme.id}/targets/import`, { rows });
-            toast({ title: `Imported ${r.data.changes} rows`, description: r.data.new_stores.length ? `${r.data.new_stores.length} franchises added.` : undefined });
-            onDone();
-        } catch (e) { toast({ title: "Not imported", description: getErrorMessage(e, ""), variant: "destructive" }); }
-        finally { setBusy(false); }
-    };
-
-    return (
-        <Dialog open={open} onOpenChange={o => { if (!o && !busy) onClose(); }}>
-            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                    <DialogTitle>Import targets and achievement</DialogTitle>
-                    <DialogDescription>One row per franchise and period: store code (or exact name), period, target, achieved. A blank cell changes nothing; franchises not yet on the scheme are added.</DialogDescription>
-                </DialogHeader>
-                <div className="space-y-3">
-                    <Button variant="outline" size="sm" onClick={template}><Download className="h-4 w-4 mr-1" />Download the sheet with your franchises</Button>
-                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 p-5 text-sm font-semibold text-slate-700 hover:border-orange-400">
-                        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} Choose the filled sheet
-                        <input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) read(f); }} />
-                    </label>
-                    {plan && (
-                        <div className="space-y-2 text-sm">
-                            <p><b>{plan.changes}</b> of {plan.rows} rows will be saved.{plan.new_stores.length ? ` ${plan.new_stores.length} franchises will be added: ${plan.new_stores.slice(0, 8).join(", ")}${plan.new_stores.length > 8 ? "…" : ""}.` : ""}</p>
-                            {plan.problems.length > 0 && (
-                                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                                    <p className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="h-4 w-4" />{plan.problems.length} rows will be skipped</p>
-                                    <ul className="mt-1 max-h-40 overflow-y-auto list-disc pl-5 text-xs">{plan.problems.map(p => <li key={p.row}>Row {p.row}: {p.problem}</li>)}</ul>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <DialogFooter className="gap-2">
-                    <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-                    <Button className="bg-orange-500 hover:bg-orange-600" disabled={busy || !plan?.changes} onClick={run}>Import {plan?.changes ?? ""} rows</Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

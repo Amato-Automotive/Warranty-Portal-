@@ -15,7 +15,8 @@
  */
 
 export type RunMode = 'entries' | 'targets';
-export type TargetPeriod = 'whole' | 'month' | 'quarter';
+/* 'window': a target for each of the scheme's windows (e.g. each month it is open). */
+export type TargetPeriod = 'whole' | 'month' | 'quarter' | 'window';
 /** How a step's benefit is given: ₹ off each unit achieved, a % off the price, or a reward in words. */
 export type BenefitKind = 'per_unit' | 'percent' | 'fixed';
 
@@ -34,12 +35,18 @@ export interface TargetVisibility {
  * store's approved warranties registered in the period.
  */
 export type TargetSource = 'manual' | 'warranties';
+/** Which warranties count: approved only, or every one registered (not rejected). */
+export type WarrantyCount = 'approved' | 'registered';
+/** Which date places a warranty in a month and a window: when it was registered, or the purchase date on it. */
+export type WarrantyDate = 'registered' | 'purchase';
 
 export interface SchemeSettings {
     run: RunMode;
     source: TargetSource;
     /* Warranties: the store's monthly average is taken over this many full months before the scheme starts. */
     baseline_months: number;
+    count: WarrantyCount;
+    date_by: WarrantyDate;
     unit: string;
     period: TargetPeriod;
     benefit: BenefitKind;
@@ -51,6 +58,8 @@ export const DEFAULT_SETTINGS: SchemeSettings = {
     run: 'entries',
     source: 'manual',
     baseline_months: 3,
+    count: 'approved',
+    date_by: 'registered',
     unit: 'sets',
     period: 'month',
     benefit: 'per_unit',
@@ -63,7 +72,11 @@ export const DEFAULT_SETTINGS: SchemeSettings = {
  * gives each store a growth over its average and a reward for reaching the
  * target that growth makes; the store sees the number, never the growth.
  */
-export interface StoreTerms { steps?: TargetStep[]; note?: string; growth_pct?: number; reward?: string }
+export interface StoreTerms {
+    steps?: TargetStep[]; note?: string; growth_pct?: number; reward?: string;
+    /* The average the growth was put on, as the admin chose to see it, and its value then. */
+    basis?: AverageBasis; average?: number;
+}
 
 /** The steps and benefit kind one store is judged by: its reward, its own steps, or the scheme's. */
 export function stepsFor(terms: StoreTerms, s: SchemeSettings): { steps: TargetStep[]; benefit: BenefitKind } {
@@ -87,6 +100,65 @@ export function baselineMonths(startsOn: string, n: number): string[] {
 export function monthlyAverage(counts: Record<string, number>, months: string[]): number {
     if (!months.length) return 0;
     return months.reduce((n, m) => n + (counts[m] ?? 0), 0) / months.length;
+}
+
+/* ─── A store's average, as the admin chooses to see it ─────────────────── */
+
+/** Which average: every warranty so far, the last 3 or 6 full months, or a range the admin picks. */
+export interface AverageBasis { mode: 'overall' | 'm3' | 'm6' | 'custom'; from?: string; to?: string }
+
+export const DAYS_PER_MONTH = 365.25 / 12;
+const dayMs = 86_400_000;
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / dayMs) + 1;
+const shiftMonths = (ym: string, by: number) => {
+    let [y, m] = ym.split('-').map(Number);
+    m += by;
+    while (m < 1) { m += 12; y--; }
+    while (m > 12) { m -= 12; y++; }
+    return `${y}-${String(m).padStart(2, '0')}`;
+};
+const lastDay = (ym: string) => {
+    const [y, m] = ym.split('-').map(Number);
+    return `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+};
+
+/** A basis as days: the last 3 or 6 full months before this month, from the first warranty, or the admin's range. */
+export function basisRange(b: AverageBasis, today: string, firstDay: string | null): { from: string; to: string } | null {
+    const thisMonth = today.slice(0, 7);
+    if (b.mode === 'm3' || b.mode === 'm6') {
+        const n = b.mode === 'm3' ? 3 : 6;
+        return { from: `${shiftMonths(thisMonth, -n)}-01`, to: lastDay(shiftMonths(thisMonth, -1)) };
+    }
+    if (b.mode === 'custom') return b.from && b.to && b.from <= b.to ? { from: b.from, to: b.to } : null;
+    return firstDay && firstDay <= today ? { from: firstDay, to: today } : null;
+}
+
+/** Warranties a month over a range of days, from counts by day ("YYYY-MM-DD"), to one decimal. */
+export function averagePerMonth(daily: Record<string, number>, range: { from: string; to: string } | null): number {
+    if (!range) return 0;
+    let total = 0;
+    for (const [d, n] of Object.entries(daily)) if (d >= range.from && d <= range.to) total += n;
+    /* At least a month: a store with two days of warranties is not stretched into a month of them. */
+    const months = Math.max(1, daysBetween(range.from, range.to) / DAYS_PER_MONTH);
+    return Math.round((total / months) * 10) / 10;
+}
+
+/** Each window of a scheme as a period: from its first to its last day; about how many months it spans. */
+export function windowPeriods(windows: { start: string; end: string }[]): (Period & { from: string; to: string; days: number })[] {
+    return windows.filter(w => w.start && w.end).map(w => ({ from: w.start.slice(0, 10), to: w.end.slice(0, 10) }))
+        .sort((a, b) => a.from.localeCompare(b.from))
+        .map(({ from, to }) => {
+            const days = daysBetween(from, to);
+            const label = (d: string, year: boolean) => {
+                const [y, m, dd] = d.split('-').map(Number);
+                return `${dd} ${MONTHS[m - 1]}${year ? ` ${y}` : ''}`;
+            };
+            return {
+                key: from, from, to, days,
+                label: `${label(from, from.slice(0, 4) !== to.slice(0, 4))} – ${label(to, true)}`,
+                months: Array.from({ length: Math.max(1, Math.round(days / DAYS_PER_MONTH)) }, (_, i) => shiftMonths(from.slice(0, 7), i)),
+            };
+        });
 }
 
 /** The target a growth makes: the average × the months in the period × (1 + growth), rounded up. */
@@ -118,8 +190,10 @@ export function readSettings(raw: unknown): SchemeSettings {
         run: s.run === 'targets' ? 'targets' : 'entries',
         source: s.source === 'warranties' ? 'warranties' : 'manual',
         baseline_months: [1, 3, 6, 12].includes(Number(s.baseline_months)) ? Number(s.baseline_months) : d.baseline_months,
+        count: s.count === 'registered' ? 'registered' : 'approved',
+        date_by: s.date_by === 'purchase' ? 'purchase' : 'registered',
         unit:String(s.unit ?? '').trim().slice(0, 20) || d.unit,
-        period: (['whole', 'month', 'quarter'] as const).includes(s.period) ? s.period : d.period,
+        period: (['whole', 'month', 'quarter', 'window'] as const).includes(s.period) ? s.period : d.period,
         benefit: (['per_unit', 'percent', 'fixed'] as const).includes(s.benefit) ? s.benefit : d.benefit,
         steps: readSteps(s.steps),
         show: {

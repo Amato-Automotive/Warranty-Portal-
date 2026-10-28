@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { ClubBadge } from "@/components/schemes/ClubBadge";
 import type { Club } from "@/lib/schemes";
 import type { LeadsView } from "@/components/fms/FranchiseLeads";
+import { HomeSchemes, type HomeScheme } from "@/components/fms/HomeSchemes";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
@@ -42,6 +43,7 @@ interface RecentWarranty {
 export type HomeTarget =
     | { module: "warranty"; tab?: string; from?: string; to?: string }
     | { module: "leads"; view?: LeadsView }
+    | { module: "offers"; scheme_id?: string }
     | { module: string };
 
 interface FranchiseHomeProps {
@@ -55,12 +57,6 @@ interface FranchiseHomeProps {
     latestUpdates?: Notification[];
 }
 
-interface HomeScheme {
-    id: string; title: string; state: string; joined: boolean; has_score: boolean;
-    open_window: { start: string; end: string } | null;
-    next_window: { start: string; end: string } | null;
-    achieved: { score: number; rank: number; of: number; club?: Club | null } | null;
-}
 interface HomeLead { id: string; customer_name: string | null; customer_phone: string | null; car: string | null; received: string | null; status: string; group?: string }
 interface PendingWarranty { id?: string; uid?: string; customer_name?: string; registration_number?: string; car_make?: string; car_model?: string }
 interface ShippedOrder { id: string; distributor_name?: string | null; total_amount?: number | string | null }
@@ -287,7 +283,8 @@ export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts 
     const [period, setPeriod] = useState<Period>("month");
     const [store, setStore] = useState<string | null>(null);
     const [leads, setLeads] = useState<HomeLead[] | null>(null);
-    const [scheme, setScheme] = useState<HomeScheme | null | undefined>(undefined);
+    /* Every scheme running for the store and every one coming up, for "Your schemes". */
+    const [schemes, setSchemes] = useState<HomeScheme[] | undefined>(undefined);
     const [shipped, setShipped] = useState<ShippedOrder[]>([]);
     const [toVerify, setToVerify] = useState<PendingWarranty[]>([]);
     const [openTask, setOpenTask] = useState<string | null>(null);
@@ -322,9 +319,8 @@ export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts 
         }).catch(() => alive && setLeads([]));
         api.get("/schemes").then(r => {
             if (!alive) return;
-            const live: HomeScheme[] = (r.data.schemes || []).filter((s: HomeScheme) => s.state === "live");
-            setScheme(live.find(s => s.joined) ?? live[0] ?? null);
-        }).catch(() => alive && setScheme(null));
+            setSchemes((r.data.schemes || []).filter((s: HomeScheme) => s.state === "live" || s.state === "upcoming"));
+        }).catch(() => alive && setSchemes([]));
         return () => { alive = false; };
     }, [isFranchise]);
 
@@ -491,9 +487,12 @@ export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts 
                 {store && <span className="text-[15px] text-slate-500">{store}</span>}
             </header>
 
-            {/* Row 1: the period, and the scheme */}
+            {/* Your schemes: every one running, and those coming up */}
+            {isFranchise && <HomeSchemes schemes={schemes} lang={lang} onOpen={id => onOpen({ module: "offers", ...(id ? { scheme_id: id } : {}) })} />}
+
+            {/* Row 1: the period */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                <Card className={cn("p-5 sm:p-6 flex flex-col gap-5", isFranchise && scheme !== null ? "lg:col-span-2" : "lg:col-span-3")}>
+                <Card className="p-5 sm:p-6 flex flex-col gap-5 lg:col-span-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex flex-col">
                             <h2 className="text-lg font-bold text-slate-900">{heading}</h2>
@@ -537,46 +536,6 @@ export const FranchiseHome = ({ stats, recentActivity = [], onOpen, newProducts 
                         </div>
                     </div>
                 </Card>
-
-                {isFranchise && scheme !== null && (
-                    <section className="rounded-2xl bg-slate-900 text-white p-6 flex flex-col gap-4">
-                        {scheme === undefined ? (
-                            <div className="flex-1 rounded-xl bg-slate-800 animate-pulse min-h-[180px]" />
-                        ) : (
-                            <>
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-orange-300 truncate">{scheme.title}</span>
-                                    {scheme.open_window ? (
-                                        <span className="shrink-0 text-xs rounded-full bg-slate-800 px-2.5 py-1 text-slate-200">{t.openTill(windowDay(scheme.open_window.end, locale))}</span>
-                                    ) : scheme.next_window ? (
-                                        <span className="shrink-0 text-xs rounded-full bg-slate-800 px-2.5 py-1 text-slate-200">{t.opens(windowDay(scheme.next_window.start, locale))}</span>
-                                    ) : null}
-                                </div>
-                                {scheme.joined && scheme.achieved ? (
-                                    <>
-                                        {scheme.has_score && (
-                                            <div className="flex items-baseline gap-2">
-                                                <span className="text-6xl font-extrabold leading-none tabular-nums">{fmt(scheme.achieved.score)}</span>
-                                                <span className="text-slate-300">{t.points}</span>
-                                                <Tip text={t.pointsTip} dark />
-                                            </div>
-                                        )}
-                                        <div className="flex flex-wrap gap-2">
-                                            {scheme.achieved.club && <ClubBadge club={scheme.achieved.club} />}
-                                            {scheme.has_score && <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">{t.rank(scheme.achieved.rank)}</span>}
-                                        </div>
-                                    </>
-                                ) : (
-                                    <p className="text-sm text-slate-300">{scheme.joined ? t.noPointsYet : t.joinToEarn}</p>
-                                )}
-                                <button type="button" onClick={() => onOpen({ module: "offers" })}
-                                    className="mt-auto h-12 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold text-sm flex items-center justify-center gap-2 transition-colors">
-                                    {scheme.joined ? t.submit : t.join} <ArrowRight className="h-4 w-4" />
-                                </button>
-                            </>
-                        )}
-                    </section>
-                )}
             </div>
 
             {/* Row 2: waiting on you, and quick actions */}

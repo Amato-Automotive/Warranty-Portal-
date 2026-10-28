@@ -109,12 +109,12 @@ function Stat({ label, children, hint, className }: { label: string; children: R
     );
 }
 
-export const FranchiseSchemes = () => {
+export const FranchiseSchemes = ({ initialOpenId = null }: { initialOpenId?: string | null } = {}) => {
     const { toast } = useToast();
     const { t, tr } = useLanguage();
     const [list, setList] = useState<Listed[] | null>(null);
     const [tab, setTab] = useState<"now" | "upcoming" | "past">("now");
-    const [openId, setOpenId] = useState<string | null>(null);
+    const [openId, setOpenId] = useState<string | null>(initialOpenId);
     /* Opening a scheme from its card's "Submit invoice" opens the form too. */
     const [startSubmit, setStartSubmit] = useState(false);
     const [refreshing, setRefreshing] = useState(false);

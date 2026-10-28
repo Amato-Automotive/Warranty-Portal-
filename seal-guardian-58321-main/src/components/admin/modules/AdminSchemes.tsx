@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Gift, Loader2, Plus, Search, Trash2, RefreshCw, CalendarDays, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SchemeEditor } from "../schemes/SchemeEditor";
+import { TargetSchemeEditor } from "../schemes/TargetSchemeEditor";
 import { SchemeDetail } from "../schemes/SchemeDetail";
 import { CATEGORY_LABEL, STATE_META, formatDay, type Scheme, type SchemeState } from "@/lib/schemes";
 
@@ -56,7 +57,7 @@ export const AdminSchemes = () => {
     const [schemes, setSchemes] = useState<Listed[] | null>(null);
     const [tab, setTab] = useState<SchemeState>("live");
     const [search, setSearch] = useState("");
-    const [editing, setEditing] = useState<{ open: boolean; scheme: Scheme | null }>({ open: false, scheme: null });
+    const [editing, setEditing] = useState<{ open: boolean; scheme: Scheme | null; targets?: boolean }>({ open: false, scheme: null });
     const [openId, setOpenId] = useState<string | null>(null);
     const [toReview, setToReview] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -108,14 +109,14 @@ export const AdminSchemes = () => {
         }
     };
 
-    const editor = (
-        <SchemeEditor
-            open={editing.open}
-            scheme={editing.scheme}
-            onClose={() => setEditing({ open: false, scheme: null })}
-            onSaved={s => { setEditing({ open: false, scheme: null }); load(); setOpenId(s.id); }}
-        />
-    );
+    /* A target scheme has its own short form; every other scheme the full one. */
+    const isTargets = editing.targets || editing.scheme?.settings?.run === "targets";
+    const editorProps = {
+        open: editing.open, scheme: editing.scheme,
+        onClose: () => setEditing({ open: false, scheme: null }),
+        onSaved: (s: Scheme) => { setEditing({ open: false, scheme: null }); load(); setOpenId(s.id); },
+    };
+    const editor = isTargets ? <TargetSchemeEditor {...editorProps} /> : <SchemeEditor {...editorProps} />;
 
     if (openId) {
         return (
@@ -138,6 +139,9 @@ export const AdminSchemes = () => {
                     <Button variant="outline" size="icon" disabled={refreshing} aria-label="Refresh" title="Refresh"
                         onClick={() => { setRefreshing(true); load().finally(() => setRefreshing(false)); }}>
                         <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+                    </Button>
+                    <Button variant="outline" onClick={() => setEditing({ open: true, scheme: null, targets: true })}>
+                        <Plus className="h-4 w-4 mr-1.5" /> New target scheme
                     </Button>
                     <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => setEditing({ open: true, scheme: null })}>
                         <Plus className="h-4 w-4 mr-1.5" /> New scheme

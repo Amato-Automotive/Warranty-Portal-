@@ -12,8 +12,8 @@ import {
 import { correctEntry, type EntryEdit } from '../services/schemeCorrection.js';
 import {
     readSettings, settingsProblems, stepProblems, readSteps, periodsOf, targetResult, planTargetImport,
-    stepsFor, baselineMonths, monthlyAverage, growthTarget,
-    type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period,
+    stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth,
+    type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
 
 /**
@@ -333,56 +333,101 @@ async function announce(scheme: Scheme) {
 interface TargetHistory { at: string; by: string | null; field: 'target' | 'achieved' | 'paid'; from: number | string | null; to: number | string | null; reason: string | null }
 const dec = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
-/** Warranties by store and month ("2026-10"): approved, waiting and rejected, from these months on. */
-async function warrantyCounts(storeIds: string[], fromMonth: string) {
-    const out = new Map<string, Record<string, { approved: number; pending: number; rejected: number }>>();
-    if (!storeIds.length) return out;
-    /* created_at already reads in IST (the pool's session zone). */
+/** The warranty date a scheme counts by: registration (IST via the pool's session) or the purchase date on it. */
+const dateCol = (scheme: Scheme) => (scheme.settings.date_by === 'purchase' ? 'purchase_date' : 'created_at');
+
+type DayCount = { approved: number; pending: number; rejected: number };
+
+/**
+ * Warranties by store and day ("YYYY-MM-DD"): approved, waiting and rejected.
+ * `null` means every store (for the list of franchises to add).
+ */
+async function warrantyDaily(storeIds: string[] | null, col: 'created_at' | 'purchase_date') {
+    const out = new Map<string, Record<string, DayCount>>();
+    if (storeIds && !storeIds.length) return out;
     const [rows]: any = await db.execute(
-        `SELECT vendor_details_id AS store_id, DATE_FORMAT(created_at, '%Y-%m') AS month,
+        `SELECT vendor_details_id AS store_id, DATE_FORMAT(${col}, '%Y-%m-%d') AS d,
                 SUM(status = 'validated') AS approved, SUM(status = 'rejected') AS rejected,
                 SUM(status NOT IN ('validated', 'rejected')) AS pending
            FROM warranty_registrations
-          WHERE vendor_details_id IN (${storeIds.map(() => '?').join(',')}) AND created_at >= ?
-          GROUP BY vendor_details_id, month`,
-        [...storeIds, `${fromMonth}-01`]
+          WHERE vendor_details_id IS NOT NULL ${storeIds ? `AND vendor_details_id IN (${storeIds.map(() => '?').join(',')})` : ''}
+          GROUP BY vendor_details_id, d`,
+        storeIds ?? []
     );
     for (const r of rows) {
         const m = out.get(String(r.store_id)) ?? {};
-        m[r.month] = { approved: Number(r.approved) || 0, pending: Number(r.pending) || 0, rejected: Number(r.rejected) || 0 };
+        m[r.d] = { approved: Number(r.approved) || 0, pending: Number(r.pending) || 0, rejected: Number(r.rejected) || 0 };
         out.set(String(r.store_id), m);
     }
     return out;
 }
 
-/** The 12 months before a scheme starts, with its months: the window a store's warranty history is shown for. */
-const historyFrom = (scheme: Scheme) => baselineMonths(scheme.starts_on, 12)[0];
+/** What one day adds to a count: approved only, or waiting ones too. */
+const countOf = (scheme: Scheme, c: DayCount) => c.approved + (scheme.settings.count === 'registered' ? c.pending : 0);
 
-/** A store's warranty history and average, as the admin sees it when setting its growth. */
-function warrantyStats(scheme: Scheme, counts: Record<string, { approved: number; pending: number; rejected: number }> = {}) {
-    const base = baselineMonths(scheme.starts_on, scheme.settings.baseline_months);
-    const approved = Object.fromEntries(Object.entries(counts).map(([m, c]) => [m, c.approved]));
+/** A scheme's periods: its windows on a target scheme counted from warranties, else months/quarters/whole. */
+function periodsFor(scheme: Scheme): (Period & { from?: string; to?: string })[] {
+    return scheme.settings.period === 'window' ? windowPeriods(scheme.windows) : periodsFor(scheme);
+}
+const inPeriod = (p: Period & { from?: string; to?: string }, d: string) => (p.from && p.to ? d >= p.from && d <= p.to : p.months.includes(d.slice(0, 7)));
+
+/** The basis an admin sent: overall, the last 3 or 6 months, or a range of days. */
+function readBasis(raw: any): AverageBasis {
+    const mode = ['overall', 'm3', 'm6', 'custom'].includes(raw?.mode) ? raw.mode : 'm3';
+    const ok = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+    return mode === 'custom' ? { mode, from: ok(raw?.from), to: ok(raw?.to) } : { mode };
+}
+
+/** A store's average a month on one basis, from its days. */
+function averageFor(scheme: Scheme, daily: Record<string, DayCount>, basis: AverageBasis) {
+    const counts = Object.fromEntries(Object.entries(daily).map(([d, c]) => [d, countOf(scheme, c)]));
+    const first = Object.keys(daily).sort()[0] ?? null;
+    return averagePerMonth(counts, basisRange(basis, istNow().slice(0, 10), first));
+}
+
+/** A store's warranties: the last 12 months by status, and its average on every basis the admin can look at. */
+function warrantyStats(scheme: Scheme, daily: Record<string, DayCount> = {}, custom: AverageBasis | null = null) {
+    const now = istNow().slice(0, 7);
+    let [y, m] = now.split('-').map(Number);
+    const months: string[] = [];
+    for (let i = 0; i < 12; i++) { months.unshift(`${y}-${String(m).padStart(2, '0')}`); m--; if (m < 1) { m = 12; y--; } }
+    const byMonth = new Map<string, DayCount>();
+    for (const [d, c] of Object.entries(daily)) {
+        const k = d.slice(0, 7);
+        const t = byMonth.get(k) ?? { approved: 0, pending: 0, rejected: 0 };
+        t.approved += c.approved; t.pending += c.pending; t.rejected += c.rejected;
+        byMonth.set(k, t);
+    }
     return {
-        months: baselineMonths(scheme.starts_on, 12).map(m => ({ month: m, ...(counts[m] ?? { approved: 0, pending: 0, rejected: 0 }) })),
-        average: Math.round(monthlyAverage(approved, base) * 10) / 10,
-        average_over: base,
+        months: months.map(k => ({ month: k, ...(byMonth.get(k) ?? { approved: 0, pending: 0, rejected: 0 }) })),
+        averages: {
+            overall: averageFor(scheme, daily, { mode: 'overall' }),
+            m3: averageFor(scheme, daily, { mode: 'm3' }),
+            m6: averageFor(scheme, daily, { mode: 'm6' }),
+            custom: custom ? averageFor(scheme, daily, custom) : null,
+        },
+        first_day: Object.keys(daily).sort()[0] ?? null,
+        /* As the scheme counts (approved, or all registered): the last full month, and the best of the 12. */
+        last_month: (() => { const c = byMonth.get(months[months.length - 2]); return c ? countOf(scheme, c) : 0; })(),
+        best_month: Math.max(0, ...months.map(k => { const c = byMonth.get(k); return c ? countOf(scheme, c) : 0; })),
     };
 }
 
-/** Targets a growth makes for every period, from the store's average. */
-function growthTargets(scheme: Scheme, periods: Period[], average: number, growthPct: number) {
+/** Targets a growth makes for every period, from the average the admin chose. */
+function growthTargets(periods: Period[], average: number, growthPct: number) {
     return Object.fromEntries(periods.map(p => [p.key, growthTarget(average, growthPct, p.months.length)]));
 }
 
 /** Every franchise on a target scheme, its own terms, and its figures per period with the result. */
-async function schemeTargets(scheme: Scheme) {
-    const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
+async function schemeTargets(scheme: Scheme, custom: AverageBasis | null = null) {
+    const periods = periodsFor(scheme);
     const [members]: any = await db.execute('SELECT store_id, joined_at, terms FROM scheme_participants WHERE scheme_id = ? ORDER BY joined_at', [scheme.id]);
     const [rows]: any = await db.execute('SELECT * FROM scheme_targets WHERE scheme_id = ?', [scheme.id]);
     const ids = members.map((m: any) => String(m.store_id));
     const stores = await storesById(ids);
     const fromWarranties = scheme.settings.source === 'warranties';
-    const counts = fromWarranties ? await warrantyCounts(ids, historyFrom(scheme)) : new Map();
+    const daily = fromWarranties ? await warrantyDaily(ids, dateCol(scheme)) : new Map<string, Record<string, DayCount>>();
+    const registered = scheme.settings.count === 'registered';
     const byStore = new Map<string, any[]>();
     for (const r of rows) byStore.set(String(r.store_id), [...(byStore.get(String(r.store_id)) ?? []), r]);
     return {
@@ -391,17 +436,19 @@ async function schemeTargets(scheme: Scheme) {
             const id = String(m.store_id);
             const terms = json<StoreTerms>(m.terms, {});
             const { steps, benefit } = stepsFor(terms, scheme.settings);
-            const mine = counts.get(id) ?? {};
+            const days = daily.get(id) ?? {};
             const saved = new Map((byStore.get(id) ?? []).map((r: any) => [r.period, r]));
             const figures: Record<string, unknown> = {};
             for (const p of periods) {
                 const r: any = saved.get(p.key);
-                /* With warranties, achieved is what was approved in the period's months, counted live. */
-                const sum = (k: 'approved' | 'pending') => p.months.reduce((n, mo) => n + (mine[mo]?.[k] ?? 0), 0);
                 if (!r && !fromWarranties) continue;
-                const target = dec(r?.target), achieved = fromWarranties ? sum('approved') : dec(r?.achieved);
+                /* With warranties, achieved is counted live: those dated in the period (a window's days). */
+                let approved = 0, pending = 0;
+                for (const [d, c] of Object.entries(days)) if (inPeriod(p, d)) { approved += c.approved; pending += c.pending; }
+                const target = dec(r?.target);
+                const achieved = fromWarranties ? approved + (registered ? pending : 0) : dec(r?.achieved);
                 figures[p.key] = {
-                    target, achieved, pending: fromWarranties ? sum('pending') : null,
+                    target, achieved, pending: fromWarranties && !registered ? pending : null,
                     paid_at: r?.paid_at ?? null, updated_at: r?.updated_at ?? null,
                     history: json<TargetHistory[]>(r?.history, []),
                     result: targetResult(target, achieved, steps, benefit),
@@ -412,19 +459,20 @@ async function schemeTargets(scheme: Scheme) {
                 city: stores.get(id)?.city ?? null, state: stores.get(id)?.state ?? null,
                 own_steps: terms.steps?.length ? terms.steps : null, note: terms.note ?? null,
                 growth_pct: terms.growth_pct ?? null, reward: terms.reward ?? null,
-                stats: fromWarranties ? warrantyStats(scheme, mine) : null,
+                basis: terms.basis ?? null, basis_average: terms.average ?? null,
+                stats: fromWarranties ? warrantyStats(scheme, days, custom) : null,
                 joined_at: m.joined_at, figures,
             };
         }),
     };
 }
 
-/** The period today falls in, else the last one (a scheme that has ended), else the first. */
-function currentPeriod(scheme: Scheme, periods: { key: string }[]) {
+/** The period today falls in, else the last one started, else the first. */
+function currentPeriod(scheme: Scheme, periods: (Period & { from?: string; to?: string })[]) {
     if (!periods.length) return null;
     if (periods.length === 1) return periods[0].key;
-    const month = istNow().slice(0, 7);
-    const hit = [...periods].reverse().find(p => (p.key.startsWith('Q') ? p.key.slice(1) : p.key) <= month);
+    const today = istNow().slice(0, 10);
+    const hit = [...periods].reverse().find(p => (p.from ? p.from <= today : (p.key.startsWith('Q') ? p.key.slice(1) : p.key) <= today.slice(0, 7)));
     return (hit ?? periods[0]).key;
 }
 
@@ -438,7 +486,9 @@ async function storeTargets(scheme: Scheme, storeId: string) {
         const f: any = me?.figures[p.key];
         const r = f?.result;
         return {
-            key: p.key, label: p.label,
+            key: p.key, label: p.label, from: (p as any).from ?? null, to: (p as any).to ?? null,
+            /* The reward it is working towards, before it has earned it. */
+            reward: steps.length === 1 ? steps[0].reward ?? null : null,
             target: show.target ? f?.target ?? null : null,
             achieved: show.achieved ? f?.achieved ?? null : null,
             pending: show.achieved ? f?.pending ?? null : null,
@@ -529,7 +579,7 @@ async function writeFigures(req: Request, scheme: Scheme, changes: TargetChange[
 
 /** The figures an admin sent, read: numbers or blanks, for this scheme's stores and periods only. */
 function readChanges(raw: unknown, scheme: Scheme, storeIds: Set<string>): TargetChange[] {
-    const periods = new Set(periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period).map(p => p.key));
+    const periods = new Set(periodsFor(scheme).map(p => p.key));
     const out: TargetChange[] = [];
     for (const c of (Array.isArray(raw) ? raw : []).slice(0, 5000)) {
         const store_id = String(c?.store_id ?? ''), period = String(c?.period ?? '');
@@ -559,11 +609,18 @@ export class SchemeController {
         try {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
-            const t = await schemeTargets(scheme);
+            const custom = req.query.avg_from ? readBasis({ mode: 'custom', from: req.query.avg_from, to: req.query.avg_to }) : null;
+            const t = await schemeTargets(scheme, custom);
             const on = new Set(t.stores.map((x: any) => x.store_id));
+            const free = (await allFranchises()).filter((f: any) => !on.has(f.id));
+            const daily = scheme.settings.source === 'warranties' ? await warrantyDaily(null, dateCol(scheme)) : new Map<string, Record<string, DayCount>>();
             res.json({
                 success: true, ...t, settings: scheme.settings, current: currentPeriod(scheme, t.periods),
-                franchises: (await allFranchises()).filter((f: any) => !on.has(f.id)),
+                franchises: free.map((f: any) => {
+                    if (scheme.settings.source !== 'warranties') return { ...f, averages: null, last_month: null, best_month: null };
+                    const st = warrantyStats(scheme, daily.get(f.id) ?? {}, custom);
+                    return { ...f, averages: st.averages, last_month: st.last_month, best_month: st.best_month };
+                }),
             });
         } catch (error: any) {
             console.error('[Schemes] targets:', error);
@@ -593,13 +650,14 @@ export class SchemeController {
                 ...(steps.length ? { steps } : {}), ...(note ? { note } : {}),
                 ...(growth !== null ? { growth_pct: growth } : {}), ...(reward ? { reward } : {}),
             };
-            const added = await enrol(scheme, storeId, Object.keys(terms).length ? terms : null);
             let typed: Record<string, unknown> = req.body?.targets ?? {};
             if (growth !== null && scheme.settings.source === 'warranties') {
-                const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
-                const stats = warrantyStats(scheme, (await warrantyCounts([storeId], historyFrom(scheme))).get(storeId));
-                typed = growthTargets(scheme, periods, stats.average, growth);
+                const basis = readBasis(req.body?.basis);
+                const average = averageFor(scheme, (await warrantyDaily([storeId], dateCol(scheme))).get(storeId) ?? {}, basis);
+                Object.assign(terms, { basis, average });
+                typed = growthTargets(periodsFor(scheme), average, growth);
             }
+            const added = await enrol(scheme, storeId, Object.keys(terms).length ? terms : null);
             const targets = Object.entries(typed).filter(([, v]) => v !== '' && v !== null && v !== undefined)
                 .map(([period, target]) => ({ store_id: storeId, period, target }));
             const changes = readChanges(targets, scheme, new Set([storeId]));
@@ -625,8 +683,9 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
             const storeId = String(req.query.store_id ?? '');
-            const counts = (await warrantyCounts([storeId], historyFrom(scheme))).get(storeId);
-            res.json({ success: true, stats: warrantyStats(scheme, counts), periods: periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period) });
+            const daily = (await warrantyDaily([storeId], dateCol(scheme))).get(storeId) ?? {};
+            const custom = req.query.avg_from ? readBasis({ mode: 'custom', from: req.query.avg_from, to: req.query.avg_to }) : null;
+            res.json({ success: true, stats: warrantyStats(scheme, daily, custom), periods: periodsFor(scheme) });
         } catch (error: any) {
             console.error('[Schemes] target stats:', error);
             res.status(500).json({ error: 'Could not load the warranties' });
@@ -646,8 +705,9 @@ export class SchemeController {
             const list = (Array.isArray(req.body?.stores) ? req.body.stores : []).slice(0, 2000);
             const [members]: any = await db.execute('SELECT store_id, terms FROM scheme_participants WHERE scheme_id = ?', [scheme.id]);
             const termsOf = new Map(members.map((m: any) => [String(m.store_id), json<StoreTerms>(m.terms, {})]));
-            const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
-            const counts = await warrantyCounts([...on], historyFrom(scheme));
+            const periods = periodsFor(scheme);
+            const basis = readBasis(req.body?.basis);
+            const daily = await warrantyDaily([...on], dateCol(scheme));
             const changes: TargetChange[] = [];
             const updates: [string, StoreTerms][] = [];
             for (const x of list) {
@@ -661,8 +721,9 @@ export class SchemeController {
                         if (!Number.isFinite(g) || g < -100 || g > 1000) return res.status(400).json({ error: 'Growth must be a % between -100 and 1000' });
                         t.growth_pct = g;
                         if (scheme.settings.source === 'warranties') {
-                            const avg = warrantyStats(scheme, counts.get(id)).average;
-                            for (const [period, target] of Object.entries(growthTargets(scheme, periods, avg, g))) changes.push({ store_id: id, period, target });
+                            const avg = averageFor(scheme, daily.get(id) ?? {}, basis);
+                            t.basis = basis; t.average = avg;
+                            for (const [period, target] of Object.entries(growthTargets(periods, avg, g))) changes.push({ store_id: id, period, target });
                         }
                     }
                 }
@@ -755,7 +816,7 @@ export class SchemeController {
             }));
             if (!rows.length) return res.status(400).json({ error: 'The sheet has no rows' });
             const franchises = await allFranchises();
-            const periods = periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
+            const periods = periodsFor(scheme);
             const { changes, problems } = planTargetImport(rows, franchises, periods);
             const on = new Set(scheme.eligibility.store_ids ?? []);
             const newStores = [...new Set(changes.map(c => c.store_id).filter(id => !on.has(id)))];
@@ -911,7 +972,9 @@ export class SchemeController {
                 s.fields = []; s.score = { mode: 'none' }; s.rewards = { mode: 'none' }; s.clubs = [];
                 s.eligibility = { mode: 'stores', store_ids: existing?.settings.run === 'targets' ? existing.eligibility.store_ids ?? [] : [], brand: null };
             }
-            const problems = [...schemeProblems(s), ...settingsProblems(s.settings)];
+            /* A target scheme gets its stores after it is saved, from its own page. */
+            const problems = [...schemeProblems(s), ...settingsProblems(s.settings)]
+                .filter(p => !(s.settings.run === 'targets' && p === 'Pick at least one store'));
             if (problems.length) return res.status(400).json({ error: problems[0], problems });
 
             const span = windowSpan(s.windows);
@@ -960,7 +1023,8 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme) return res.status(404).json({ error: 'Scheme not found' });
             if (scheme.status !== 'draft') return res.status(400).json({ error: 'Only a draft can be published' });
-            const problems = [...schemeProblems({ ...scheme, score: scheme.score_rule }), ...settingsProblems(scheme.settings)];
+            const problems = [...schemeProblems({ ...scheme, score: scheme.score_rule }), ...settingsProblems(scheme.settings)]
+                .map(p => (scheme.settings.run === 'targets' && p === 'Pick at least one store' ? 'Add at least one franchise before publishing' : p));
             if (problems.length) return res.status(400).json({ error: problems[0], problems });
             await db.execute("UPDATE schemes SET status = 'published', published_at = NOW() WHERE id = ?", [scheme.id]);
             const saved = (await loadScheme(scheme.id))!;

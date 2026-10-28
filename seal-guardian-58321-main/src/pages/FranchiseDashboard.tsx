@@ -139,6 +139,9 @@ const FranchiseDashboard = () => {
         }
     }, [activeModule]);
 
+    const [openSchemeId, setOpenSchemeId] = useState<string | null>(null);
+    // Leaving Offers & Schemes forgets the scheme a home card opened, so the menu opens the list.
+    useEffect(() => { if (activeModule !== 'offers') setOpenSchemeId(null); }, [activeModule]);
     const openFromHome = (target: HomeTarget) => {
         if (target.module === 'warranty' && 'tab' in target) {
             setActiveStatusTab(target.tab ?? 'all');
@@ -149,6 +152,8 @@ const FranchiseDashboard = () => {
             homeFilteredWarranties.current = true;
         }
         if (target.module === 'leads' && 'view' in target) setLeadsView(target.view);
+        // A scheme card on the home opens that scheme.
+        if (target.module === 'offers') setOpenSchemeId('scheme_id' in target ? target.scheme_id ?? null : null);
         setActiveModule(target.module as FmsModule);
     };
 
@@ -851,7 +856,7 @@ const FranchiseDashboard = () => {
             case 'offers':
                 return (
                     <div className="-mt-8 md:-mt-14">
-                        <FranchiseSchemes />
+                        <FranchiseSchemes key={openSchemeId ?? 'all'} initialOpenId={openSchemeId} />
                     </div>
                 );
             case 'audit':

@@ -87,20 +87,23 @@ export interface Scheme {
  * step (a share of the target) earns that step's benefit.
  */
 export type RunMode = "entries" | "targets";
-export type TargetPeriod = "whole" | "month" | "quarter";
+export type TargetPeriod = "whole" | "month" | "quarter" | "window";
 export type BenefitKind = "per_unit" | "percent" | "fixed";
 /** Where achievement comes from: typed by the admin, or counted from the store's approved warranties. */
 export type TargetSource = "manual" | "warranties";
+/** Approved warranties only, or every one registered (not rejected); dated by registration or by purchase. */
+export type WarrantyCount = "approved" | "registered";
+export type WarrantyDate = "registered" | "purchase";
 export interface TargetStep { pct: number; amount?: number; reward?: string }
 export interface TargetVisibility { target: boolean; achieved: boolean; percent: boolean; steps: boolean; to_next: boolean }
 export interface SchemeSettings {
-    run: RunMode; source: TargetSource; baseline_months: number; unit: string; period: TargetPeriod; benefit: BenefitKind; steps: TargetStep[]; show: TargetVisibility;
+    run: RunMode; source: TargetSource; baseline_months: number; count: WarrantyCount; date_by: WarrantyDate; unit: string; period: TargetPeriod; benefit: BenefitKind; steps: TargetStep[]; show: TargetVisibility;
 }
 export const DEFAULT_SETTINGS: SchemeSettings = {
-    run: "entries", source: "manual", baseline_months: 3, unit: "sets", period: "month", benefit: "per_unit", steps: [],
+    run: "entries", source: "manual", baseline_months: 3, count: "approved", date_by: "registered", unit: "sets", period: "month", benefit: "per_unit", steps: [],
     show: { target: true, achieved: true, percent: true, steps: true, to_next: false },
 };
-export const PERIOD_LABEL: Record<TargetPeriod, string> = { whole: "Whole scheme", month: "Monthly", quarter: "Quarterly" };
+export const PERIOD_LABEL: Record<TargetPeriod, string> = { whole: "Whole scheme", month: "Monthly", quarter: "Quarterly", window: "Each window" };
 export const BENEFIT_LABEL: Record<BenefitKind, string> = {
     per_unit: "₹ off per unit (on every unit achieved)", percent: "% off the price", fixed: "A reward (written)",
 };
@@ -122,11 +125,19 @@ export interface TargetStore {
     own_steps: TargetStep[] | null; note: string | null; joined_at: string;
     /* Counted from warranties: the growth over its average and its reward; the store never sees the growth. */
     growth_pct: number | null; reward: string | null; stats: WarrantyStats | null;
+    /* The average the growth was put on, and its value then. */
+    basis: AverageBasis | null; basis_average: number | null;
     figures: Record<string, TargetFigures>;
 }
-export interface Period { key: string; label: string; months: string[] }
+export interface Period { key: string; label: string; months: string[]; from?: string; to?: string; days?: number }
 /** A store's warranties per month before the scheme, and its average of approved ones. */
-export interface WarrantyStats { months: { month: string; approved: number; pending: number; rejected: number }[]; average: number; average_over: string[] }
+/** Which average the admin looks at: every warranty so far, the last 3 or 6 full months, or a range of days. */
+export interface AverageBasis { mode: "overall" | "m3" | "m6" | "custom"; from?: string; to?: string }
+export const BASIS_LABEL: Record<AverageBasis["mode"], string> = { overall: "Overall", m3: "Last 3 months", m6: "Last 6 months", custom: "Custom dates" };
+export interface Averages { overall: number; m3: number; m6: number; custom: number | null }
+/** A store's warranties: the last 12 months by status, and its average a month on each basis. */
+export interface WarrantyStats { months: { month: string; approved: number; pending: number; rejected: number }[]; averages: Averages; first_day: string | null }
+export const averageOn = (a: Averages | null | undefined, b: AverageBasis) => (a ? (b.mode === "custom" ? a.custom ?? 0 : a[b.mode]) : 0);
 /** The target a growth makes (same as the server's growthTarget). */
 export const growthTarget = (average: number, pct: number, months: number) => Math.ceil(average * months * (1 + pct / 100) - 1e-9);
 

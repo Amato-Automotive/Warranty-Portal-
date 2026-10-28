@@ -109,3 +109,24 @@ test('an import matches stores by code, email or one exact name, and says what i
     ]);
     assert.deepEqual(problems.map(p => p.row), [4, 5, 6, 7]);
 });
+
+test('averages the admin can look at: last 3 / 6 full months, overall, or a range', async () => {
+    const { basisRange, averagePerMonth, windowPeriods } = await import('../schemeTargets.js');
+    assert.deepEqual(basisRange({ mode: 'm3' }, '2026-11-10', null), { from: '2026-08-01', to: '2026-10-31' });
+    assert.deepEqual(basisRange({ mode: 'm6' }, '2026-02-03', null), { from: '2025-08-01', to: '2026-01-31' });
+    assert.equal(basisRange({ mode: 'custom', from: '2026-09-01', to: '2026-08-01' }, '2026-11-10', null), null);
+    assert.equal(basisRange({ mode: 'overall' }, '2026-11-10', null), null);
+    const daily = { '2026-08-05': 30, '2026-09-10': 30, '2026-10-20': 30, '2026-11-01': 99 };
+    assert.equal(averagePerMonth(daily, basisRange({ mode: 'm3' }, '2026-11-10', null)), 29.8);
+    const w = windowPeriods([{ start: '2026-12-01T00:00', end: '2026-12-31T23:59' }, { start: '2026-11-01T00:00', end: '2026-11-30T23:59' }]);
+    assert.deepEqual(w.map(p => p.key), ['2026-11-01', '2026-12-01']);
+    assert.equal(w[0].label, '1 Nov – 30 Nov 2026');
+    assert.equal(w[0].months.length, 1);
+});
+
+test('a store new to the portal is never stretched past its warranties', async () => {
+    const { basisRange, averagePerMonth } = await import('../schemeTargets.js');
+    // One warranty, the first one yesterday: 1 a month, not 15.
+    assert.equal(averagePerMonth({ '2026-10-26': 1 }, basisRange({ mode: 'overall' }, '2026-10-27', '2026-10-26')), 1);
+    assert.equal(averagePerMonth({ '2026-10-20': 4 }, { from: '2026-10-20', to: '2026-10-22' }), 4);
+});
