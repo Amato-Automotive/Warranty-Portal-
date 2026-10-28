@@ -6,6 +6,7 @@ import { ModuleLayout } from "@/components/fms/ModuleLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { LogOut, X } from "lucide-react";
+import { brandLook } from "@/lib/brand";
 import { Tx } from "@/contexts/LanguageContext";
 import { menuGroups, SidebarItem } from "@/components/fms/DashboardSidebar";
 
@@ -92,8 +93,8 @@ const VendorPortalLayout = () => {
                         <SheetHeader className="p-8 border-b border-orange-50 shrink-0">
                             <div className="flex items-center justify-between">
                                 <img
-                                    src="/autoform-logo.png"
-                                    alt="Autoform Logo"
+                                    src={brandLook(user?.brand).logo}
+                                    alt={`${brandLook(user?.brand).name} logo`}
                                     className="h-8 object-contain"
                                 />
                                 <SheetTitle className="sr-only">Navigation Menu</SheetTitle>

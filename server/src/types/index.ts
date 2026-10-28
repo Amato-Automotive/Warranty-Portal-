@@ -28,6 +28,8 @@ export interface RegisterData {
   pincode?: string;
   gstNumber?: string;
   manpower?: ManpowerData[];
+  /** The franchise's brand: Autoform, Autocruze or both. */
+  brand?: 'AF' | 'AC' | 'AFAC';
 }
 
 export interface LoginData {

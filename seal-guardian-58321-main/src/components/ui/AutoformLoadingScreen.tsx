@@ -1,14 +1,16 @@
-import { useEffect } from "react";
+import { brandLook } from "@/lib/brand";
 
-const AutoformLoadingScreen = () => {
-  const letters = "AUTOFORM".split("");
+/** The loading screen, in the store's brand when it is known (Autoform otherwise). */
+const AutoformLoadingScreen = ({ brand }: { brand?: string | null }) => {
+  const look = brandLook(brand);
+  const letters = look.word.split("");
 
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-slate-50 to-white flex items-center justify-center z-50">
       {/* Loader Logo Container */}
       <div className="flex items-center justify-center gap-3">
         {/* Icon with appear + pulse animation */}
-        <img
+        {look.key === "AF" && <img
           src="/autoform-icon.png"
           alt=""
           className="w-12 h-auto"
@@ -19,7 +21,7 @@ const AutoformLoadingScreen = () => {
           onError={(e) => {
             (e.target as HTMLImageElement).style.display = 'none';
           }}
-        />
+        />}
 
         {/* Animated Letters */}
         <div className="flex gap-[2px]">

@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { brandLook } from "@/lib/brand";
 import {
     ShieldCheck,
     ShoppingBag,
@@ -213,6 +214,7 @@ export const menuGroups = [
 ];
 export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, onToggleCollapse }: DashboardSidebarProps) => {
     const { logout, user } = useAuth();
+    const look = brandLook(user?.brand);
     const { notifications } = useNotifications();
     const { isDistributor, isFranchise } = useB2BCart();
     const navigate = useNavigate();
@@ -267,15 +269,13 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
                     isCollapsed ? "justify-center w-full mb-3" : "justify-center w-full"
                 )}>
                     {isCollapsed ? (
-                        <img
-                            src="/favicon.png"
-                            alt="Logo"
-                            className="h-10 w-10 object-contain animate-in-fade"
-                        />
+                        look.icon
+                            ? <img src={look.icon} alt={look.name} className="h-10 w-10 object-contain animate-in-fade" />
+                            : <span aria-label={look.name} className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-sm font-black text-white animate-in-fade">{look.initials}</span>
                     ) : (
                         <img
-                            src="/autoform-logo.png"
-                            alt="Autoform Logo"
+                            src={look.logo}
+                            alt={`${look.name} logo`}
                             className="h-10 object-contain animate-in-fade max-w-[160px]"
                         />
                     )}

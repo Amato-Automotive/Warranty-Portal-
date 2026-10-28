@@ -28,16 +28,44 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
-import { formatToIST } from "@/lib/utils";
-import { Trash2, Plus, Package, Pencil } from "lucide-react";
+import { cn, formatToIST } from "@/lib/utils";
+import { Trash2, Plus, Package, Pencil, Search } from "lucide-react";
+
+type ProductBrand = 'AF' | 'AC' | 'AFAC';
 
 interface Product {
     id: string;
     name: string;
     type: 'seat_cover' | 'ev_product';
     warranty_years: string;
+    /** Which stores' warranty forms list it: Autoform, Autocruze, or both. */
+    brand?: ProductBrand;
     updated_at?: string;
 }
+
+const BRAND: Record<ProductBrand, { label: string; tone: string }> = {
+    AF: { label: 'Autoform', tone: 'bg-orange-100 text-orange-800' },
+    AC: { label: 'Autocruze', tone: 'bg-slate-900 text-white' },
+    AFAC: { label: 'Both', tone: 'bg-violet-100 text-violet-800' },
+};
+const TABS: { key: 'all' | ProductBrand; label: string }[] = [
+    { key: 'all', label: 'All' }, { key: 'AF', label: 'Autoform' }, { key: 'AC', label: 'Autocruze' }, { key: 'AFAC', label: 'Both' },
+];
+
+/** The brand of a product, as a choice of three. */
+const BrandChoice = ({ value, onChange }: { value: ProductBrand; onChange: (b: ProductBrand) => void }) => (
+    <div className="grid gap-2">
+        <Label>Brand</Label>
+        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Brand">
+            {(Object.keys(BRAND) as ProductBrand[]).map(b => (
+                <button key={b} type="button" role="radio" aria-checked={value === b} onClick={() => onChange(b)}
+                    className={cn("h-11 rounded-lg border text-sm font-bold", value === b ? "border-orange-600 bg-orange-50 text-orange-800" : "border-gray-300 bg-white text-gray-800 hover:bg-gray-50")}>
+                    {BRAND[b].label}
+                </button>
+            ))}
+        </div>
+    </div>
+);
 
 export function AdminWarrantyProducts() {
     const { toast } = useToast();
@@ -46,11 +74,11 @@ export function AdminWarrantyProducts() {
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-    const [newProduct, setNewProduct] = useState({
-        name: "",
-        type: "seat_cover",
-        warranty_years: ""
-    });
+    const [tab, setTab] = useState<'all' | ProductBrand>('all');
+    const [find, setFind] = useState('');
+    const blank = (): { name: string; type: string; warranty_years: string; brand: ProductBrand } =>
+        ({ name: "", type: "seat_cover", warranty_years: "", brand: tab === 'all' ? 'AF' : tab });
+    const [newProduct, setNewProduct] = useState(blank);
 
     const fetchProducts = async () => {
         try {
@@ -92,7 +120,7 @@ export function AdminWarrantyProducts() {
                     description: "Product added successfully",
                 });
                 setIsAddDialogOpen(false);
-                setNewProduct({ name: "", type: "seat_cover", warranty_years: "" });
+                setNewProduct(blank());
                 fetchProducts();
             }
         } catch (error: any) {
@@ -159,14 +187,31 @@ export function AdminWarrantyProducts() {
     };
 
     const openEditDialog = (product: Product) => {
-        setEditingProduct(product);
+        setEditingProduct({ ...product, brand: product.brand ?? 'AF' });
         setIsEditDialogOpen(true);
     };
 
+    const brandOf = (p: Product): ProductBrand => p.brand ?? 'AF';
+    const needle = find.trim().toLowerCase();
+    // Autoform and Autocruze list the products marked so; Both lists every product.
+    const seenBy = (k: 'all' | ProductBrand, p: Product) => k === 'all' || k === 'AFAC' || brandOf(p) === k;
+    const shown = products.filter(p => seenBy(tab, p) && (!needle || p.name.toLowerCase().includes(needle)));
+    const count = (k: 'all' | ProductBrand) => products.filter(p => seenBy(k, p)).length;
+
     return (
         <div className="space-y-6">
-            <div className="flex justify-end items-center">
-                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                {/* By brand: which stores' warranty forms list each product. */}
+                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Brand">
+                    {TABS.map(t => (
+                        <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
+                            className={cn("flex h-10 items-center gap-2 rounded-full border px-4 text-sm font-bold",
+                                tab === t.key ? "border-gray-900 bg-gray-900 text-white" : "border-gray-300 bg-white text-gray-900")}>
+                            {t.label}<span className={cn("rounded-full px-2 py-0.5 text-xs", tab === t.key ? "bg-white/20" : "bg-gray-100")}>{count(t.key)}</span>
+                        </button>
+                    ))}
+                </div>
+                <Dialog open={isAddDialogOpen} onOpenChange={o => { setIsAddDialogOpen(o); if (o) setNewProduct(blank()); }}>
                     <DialogTrigger asChild>
                         <Button>
                             <Plus className="mr-2 h-4 w-4" /> Add Product
@@ -189,6 +234,7 @@ export function AdminWarrantyProducts() {
                                     placeholder="e.g., Premium Leather Seat Cover"
                                 />
                             </div>
+                            <BrandChoice value={newProduct.brand} onChange={b => setNewProduct({ ...newProduct, brand: b })} />
                             <div className="grid gap-2">
                                 <Label htmlFor="type">Product Type</Label>
                                 <Select
@@ -242,6 +288,7 @@ export function AdminWarrantyProducts() {
                                         placeholder="e.g., Premium Leather Seat Cover"
                                     />
                                 </div>
+                                <BrandChoice value={editingProduct.brand ?? 'AF'} onChange={b => setEditingProduct({ ...editingProduct, brand: b })} />
                                 <div className="grid gap-2">
                                     <Label htmlFor="edit-type">Product Type</Label>
                                     <Select
@@ -278,12 +325,18 @@ export function AdminWarrantyProducts() {
                 </Dialog>
             </div>
 
+            <div className="relative max-w-md">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Input value={find} onChange={e => setFind(e.target.value)} placeholder="Search product name" aria-label="Search products" className="h-11 pl-9" />
+            </div>
+
             <div className="rounded-md border">
                 <Table>
                     <TableHeader>
                         <TableRow>
                             <TableHead className="w-[80px]">S.No</TableHead>
                             <TableHead>Product Name</TableHead>
+                            <TableHead>Brand</TableHead>
                             <TableHead>Type</TableHead>
                             <TableHead>Warranty Period</TableHead>
                             <TableHead>Last Updated</TableHead>
@@ -293,18 +346,18 @@ export function AdminWarrantyProducts() {
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="text-center py-8">
+                                <TableCell colSpan={7} className="text-center py-8">
                                     Loading products...
                                 </TableCell>
                             </TableRow>
-                        ) : products.length === 0 ? (
+                        ) : shown.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                    No products found. Add one to get started.
+                                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                                    {products.length ? 'No products match.' : 'No products found. Add one to get started.'}
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            products.map((product, index) => (
+                            shown.map((product, index) => (
                                 <TableRow key={product.id}>
                                     <TableCell className="font-medium">{index + 1}</TableCell>
                                     <TableCell>
@@ -312,6 +365,9 @@ export function AdminWarrantyProducts() {
                                             <Package className="mr-2 h-4 w-4 text-muted-foreground" />
                                             {product.name}
                                         </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-bold", BRAND[brandOf(product)].tone)}>{BRAND[brandOf(product)].label}</span>
                                     </TableCell>
                                     <TableCell>
                                         {product.type === 'seat_cover' ? 'Seat Cover' : 'EV Product'}

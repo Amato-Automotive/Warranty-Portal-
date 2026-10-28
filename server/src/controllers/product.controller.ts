@@ -4,6 +4,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { NotificationService } from '../services/notification.service.js';
 
+/** A warranty product's brand; Autoform when none is given. */
+const BRANDS = ['AF', 'AC', 'AFAC'];
+const brandOf = (b: unknown) => (b === undefined || b === null || b === '' ? 'AF' : String(b));
+
 export class ProductController {
     static async getAllProducts(req: Request, res: Response) {
         try {
@@ -21,6 +25,7 @@ export class ProductController {
     static async addProduct(req: Request, res: Response) {
         try {
             const { name, type, warranty_years } = req.body;
+            const brand = brandOf(req.body.brand);
             const admin = (req as any).user;
 
             if (!name || !type || !warranty_years) {
@@ -30,12 +35,13 @@ export class ProductController {
             if (!['seat_cover', 'ev_product'].includes(type)) {
                 return res.status(400).json({ error: 'Invalid product type' });
             }
+            if (!BRANDS.includes(brand)) return res.status(400).json({ error: 'Choose Autoform, Autocruze or both' });
 
             const id = uuidv4();
 
             await db.execute(
-                'INSERT INTO products (id, name, type, warranty_years) VALUES (?, ?, ?, ?)',
-                [id, name, type, warranty_years]
+                'INSERT INTO products (id, name, type, warranty_years, brand) VALUES (?, ?, ?, ?, ?)',
+                [id, name, type, warranty_years, brand]
             );
 
             // Log activity
@@ -47,14 +53,14 @@ export class ProductController {
                 targetType: 'PRODUCT',
                 targetId: id,
                 targetName: name,
-                details: { product_type: type, warranty_years },
+                details: { product_type: type, warranty_years, brand },
                 ipAddress: req.ip || req.socket?.remoteAddress
             });
 
             res.json({
                 success: true,
                 message: 'Product added successfully',
-                product: { id, name, type, warranty_years }
+                product: { id, name, type, warranty_years, brand }
             });
 
             // Notify Vendors about new warranty product type
@@ -111,6 +117,8 @@ export class ProductController {
         try {
             const { id } = req.params;
             const { name, type, warranty_years } = req.body;
+            // A screen that sends no brand keeps the one the product has.
+            const brand = req.body.brand === undefined ? null : brandOf(req.body.brand);
             const admin = (req as any).user;
 
             if (!name || !type || !warranty_years) {
@@ -120,10 +128,11 @@ export class ProductController {
             if (!['seat_cover', 'ev_product'].includes(type)) {
                 return res.status(400).json({ error: 'Invalid product type' });
             }
+            if (brand !== null && !BRANDS.includes(brand)) return res.status(400).json({ error: 'Choose Autoform, Autocruze or both' });
 
             await db.execute(
-                'UPDATE products SET name = ?, type = ?, warranty_years = ? WHERE id = ?',
-                [name, type, warranty_years, id]
+                'UPDATE products SET name = ?, type = ?, warranty_years = ?, brand = COALESCE(?, brand) WHERE id = ?',
+                [name, type, warranty_years, brand, id]
             );
 
             // Log activity

@@ -403,6 +403,10 @@ async function runMigrations() {
       if (c.length === 0) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
     };
     await addColumn('schemes', 'contact', 'contact JSON NULL');
+    // The brand a new franchise picks (AF, AC or AFAC), kept until its OTP is verified (28 Oct).
+    await addColumn('pending_registrations', 'brand', 'brand VARCHAR(4) NULL');
+    // Each warranty product's brand: Autoform, Autocruze or both; the ones there before are Autoform (28 Oct).
+    await addColumn('products', 'brand', "brand ENUM('AF','AC','AFAC') NOT NULL DEFAULT 'AF'");
     await addColumn('scheme_entries', 'claimed_lines', 'claimed_lines JSON NULL');
     await addColumn('scheme_entries', 'source', "source VARCHAR(10) NOT NULL DEFAULT 'store'");
     await addColumn('scheme_entries', 'invoice_no', 'invoice_no VARCHAR(80) NULL');

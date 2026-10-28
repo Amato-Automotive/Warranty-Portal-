@@ -8,6 +8,7 @@ import EVProductsForm from "@/components/warranty/EVProductsForm";
 import SeatCoverForm from "@/components/warranty/SeatCoverForm";
 import api, { getErrorMessage } from "@/lib/api";
 import AutoformLoadingScreen from "@/components/ui/AutoformLoadingScreen";
+import { usePublicBrand } from "@/components/layouts/PublicLayout";
 
 interface StoreDetails {
     id: number;
@@ -31,6 +32,9 @@ const ConnectStorePage = () => {
     const [installers, setInstallers] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<"ev" | "seat-cover">("seat-cover");
     const [seatCoverProducts, setSeatCoverProducts] = useState<any[]>([]);
+    // The store's brand: its loader and logo. Unknown for the first moment, while the store is looked up.
+    const [brand, setBrand] = useState<string | null>(null);
+    const layout = usePublicBrand();
 
     useEffect(() => {
         const fetchStoreDetails = async () => {
@@ -41,12 +45,14 @@ const ConnectStorePage = () => {
             }
 
             try {
-                // Fetch store details and products in parallel, with a minimum delay for animation
-                const [storeResponse, productsResponse] = await Promise.all([
-                    api.get(`/public/stores/code/${storeCode}`),
-                    api.get('/public/products'),
-                    new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1s for animation
-                ]);
+                // The store first, so the loader is in its brand; then the products,
+                // with a minimum delay for the animation.
+                const products = api.get('/public/products').catch(() => ({ data: { success: false } }));
+                const storeResponse = await api.get(`/public/stores/code/${storeCode}`);
+                const storeBrand = storeResponse.data?.store?.brand ?? 'AF';
+                setBrand(storeBrand);
+                layout?.setBrand(storeBrand);
+                const [productsResponse] = await Promise.all([products, new Promise(resolve => setTimeout(resolve, 1000))]) as [any, unknown];
 
                 // Handle Store Details
                 if (storeResponse.data.success && storeResponse.data.store) {
@@ -90,7 +96,8 @@ const ConnectStorePage = () => {
     }, [storeCode]);
 
     if (loading) {
-        return <AutoformLoadingScreen />;
+        // A blank moment while the store is looked up, then its brand's loader.
+        return brand ? <AutoformLoadingScreen brand={brand} /> : <div className="fixed inset-0 z-50 bg-white" />;
     }
 
     if (error || !storeDetails) {

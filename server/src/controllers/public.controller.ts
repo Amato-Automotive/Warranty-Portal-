@@ -69,6 +69,7 @@ export class PublicController {
                     vd.state,
                     vd.pincode,
                     vd.store_email,
+                    COALESCE(vd.allowed_brands, 'AF') as brand,
                     p.phone_number as contact_number,
                     p.name as owner_name,
                     vd.user_id

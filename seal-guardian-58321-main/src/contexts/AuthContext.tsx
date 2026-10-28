@@ -14,6 +14,8 @@ export interface User {
   phoneNumber: string;
   isValidated?: boolean;
   isActive?: boolean;
+  /** A store's brand (AF, AC or AFAC): its logo and wording follow it. */
+  brand?: string;
   // Admin-only RBAC fields
   isSuperAdmin?: boolean;
   permissions?: ModulePermissions;

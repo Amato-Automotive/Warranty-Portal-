@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth, UserRole } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { User, Mail, Phone, AlertCircle, KeyRound, Store, Plus, Trash2, Users, Loader2, FileText } from "lucide-react";
+import { BRAND_CHOICES, type Brand } from "@/lib/brand";
 import {
   validateIndianMobile,
   cleanPhoneNumber,
@@ -29,6 +30,7 @@ interface Manpower {
 }
 
 interface FormErrors {
+  brand?: string;
   name?: string;
   email?: string;
   phoneNumber?: string;
@@ -77,6 +79,7 @@ const Register = () => {
     city: "",
     pincode: "",
     gstNumber: "",
+    brand: "" as "" | Brand,
   });
 
   // Handle Customer Input Change with validation
@@ -233,11 +236,12 @@ const Register = () => {
       const gstError = getGstError(vendorData.gstNumber, true);
       const cityError = getCityError(vendorData.city);
       const stateError = vendorData.state ? '' : 'Please select your state';
+      const brandError = vendorData.brand ? '' : 'Choose your brand';
 
-      if (emailError || phoneError || pincodeError || gstError || cityError || stateError) {
+      if (emailError || phoneError || pincodeError || gstError || cityError || stateError || brandError) {
         setErrors({
           storeEmail: emailError, phoneNumber: phoneError, pincode: pincodeError,
-          gstNumber: gstError, city: cityError, state: stateError,
+          gstNumber: gstError, city: cityError, state: stateError, brand: brandError,
         });
         toast({
           title: "Validation Error",
@@ -470,6 +474,22 @@ const Register = () => {
                     <Store className="h-5 w-5 text-blue-300" />
                     Contact Information
                   </h2>
+
+                  {/* The brand the store carries: its logo and wording in the portal follow it. */}
+                  <fieldset className="space-y-2">
+                    <legend className="text-sm font-medium text-white">Your brand *</legend>
+                    <div className="grid grid-cols-3 gap-2">
+                      {BRAND_CHOICES.map(b => (
+                        <label key={b.value} className={`flex min-h-[52px] cursor-pointer flex-col items-center justify-center rounded-xl border px-2 py-2 text-center ${vendorData.brand === b.value ? "border-orange-400 bg-white/25" : "border-white/20 bg-white/10 hover:bg-white/15"}`}>
+                          <input type="radio" name="brand" value={b.value} checked={vendorData.brand === b.value} disabled={loading}
+                            onChange={() => { setVendorData(v => ({ ...v, brand: b.value })); setErrors(e => ({ ...e, brand: '' })); }} className="sr-only" />
+                          <span className="text-sm font-bold text-white">{b.label}</span>
+                          <span className="text-[11px] font-semibold text-white/60">{b.note}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {errors.brand && <p className="text-xs text-red-300">{errors.brand}</p>}
+                  </fieldset>
 
                   <div className="grid md:grid-cols-2 gap-6">
                     <div className="space-y-2">

@@ -89,12 +89,23 @@ const getAuthCookieOptions = (role?: string): CookieOptions => {
   };
 };
 
+/**
+ * A store's brand (AF, AC or AFAC) for its logo and wording. A distributor's is
+ * on its distributor record, a franchise's on the store.
+ */
+async function brandOf(userId: string): Promise<string> {
+  const [r]: any = await db.execute(
+    `SELECT CASE WHEN vd.is_distributor = 1 AND dist.allowed_brands IS NOT NULL THEN dist.allowed_brands ELSE COALESCE(vd.allowed_brands, 'AF') END AS brand
+       FROM vendor_details vd LEFT JOIN distributors dist ON dist.profile_id = vd.user_id WHERE vd.user_id = ? LIMIT 1`, [userId]);
+  return r[0]?.brand ?? 'AF';
+}
+
 export class AuthController {
   static async register(req: Request, res: Response) {
     try {
       let {
         name, email, phoneNumber, role,
-        storeName, address, state, city, pincode, gstNumber, manpower
+        storeName, address, state, city, pincode, gstNumber, manpower, brand
       }: RegisterData = req.body;
 
       // SBP-DB: Trim string lengths to prevent database overflow (Data Too Long) edge cases
@@ -143,6 +154,9 @@ export class AuthController {
 
       // Validate vendor specific fields
       if (role === 'vendor') {
+        if (!['AF', 'AC', 'AFAC'].includes(String(brand))) {
+          return res.status(400).json({ error: 'Choose your brand: Autoform, Autocruze or both' });
+        }
         if (!storeName || !address || !state || !city || !pincode) {
           return res.status(400).json({ error: 'All vendor details are required' });
         }
@@ -204,8 +218,8 @@ export class AuthController {
       // Insert into pending_registrations table
       await db.execute(
         `INSERT INTO pending_registrations 
-         (id, name, email, phone_number, role, store_name, store_email, address, state, city, pincode, gst_number, manpower_data, expires_at) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, name, email, phone_number, role, store_name, store_email, address, state, city, pincode, gst_number, manpower_data, brand, expires_at) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pendingId,
           name,
@@ -220,6 +234,7 @@ export class AuthController {
           role === 'vendor' ? pincode ?? null : null,
           role === 'vendor' ? (gstNumber || null) : null,
           manpowerJson,
+          role === 'vendor' ? brand ?? null : null,
           expiresAt
         ]
       );
@@ -472,9 +487,10 @@ export class AuthController {
             const vendorDetailsId = uuidv4();
             await connection.execute(
               `INSERT INTO vendor_details 
-               (id, user_id, store_name, store_email, address, state, city, pincode, gst_number) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [vendorDetailsId, newUserId, pending.store_name, pending.store_email, pending.address, pending.state, pending.city, pending.pincode, pending.gst_number || null]
+               (id, user_id, store_name, store_email, address, state, city, pincode, gst_number, allowed_brands) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [vendorDetailsId, newUserId, pending.store_name, pending.store_email, pending.address, pending.state, pending.city, pending.pincode, pending.gst_number || null,
+                ['AF', 'AC', 'AFAC'].includes(pending.brand) ? pending.brand : 'AF']
             );
 
             // Insert manpower details if any
@@ -720,6 +736,7 @@ export class AuthController {
           phoneNumber: user.phone_number,
           isValidated,
           isActive,
+          ...(userRole === 'vendor' && { brand: await brandOf(user.id) }),
           ...(userRole === 'admin' && { isSuperAdmin, permissions })
         }
       });
@@ -883,6 +900,7 @@ export class AuthController {
           phoneNumber: user.phone_number,
           isValidated,
           isActive,
+          ...(userRole === 'vendor' && { brand: await brandOf(user.id) }),
           ...(userRole === 'admin' && { isSuperAdmin, permissions })
         }
       });

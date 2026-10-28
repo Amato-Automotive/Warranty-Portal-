@@ -5,6 +5,8 @@ import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useB2BCart } from "@/contexts/B2BCartContext";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { brandLook } from "@/lib/brand";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface ModuleLayoutProps {
     title: string;
@@ -22,6 +24,8 @@ interface ModuleLayoutProps {
 export const ModuleLayout = ({ title, description, children, actions, onNavigate, onMenuToggle, roleLabel }: ModuleLayoutProps) => {
     const { isDistributor, isFranchise } = useB2BCart();
     const { t } = useLanguage();
+    const { user } = useAuth();
+    const look = brandLook(user?.brand);
 
     // Determine the role title dynamically
     let roleText = "Franchise";
@@ -74,11 +78,9 @@ export const ModuleLayout = ({ title, description, children, actions, onNavigate
                                 </div>
 
                                 <div className="flex items-center gap-2 md:gap-4 shrink-0">
-                                    <img
-                                        src="/favicon.png"
-                                        alt="Autoform Logo"
-                                        className="md:hidden h-12 sm:h-5 w-auto object-contain mr-2 opacity-100"
-                                    />
+                                    {look.icon
+                                        ? <img src={look.icon} alt={`${look.name} logo`} className="md:hidden h-12 sm:h-5 w-auto object-contain mr-2 opacity-100" />
+                                        : <img src={look.logo} alt={`${look.name} logo`} className="md:hidden h-8 w-auto max-w-[110px] object-contain mr-2" />}
                                     {actions}
                                     <div className="h-10 md:h-12 border-l border-slate-100 pl-2 md:pl-4 flex items-center gap-1 md:gap-2">
                                         {/* TODO: Re-enable notifications in Phase 2 */}
