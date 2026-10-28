@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, FileText, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatToIST } from "@/lib/utils";
 import { WarrantySpecSheet } from "@/components/warranty/WarrantySpecSheet";
+import { PhotoViewer } from "@/components/claims/PhotoViewer";
 import { day, isPhoto, type Claim } from "@/lib/claims";
 
 const Row = ({ label, value }: { label: string; value: React.ReactNode }) =>
@@ -13,20 +14,24 @@ const Row = ({ label, value }: { label: string; value: React.ReactNode }) =>
         </div>
     ) : null;
 
-/** Photos with what each one is, opening full size in a new tab. */
-export const LabeledPhotos = ({ photos }: { photos: { label: string; url: string }[] }) => (
-    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-        {photos.map(p => (
-            <a key={p.url} href={p.url} target="_blank" rel="noreferrer" className="block min-w-0">
+/** Photos with what each one is, opening large in the viewer. */
+export const LabeledPhotos = ({ photos, className, claimId }: { photos: { label: string; url: string }[]; className?: string; claimId?: number }) => {
+    const [open, setOpen] = useState<number | null>(null);
+    return (<>
+    <div className={cn("grid grid-cols-3 sm:grid-cols-4 gap-2", className)}>
+        {photos.map((p, i) => (
+            <button key={p.url} type="button" onClick={() => setOpen(i)} className="block min-w-0 text-left">
                 <span className="block aspect-square overflow-hidden rounded-xl border border-gray-200 bg-gray-100">
                     {isPhoto(p.url) ? <img src={p.url} alt={p.label} className="h-full w-full object-cover" loading="lazy" />
                         : <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs font-semibold text-gray-600"><FileText className="h-6 w-6" />PDF</span>}
                 </span>
                 <span className="mt-1 block truncate text-[11px] font-semibold text-gray-600">{p.label}</span>
-            </a>
+            </button>
         ))}
     </div>
-);
+    {open !== null && <PhotoViewer items={photos.map(p => ({ ...p, claimId }))} start={open} onClose={() => setOpen(null)} />}
+    </>);
+};
 
 /**
  * The warranty as it was registered, beside the claim: what was fitted, when
@@ -74,7 +79,7 @@ export const RegistrationPanel = ({ c, who }: { c: Claim; who: 'admin' | 'store'
 
             <div className="space-y-2">
                 <p className="text-sm font-bold text-gray-900">Registration photos</p>
-                {r.photos.length ? <LabeledPhotos photos={r.photos} /> : <p className="text-sm text-gray-500">No photos on the registration.</p>}
+                {r.photos.length ? <LabeledPhotos photos={r.photos} claimId={c.id} /> : <p className="text-sm text-gray-500">No photos on the registration.</p>}
             </div>
 
             {who === 'admin' && !!r.remarks?.length && (

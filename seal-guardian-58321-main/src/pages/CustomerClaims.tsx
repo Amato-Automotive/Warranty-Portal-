@@ -6,9 +6,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { decisionText, day, HOLD_REASONS, NEEDS_DESCRIPTION, REJECT_REASONS, type Claim, type ClaimWarranty } from "@/lib/claims";
+import { decisionText, day, NEEDS_DESCRIPTION, type Claim, type ClaimWarranty } from "@/lib/claims";
+import { CompareTable, StageDates, StatusHero } from "@/components/claims/ClaimView";
+import { ChangeRequestBox, ClaimChange } from "@/components/claims/ClaimChange";
 import {
-    ClaimDetails, ClaimStatusPill, ClaimTimeline, ClaimTracker, ConsentBox, EMPTY_VEHICLE, FilePicker, MediaGrid, MobileActionBar, ProblemPicker,
+    ClaimStatusPill, ClaimTimeline, ConsentBox, EMPTY_VEHICLE, FilePicker, FormStep, MobileActionBar, ProblemPicker,
     StepJump, VehicleFields, claimForm, missingForRequest, type VehicleValue,
 } from "@/components/claims/ClaimParts";
 
@@ -74,8 +76,9 @@ const CustomerClaims = () => {
                             <p className="text-xs font-bold text-gray-500">{c.claim_no}{c.kind === 'alteration' ? ' · Alteration' : ''}</p>
                             <p className="font-bold text-gray-900">{c.snapshot?.product_name} · {c.problem_text}</p>
                             <p className="text-sm text-gray-500">{c.snapshot?.registration_number} · {day(c.created_at)}</p>
-                            {c.plan && ['production', 'ready'].includes(c.status) && <p className="mt-1 text-xs font-semibold text-indigo-700">Expected by {day(c.plan.edd)}</p>}
+                            {c.plan?.edd && ['production', 'ready'].includes(c.status) && <p className="mt-1 text-xs font-semibold text-indigo-700">Expected by {day(c.plan.edd)}</p>}
                             {c.status === 'consent' && <p className="mt-1 text-xs font-semibold text-purple-700">Your agreement is needed</p>}
+                            {c.change_request && <p className="mt-1 text-xs font-semibold text-amber-700">Change asked · waiting for the plant</p>}
                             {decisionText(c) && <p className="mt-1 text-xs text-gray-600">{decisionText(c)}</p>}
                         </div>
                         <ClaimStatusPill status={c.status} who="customer" />
@@ -95,11 +98,12 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
     const [vehicle, setVehicle] = useState<VehicleValue>(EMPTY_VEHICLE);
     const [description, setDescription] = useState('');
     const [photos, setPhotos] = useState<File[]>([]);
-    const [video, setVideo] = useState<File[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
     const [storeId, setStoreId] = useState('');
     const [changing, setChanging] = useState(false);
     const [sending, setSending] = useState(false);
+    // The product list folds to the chosen one; Change opens it again.
+    const [picking, setPicking] = useState(!uid);
 
     const w = warranties.find(x => x.uid === uid);
     const options = w ? w.problems : [];
@@ -117,7 +121,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
         if (!storeId) return toast({ variant: "destructive", title: "Choose the store to check it" });
         setSending(true);
         try {
-            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId, ...vehicle }, { media: [...photos, ...video] });
+            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId, ...vehicle }, { media: photos });
             const r = await api.post('/claims', fd);
             toast({ title: `Claim ${r.data.claim.claim_no} requested`, description: 'The store will check it and call you.' });
             onDone(r.data.claim);
@@ -129,65 +133,64 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
     };
     const store = stores.find(s => s.vendor_details_id === storeId);
 
+    const sendButton = (
+        <Button onClick={send} disabled={sending} className="h-12 w-full sm:w-auto rounded-xl bg-orange-700 hover:bg-orange-800 text-base font-bold sm:px-8">
+            {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Request claim'}
+        </Button>
+    );
+    const row = (x: ClaimWarranty) => (
+        <label key={x.uid} className={cn("flex gap-3 rounded-2xl border bg-white p-4", x.claimable ? "cursor-pointer" : "opacity-60",
+            uid === x.uid ? "border-2 border-orange-600" : "border-gray-200")}>
+            <input type="radio" name="w" disabled={!x.claimable} checked={uid === x.uid} onChange={() => { setUid(x.uid); setPicking(false); }} className="mt-1 h-4 w-4 accent-orange-600" />
+            <span className="min-w-0 flex-1 space-y-0.5">
+                <span className="flex justify-between gap-2">
+                    <span className="font-bold text-gray-900">{x.product_name}</span>
+                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", x.covered ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600")}>{x.covered ? 'Covered' : x.claimable ? 'Alteration only' : 'Not covered'}</span>
+                </span>
+                <span className="block text-sm text-gray-600">{[x.car, x.registration_number].filter(Boolean).join(' · ')}</span>
+                <span className="block text-xs text-gray-500">UID {x.uid} · {x.warranty_type}</span>
+                <span className={cn("block text-xs font-semibold", x.covered ? "text-emerald-700" : "text-gray-500")}>
+                    {x.covered ? `Covered till ${day(x.cover_end)}` : x.why}
+                </span>
+            </span>
+        </label>
+    );
+
     return (
-        <div className="mx-auto max-w-2xl space-y-6 pb-10">
+        <div className="mx-auto w-full max-w-3xl space-y-4 pb-10">
             <div className="flex items-center gap-2">
                 <button onClick={onBack} aria-label="Back" className="h-11 w-11 rounded-xl flex items-center justify-center hover:bg-gray-100"><ChevronLeft className="h-5 w-5" /></button>
-                <h1 className="text-xl font-extrabold text-gray-900">Warranty claim / alteration</h1>
+                <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900">Warranty claim / alteration</h1>
             </div>
 
-            <section className="space-y-2">
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-500">1 · Which product</p>
+            <FormStep n={1} title="Which product" done={!!w}
+                action={w && !picking && warranties.filter(x => x.claimable).length > 1 && (
+                    <button type="button" onClick={() => setPicking(true)} className="h-10 rounded-lg px-3 text-sm font-semibold text-orange-700 hover:bg-orange-50">Change</button>
+                )}>
                 {!warranties.length && <p className="text-sm text-gray-500">No warranties on your account yet.</p>}
-                {warranties.map(x => {
-                    const ok = x.claimable;
-                    return (
-                        <label key={x.uid} className={cn("flex gap-3 rounded-2xl border bg-white p-4", ok ? "cursor-pointer" : "opacity-60",
-                            uid === x.uid ? "border-2 border-orange-600" : "border-gray-200")}>
-                            <input type="radio" name="w" disabled={!ok} checked={uid === x.uid} onChange={() => setUid(x.uid)} className="mt-1 h-4 w-4 accent-orange-600" />
-                            <span className="min-w-0 flex-1 space-y-0.5">
-                                <span className="flex justify-between gap-2">
-                                    <span className="font-bold text-gray-900">{x.product_name}</span>
-                                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", x.covered ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600")}>{x.covered ? 'Covered' : x.claimable ? 'Alteration only' : 'Not covered'}</span>
-                                </span>
-                                <span className="block text-sm text-gray-600">{[x.car, x.registration_number].filter(Boolean).join(' · ')}</span>
-                                <span className="block text-xs text-gray-500">UID {x.uid} · {x.warranty_type}</span>
-                                <span className={cn("block text-xs font-semibold", x.covered ? "text-emerald-700" : "text-gray-500")}>
-                                    {x.covered ? `Covered till ${day(x.cover_end)}` : x.why}
-                                </span>
-                            </span>
-                        </label>
-                    );
-                })}
-            </section>
+                {w && !picking ? row(w) : warranties.map(row)}
+            </FormStep>
 
             {w && (
                 <>
-                    <section className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">2 · Your vehicle</p>
+                    <FormStep n={2} title="Your vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour)))}>
                         <VehicleFields value={vehicle} onChange={setVehicle} airbags={w.asks_airbags} registered={w.car} />
-                    </section>
+                    </FormStep>
 
-                    <section className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">3 · What is the issue</p>
+                    <FormStep n={3} title="What is the issue" done={!!problem}>
                         <ProblemPicker options={options} value={problem} onChange={setProblem} />
                         {problem === 'alteration' && <p className="text-xs text-gray-500">Alterations are usually chargeable. You will be asked to agree before anything is done.</p>}
-                        <label className="block space-y-1.5 text-sm font-semibold text-gray-800">
-                            Tell us more {NEEDS_DESCRIPTION.includes(problem) ? '' : '(optional)'}
-                            <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} maxLength={2000} className="font-normal" />
-                        </label>
-                    </section>
+                        <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} maxLength={2000} className="rounded-xl"
+                            placeholder={NEEDS_DESCRIPTION.includes(problem) ? 'Tell us more (needed)' : 'Tell us more (optional)'} aria-label="Tell us more" />
+                    </FormStep>
 
-                    <section className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">4 · Photos and video</p>
-                        <FilePicker files={photos} onChange={setPhotos} max={5} hint="1 to 5 photos: a close-up of the problem and one of the whole seat or part." />
-                        <FilePicker files={video} onChange={setVideo} max={1} accept="video/*" label="Add video" hint="A short video is optional (up to 60 MB)." />
-                    </section>
+                    <FormStep n={4} title="Photos" note="1 to 5 photos" done={photos.length > 0}>
+                        <FilePicker files={photos} onChange={setPhotos} max={5} hint="A close-up of the problem and one of the whole seat or part." />
+                    </FormStep>
 
-                    <section className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider text-gray-500">5 · Store to check it</p>
+                    <FormStep n={5} title="Store to check it" done={!!storeId}>
                         {!changing ? (
-                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white p-4">
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 p-4">
                                 <div>
                                     <p className="font-bold text-gray-900">{w.fitted_store || 'The store that fitted it'}</p>
                                     <p className="text-xs text-gray-500">Where it was fitted</p>
@@ -205,16 +208,10 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
                             </select>
                         )}
                         {store && <p className="text-xs text-gray-500">{store.store_name} will check it and call you.</p>}
-                    </section>
+                    </FormStep>
 
-                    <Button onClick={send} disabled={sending} className="hidden sm:flex h-12 w-full rounded-xl bg-orange-700 hover:bg-orange-800 text-base font-bold">
-                        {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Request claim'}
-                    </Button>
-                    <MobileActionBar>
-                        <Button onClick={send} disabled={sending} className="h-12 w-full rounded-xl bg-orange-700 hover:bg-orange-800 text-base font-bold">
-                            {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Request claim'}
-                        </Button>
-                    </MobileActionBar>
+                    <div className="hidden sm:flex justify-end">{sendButton}</div>
+                    <MobileActionBar>{sendButton}</MobileActionBar>
                 </>
             )}
         </div>
@@ -243,63 +240,39 @@ const ClaimDetail = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => 
             setBusy(false);
         }
     };
-    const d = c.decision;
-
     return (
-        <div className="mx-auto max-w-2xl space-y-4 pb-10">
-            <div className="flex items-center gap-2">
-                <button onClick={onBack} aria-label="Back" className="h-11 w-11 rounded-xl flex items-center justify-center hover:bg-gray-100"><ChevronLeft className="h-5 w-5" /></button>
-                <h1 className="text-xl font-extrabold text-gray-900">Claim {c.claim_no}</h1>
-            </div>
-            <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                        <p className="text-lg font-extrabold text-gray-900">{c.snapshot?.product_name}</p>
-                        <p className="text-sm text-gray-600">{c.problem_text} · {c.snapshot?.registration_number}</p>
-                        {c.store_name && <p className="text-sm text-gray-500">Store: {c.store_name}{c.store_city ? `, ${c.store_city}` : ''}</p>}
-                    </div>
-                    <ClaimStatusPill status={c.status} who="customer" />
-                </div>
+        <div className="mx-auto max-w-3xl space-y-4 pb-10">
+            <button onClick={onBack} className="inline-flex h-11 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"><ChevronLeft className="h-5 w-5" />My claims</button>
 
-                {c.actions.includes('consent') && (
-                    <ConsentBox who="customer" busy={busy} onAgree={n => act('consent', n)} onDecline={n => act('decline', n)} />
-                )}
+            <StatusHero c={c} who="customer" />
 
-                <ClaimTracker c={c} />
+            {c.actions.includes('consent') && (
+                <ConsentBox who="customer" busy={busy} onAgree={n => act('consent', n)} onDecline={n => act('decline', n)} />
+            )}
 
-                {c.status === 'on_hold' && c.hold && (
-                    <div className="rounded-xl bg-yellow-50 px-4 py-3 text-sm text-yellow-900">
-                        <p className="font-bold">On hold: {HOLD_REASONS[c.hold.reason] ?? 'see note'}</p>
-                        {c.hold.note && <p className="mt-1">{c.hold.note}</p>}
-                    </div>
-                )}
-                {c.status === 'rejected' && d && (
-                    <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-900">
-                        <p className="font-bold">Not approved as per T&amp;C: {REJECT_REASONS[d.reason ?? ''] ?? 'see note'}</p>
-                        {d.remarks && <p className="mt-1">{d.remarks}</p>}
-                    </div>
-                )}
-                {c.status === 'declined' && <p className="rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-700">The charge was declined, so nothing will be done on this claim.</p>}
-                {d && d.outcome !== 'reject' && (
-                    <div className="rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-800 space-y-1">
-                        <p className="font-bold">{decisionText(c)}</p>
-                        {d.remarks && <p>{d.remarks}</p>}
-                    </div>
-                )}
-                {c.kind === 'warranty' && c.snapshot?.cover_end && !['rejected', 'declined'].includes(c.status) && (
-                    <p className="rounded-xl bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">Your warranty stays the same: covered till {day(c.snapshot.cover_end)}. A replacement does not start a new period.</p>
-                )}
-            </div>
+            <StageDates c={c} />
 
-            <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-3">
-                <p className="text-sm font-bold text-gray-900">What you sent</p>
-                <ClaimDetails c={c} />
-                <MediaGrid urls={c.media} />
-            </div>
-            <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-3">
-                <p className="text-sm font-bold text-gray-900">Timeline</p>
-                <ClaimTimeline history={c.history} who="customer" />
-            </div>
+            {c.store_name && (
+                <section className="rounded-2xl border border-gray-200 bg-white p-4">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Your store</p>
+                    <p className="text-base font-extrabold text-gray-900">{c.store_name}</p>
+                    {c.store_city && <p className="text-sm text-gray-600">{c.store_city}</p>}
+                </section>
+            )}
+
+            <CompareTable c={c} who="customer" />
+
+            <ChangeRequestBox c={c} />
+            <ClaimChange c={c} who="customer" onSaved={n => { setC(n); onChange(n); }} />
+
+            {c.kind === 'warranty' && c.snapshot?.cover_end && !['rejected', 'declined'].includes(c.status) && (
+                <p className="rounded-xl bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">Your warranty stays the same: covered till {day(c.snapshot.cover_end)}. A replacement does not start a new period.</p>
+            )}
+
+            <details className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
+                <summary className="cursor-pointer text-sm font-bold text-gray-900">Full history</summary>
+                <div className="mt-3"><ClaimTimeline history={c.history} who="customer" /></div>
+            </details>
             <StepJump label={c.actions.includes('consent') ? 'Your agreement is needed' : null} />
         </div>
     );

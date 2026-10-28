@@ -1,10 +1,13 @@
 import { Response } from 'express';
 import db from '../config/database.js';
+import { modelList } from '../services/carModels.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { vendorRepository } from '../repositories/vendor.repository.js';
 import { NotificationService } from '../services/notification.service.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
-import { APP_URL } from '../config/localUpload.js';
+import fs from 'fs';
+import path from 'path';
+import { APP_URL, UPLOADS_BASE_DIR, urlToDiskPath } from '../config/localUpload.js';
 import {
     applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags,
     STATUS_TEXT, REJECT_REASONS, HOLD_REASONS, PROBLEMS, PLANT_RIGHTS, OLD_PART_ENABLED,
@@ -26,7 +29,7 @@ interface HistoryEntry {
 }
 
 /* Columns stored as JSON, and their names in the flow where they differ. */
-const JSON_COLS = ['media', 'snapshot', 'vehicle', 'verification', 'hold_info', 'decision', 'consent', 'plan_info', 'dispatch', 'fitted', 'old_part', 'trail', 'history'];
+const JSON_COLS = ['media', 'snapshot', 'vehicle', 'verification', 'hold_info', 'decision', 'consent', 'plan_info', 'dispatch', 'fitted', 'old_part', 'change_request', 'trail', 'history'];
 const parse = (v: any) => (typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return null; } })() : v ?? null);
 const json = (v: any) => (v === null || v === undefined ? null : JSON.stringify(v));
 
@@ -187,6 +190,18 @@ async function distributorStoreIds(userId: string): Promise<string[]> {
     return rows.map((r: any) => String(r.id));
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+/** Everything a claim is searched by, as one text: numbers, names, the car, the colours, the issue, the plant's columns. */
+const SEARCH_TEXT = `CONCAT_WS(' ', c.claim_no, c.warranty_uid, vd.store_name, c.problem, c.description,
+    JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_name')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_phone')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.registration_number')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.product_name')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.depot')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.car')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.foc_note')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.make')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.model')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.major_colour')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.minor_colour')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.decision, '$.item')), JSON_UNQUOTE(JSON_EXTRACT(c.plan_info, '$.alteration_no')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.docket')), JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.courier')))`;
+
 async function loadClaim(id: unknown) {
     const [rows]: any = await db.execute('SELECT * FROM warranty_claims WHERE id = ?', [Number(id) || 0]);
     return rows[0] ? fromRow(rows[0]) : null;
@@ -199,6 +214,7 @@ async function loadClaim(id: unknown) {
 async function access(req: AuthRequest, c: any): Promise<'act' | 'view' | null> {
     const role = req.user?.role;
     if (role === 'admin') return 'act';
+    if (c.raised_via === 'sheet') return null;
     if (role === 'vendor') {
         const v = await storeOf(req.user!.id);
         if (v && String(v.id) === String(c.store_id)) return 'act';
@@ -209,6 +225,8 @@ async function access(req: AuthRequest, c: any): Promise<'act' | 'view' | null> 
 
 /** How many claims this warranty and this customer have had, and how they ended. */
 async function claimCounts(c: any) {
+    // A row from the production sheet has no warranty to count against.
+    if (!c.warranty_uid) return { on_warranty: 1, approved_before: 0, rejected_before: 0, customer_total: 0 };
     const [w]: any = await db.execute(
         `SELECT id, status, JSON_UNQUOTE(JSON_EXTRACT(decision, '$.outcome')) AS outcome FROM warranty_claims WHERE warranty_uid = ?`,
         [c.warranty_uid]);
@@ -278,10 +296,10 @@ async function tell(c: any, text: string, who: { customer?: boolean; store?: boo
 
 async function save(c: any) {
     await db.execute(
-        `UPDATE warranty_claims SET kind = ?, status = ?, problem = ?, description = ?, vehicle = ?, verification = ?, hold_info = ?, decision = ?,
-                consent = ?, plan_info = ?, dispatch = ?, fitted = ?, old_part = ?, trail = ?, history = ? WHERE id = ?`,
-        [c.kind, c.status, c.problem, c.description ?? null, json(c.vehicle), json(c.verification), json(c.hold), json(c.decision),
-            json(c.consent), json(c.plan), json(c.dispatch), json(c.fitted), json(c.old_part), json(c.trail ?? []), json(c.history ?? []), c.id]);
+        `UPDATE warranty_claims SET kind = ?, status = ?, problem = ?, description = ?, media = ?, vehicle = ?, verification = ?, hold_info = ?, decision = ?,
+                consent = ?, plan_info = ?, dispatch = ?, fitted = ?, old_part = ?, change_request = ?, trail = ?, history = ? WHERE id = ?`,
+        [c.kind, c.status, c.problem, c.description ?? null, json(c.media ?? []), json(c.vehicle), json(c.verification), json(c.hold), json(c.decision),
+            json(c.consent), json(c.plan), json(c.dispatch), json(c.fitted), json(c.old_part), json(c.change_request ?? null), json(c.trail ?? []), json(c.history ?? []), c.id]);
 }
 
 /** The claim's own fields from what was sent, checked against its warranty. */
@@ -369,13 +387,14 @@ export default class ClaimsController {
     static async storeList(req: AuthRequest, res: Response) {
         try {
             const v = await storeOf(req.user!.id);
-            const own: any[] = v ? (await db.execute('SELECT * FROM warranty_claims WHERE store_id = ? ORDER BY id DESC LIMIT 300', [v.id]) as any)[0] : [];
+            // Rows from the production sheet are the plant's alone for now.
+            const own: any[] = v ? (await db.execute("SELECT * FROM warranty_claims WHERE store_id = ? AND raised_via <> 'sheet' ORDER BY id DESC LIMIT 300", [v.id]) as any)[0] : [];
             const storeIds = (await distributorStoreIds(req.user!.id)).filter(id => !v || id !== String(v.id));
             let watched: any[] = [];
             if (storeIds.length) {
                 const [rows]: any = await db.query(
                     `SELECT c.*, vd.store_name FROM warranty_claims c JOIN vendor_details vd ON vd.id = c.store_id
-                      WHERE c.store_id IN (?) ORDER BY c.id DESC LIMIT 300`, [storeIds]);
+                      WHERE c.store_id IN (?) AND c.raised_via <> 'sheet' ORDER BY c.id DESC LIMIT 300`, [storeIds]);
                 watched = rows;
             }
             return ok(res, {
@@ -462,31 +481,66 @@ export default class ClaimsController {
 
     /* ─── Plant ────────────────────────────────────────────────────────── */
 
+    /**
+     * Every claim for the plant's sheet, filtered by search, store, dates and
+     * charge; the queue counts follow the same filters, so each queue says how
+     * many of what is shown are in it.
+     */
     static async adminList(req: AuthRequest, res: Response) {
         try {
             const status = String(req.query.status ?? '');
-            const q = String(req.query.q ?? '').trim();
+            const q = String(req.query.q ?? '').trim().slice(0, 120);
+            const store = String(req.query.store ?? '').trim();
+            const from = String(req.query.from ?? '');
+            const to = String(req.query.to ?? '');
+            const charge = String(req.query.charge ?? '');
             const where: string[] = [];
             const params: any[] = [];
-            const statuses = status.split(',').filter(s => s in STATUS_TEXT);
-            if (statuses.length) { where.push(`c.status IN (${statuses.map(() => '?').join(',')})`); params.push(...statuses); }
+            // Search: every word must be found somewhere on the claim.
             if (q) {
-                where.push(`(c.claim_no = ? OR c.warranty_uid = ? OR vd.store_name LIKE ?
-                             OR JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_phone')) LIKE ?
-                             OR JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.registration_number')) LIKE ?
-                             OR JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_name')) LIKE ?
-                             OR JSON_UNQUOTE(JSON_EXTRACT(c.plan_info, '$.alteration_no')) = ?
-                             OR JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.docket')) = ?)`);
-                params.push(q.toUpperCase(), q, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, q, q);
+                for (const word of q.split(/\s+/).filter(Boolean).slice(0, 6)) {
+                    where.push(`${SEARCH_TEXT} LIKE ?`);
+                    params.push(`%${word}%`);
+                }
             }
+            // A store is its id, or the sheet's name for a row with no portal store.
+            if (store.startsWith('name:')) {
+                where.push("c.store_id IS NULL AND JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store')) = ?");
+                params.push(store.slice(5));
+            } else if (store) { where.push('c.store_id = ?'); params.push(store); }
+            if (DATE_ONLY.test(from)) { where.push('DATE(c.created_at) >= ?'); params.push(from); }
+            if (DATE_ONLY.test(to)) { where.push('DATE(c.created_at) <= ?'); params.push(to); }
+            if (charge === 'foc' || charge === 'chargeable') {
+                where.push("JSON_UNQUOTE(JSON_EXTRACT(c.decision, '$.charge')) = ?");
+                params.push(charge);
+            }
+            const filtered = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+            const listWhere = [...where];
+            const listParams = [...params];
+            const statuses = status.split(',').filter(s => s in STATUS_TEXT);
+            if (statuses.length) { listWhere.push(`c.status IN (${statuses.map(() => '?').join(',')})`); listParams.push(...statuses); }
+            // "change": the claims with a change asked for, waiting for the plant.
+            if (status.split(',').includes('change')) listWhere.push('c.change_request IS NOT NULL');
+
+            const FROM = 'FROM warranty_claims c LEFT JOIN vendor_details vd ON vd.id = c.store_id';
             const [cs]: any = await db.execute(
-                `SELECT c.*, vd.store_name FROM warranty_claims c LEFT JOIN vendor_details vd ON vd.id = c.store_id
-                  ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.id DESC LIMIT 300`, params);
-            const [n]: any = await db.execute('SELECT status, COUNT(*) AS n FROM warranty_claims GROUP BY status');
-            const counts: Record<string, number> = {};
-            for (const r of n) counts[r.status] = Number(r.n);
+                `SELECT c.*, vd.store_name ${FROM} ${listWhere.length ? `WHERE ${listWhere.join(' AND ')}` : ''} ORDER BY c.created_at DESC, c.id DESC LIMIT 1000`, listParams);
+            const [n]: any = await db.execute(
+                `SELECT c.status, COUNT(*) AS n, SUM(c.change_request IS NOT NULL) AS ch ${FROM} ${filtered} GROUP BY c.status`, params);
+            const counts: Record<string, number> = { change: 0 };
+            for (const r of n) { counts[r.status] = Number(r.n); counts.change += Number(r.ch || 0); }
+            // The stores to filter by: portal stores, and the sheet's names for rows with none.
+            const [st]: any = await db.execute(
+                `SELECT c.store_id AS id, COALESCE(vd.store_name, JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store'))) AS name, COUNT(*) AS n
+                   ${FROM} GROUP BY c.store_id, name HAVING name IS NOT NULL ORDER BY name`);
+            const stores = st.map((r: any) => ({ value: r.id ?? `name:${r.name}`, name: r.name, n: Number(r.n), portal: Boolean(r.id) }));
             const who = whoOf(req);
-            return ok(res, { claims: cs.map(fromRow).map((c: any) => view(c, who)), counts, rights: who.rights ?? [] });
+            return ok(res, {
+                claims: cs.map(fromRow).map((c: any) => view(c, who)), counts, stores,
+                total: Object.entries(counts).reduce((a, [k, v]) => (k === 'change' ? a : a + v), 0),
+                rights: who.rights ?? [],
+            });
         } catch (e) {
             console.error('claims.adminList', e);
             return bad(res, 'Could not load claims', 500);
@@ -502,21 +556,65 @@ export default class ClaimsController {
             const can = c && await access(req, c);
             if (!c || !can) return bad(res, 'Claim not found', 404);
             const who = whoOf(req);
-            const [s]: any = await db.execute('SELECT store_name, city FROM vendor_details WHERE id = ?', [c.store_id ?? '']);
+            const [s]: any = await db.execute(
+                'SELECT vd.store_name, vd.city, p.phone_number AS phone FROM vendor_details vd LEFT JOIN profiles p ON p.id = vd.user_id WHERE vd.id = ?', [c.store_id ?? '']);
             const out = view(c, who, can === 'view');
             out.store_name = s[0]?.store_name ?? null;
             out.store_city = s[0]?.city ?? null;
+            out.store_phone = s[0]?.phone ?? null;
             if (who.actor !== 'customer') {
                 out.counts = await claimCounts(c);
                 out.registration = await registrationFor(c, who.actor);
                 if (out.counts.on_warranty > 1 && out.registration) {
                     out.registration.checks.push({ tone: out.counts.approved_before ? 'warn' : 'info', text: `${out.counts.on_warranty - 1} earlier claim${out.counts.on_warranty > 2 ? 's' : ''} on this warranty · ${out.counts.approved_before} approved` });
                 }
+            } else {
+                // The customer sees their own product as fitted, beside the claim; no checks.
+                const r = await registrationFor(c, who.actor);
+                out.registration = r && {
+                    uid: r.uid, product_name: r.product_name, car: r.car, car_colour: r.car_colour, registration_number: r.registration_number,
+                    warranty_type: r.warranty_type, fitted_on: r.fitted_on, cover_end: r.cover_end, fitted_store: r.fitted_store, fitted_city: r.fitted_city,
+                    photos: r.photos, checks: [],
+                };
             }
             return ok(res, { claim: out });
         } catch (e) {
             console.error('claims.detail', e);
             return bad(res, 'Could not load the claim', 500);
+        }
+    }
+
+    /**
+     * One photo of a claim, sent as a download: the claim's own photos, the
+     * store's and the plant's, and its warranty's registration photos. Any
+     * other address is refused, so this cannot be used to fetch something else.
+     */
+    static async file(req: AuthRequest, res: Response) {
+        try {
+            const c = await loadClaim(req.params.id);
+            const can = c && await access(req, c);
+            if (!c || !can) return bad(res, 'Claim not found', 404);
+            const u = String(req.query.u ?? '');
+            const reg = await registrationFor(c, whoOf(req).actor);
+            const allowed = new Set<string>([
+                ...(c.media ?? []), ...(c.verification?.photos ?? []), ...(c.fitted?.photos ?? []), ...(c.change_request?.photos ?? []),
+                ...(reg?.photos ?? []).map((p: any) => p.url),
+            ]);
+            if (!u || !allowed.has(u)) return bad(res, 'File not found', 404);
+            const name = path.basename(u.split('?')[0]) || 'photo.jpg';
+            // Ours on this server's disk; anything else (older photos) is fetched and passed on.
+            if (u.startsWith(`${APP_URL}/uploads/`)) {
+                const p = path.resolve(urlToDiskPath(u));
+                if (p.startsWith(path.resolve(UPLOADS_BASE_DIR) + path.sep) && fs.existsSync(p)) return res.download(p, name);
+            }
+            const r = await fetch(u);
+            if (!r.ok) return bad(res, 'File not found', 404);
+            res.setHeader('Content-Type', r.headers.get('content-type') ?? 'application/octet-stream');
+            res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/"/g, '')}"`);
+            return res.send(Buffer.from(await r.arrayBuffer()));
+        } catch (e) {
+            console.error('claims.file', e);
+            return bad(res, 'Could not get the file', 500);
         }
     }
 
@@ -542,7 +640,9 @@ export default class ClaimsController {
                     if (!h.undone && !['undo', 'raised'].includes(h.action)) { history[i] = { ...h, undone: true }; break; }
                 }
             }
-            const note = action === 'verify' ? next.verification?.remarks : String(req.body?.note ?? '').trim().slice(0, 1000) || null;
+            const note = action === 'verify' ? next.verification?.remarks
+                : action === 'redecide' ? [req.body?.change_reason, req.body?.note].map(x => String(x ?? '').trim()).filter(Boolean).join(' · ').slice(0, 1000) || null
+                    : String(req.body?.note ?? '').trim().slice(0, 1000) || null;
             history.push(entry(req, { action, status: next.status, text: stepText(action, next), note, changes: r.changes.length ? r.changes : undefined }));
             next.history = history;
             await save(next);
@@ -571,8 +671,27 @@ export default class ClaimsController {
                     await tell(next, `${t}. Your claim is closed.`, { customer: true });
                     if (who.actor !== 'admin') await tell(next, `${t}: claim closed.`, { plant: true });
                     break;
-                case 'edit': await tell(next, `Claim details updated: ${r.changes.join('; ').slice(0, 200)}`, { store: true }); break;
+                case 'dispatch_info':
+                    // The moment it becomes dispatched, the store and the customer hear of it.
+                    if (next.status === 'dispatched' && c.status !== 'dispatched') await tell(next, t, { store: true, customer: true });
+                    break;
+                case 'redecide':
+                    await tell(next, t, { store: true, customer: next.status !== 'verify' });
+                    if (next.status === 'consent') await tell(next, 'Please agree to the charge so the plant can go ahead.', { customer: true });
+                    break;
+                case 'edit':
+                    await tell(next, `Claim details updated: ${r.changes.join('; ').slice(0, 200)}`, { store: true });
+                    // A decision changed to chargeable waits for the customer's answer again.
+                    if (next.status === 'consent' && c.status !== 'consent') await tell(next, 'This claim is now chargeable. Please agree to the charge so the plant can go ahead.', { customer: true });
+                    break;
                 case 'undo': await tell(next, t, { store: true }); break;
+                case 'change': case 'resend':
+                    // A customer's change goes to the store first; the store's to the plant.
+                    if (who.actor === 'customer') await tell(next, `${t}: ${r.changes.join('; ').slice(0, 200)}`, { store: true });
+                    else await tell(next, `${t}: ${r.changes.join('; ').slice(0, 200)}`, { plant: true, customer: action === 'resend' });
+                    break;
+                case 'ask_change': await tell(next, `${t}: ${r.changes.join('; ').slice(0, 200)}`, { plant: true }); break;
+                case 'change_ok': case 'change_no': await tell(next, t, { store: true, customer: true }); break;
             }
             return ok(res, { claim: view(next, who) });
         } catch (e) {
@@ -586,6 +705,7 @@ export default class ClaimsController {
         return ok(res, {
             problems: PROBLEMS, reasons: REJECT_REASONS, hold_reasons: HOLD_REASONS, statuses: STATUS_TEXT,
             rights: whoOf(req).rights ?? [], old_part: OLD_PART_ENABLED,
+            models: modelList(whoOf(req).actor === 'customer'),
         });
     }
 }

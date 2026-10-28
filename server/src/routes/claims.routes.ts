@@ -34,6 +34,7 @@ router.post('/store', authenticateToken, requireRole('vendor'), signalAttention,
 router.get('/admin/all', authenticateToken, requireRole('admin'), requirePermission('claims', 'read'), ClaimsController.adminList);
 
 // A step by whoever is on the claim; claimFlow decides who may take which.
+router.get('/:id/file', authenticateToken, requirePermission('claims', 'read'), ClaimsController.file);
 router.get('/:id', authenticateToken, requirePermission('claims', 'read'), ClaimsController.detail);
 router.post('/:id/action', authenticateToken, requirePermission('claims', 'read'), signalAttention, handleUpload, ClaimsController.act);
 

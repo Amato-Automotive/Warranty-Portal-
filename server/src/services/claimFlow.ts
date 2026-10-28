@@ -7,11 +7,16 @@
  *   on_hold     → the plant is waiting on something; it decides from here
  *   consent     → chargeable: the customer agrees (or the store, for them)
  *   repair      → the store repairs it on site
- *   plan        → the plant sets the EDD and the alteration number
- *   production  → being prepared; the plant marks it ready
+ *   plan        → the plant enters the alteration number (the EDD is optional)
+ *   production  → WIP, being prepared; the plant marks it ready
  *   ready       → made; the plant dispatches it (date, docket)
  *   dispatched  → on the way; the store confirms it reached and was fitted
  *   closed / rejected / declined
+ *
+ * Changes by the store and the customer: before the plant decides they edit
+ * the request (a customer's edit goes back to the store to check); once it is
+ * approved they ask for a change, which the plant approves or refuses; a
+ * rejected claim can be edited and sent again.
  *
  * Plant steps are per person: the super admin gives each one the rights they
  * need (decide, plan, dispatch, edit). Everyone else with access only views.
@@ -21,7 +26,8 @@
  */
 
 export type ClaimStatus = 'verify' | 'review' | 'on_hold' | 'consent' | 'repair' | 'plan' | 'production' | 'ready' | 'dispatched' | 'closed' | 'rejected' | 'declined';
-export type ClaimAction = 'verify' | 'ask_more' | 'hold' | 'approve' | 'reject' | 'consent' | 'decline' | 'plan' | 'ready' | 'dispatch' | 'fitted' | 'edit' | 'undo';
+export type ClaimAction = 'verify' | 'ask_more' | 'hold' | 'approve' | 'reject' | 'consent' | 'decline' | 'plan' | 'ready' | 'dispatch' | 'fitted'
+    | 'change' | 'resend' | 'ask_change' | 'change_ok' | 'change_no' | 'redecide' | 'dispatch_info' | 'edit' | 'undo';
 export type ClaimKind = 'warranty' | 'alteration';
 export type Actor = 'customer' | 'vendor' | 'admin';
 /** What a plant person may do, beyond seeing every claim. */
@@ -38,7 +44,11 @@ export interface Who { actor: Actor; rights?: PlantRight[] }
  */
 export const OLD_PART_ENABLED = false;
 
-export interface Vehicle { make: string; model: string; airbags: 'with' | 'without' | null }
+/** The car, and for a seat cover its airbags (with, side airbags only, without) and the cover's colours. */
+export interface Vehicle {
+    make: string; model: string; airbags: 'with' | 'sab' | 'without' | null;
+    major_colour?: string | null; minor_colour?: string | null;
+}
 
 export interface Verification { remarks: string | null; corrections: string[]; photos: string[]; at: string }
 export interface Hold { reason: string; note: string | null; at: string }
@@ -55,9 +65,11 @@ export interface Decision {
 }
 
 export interface Consent { agreed: boolean; by: 'customer' | 'store'; note: string | null; at: string }
-export interface Plan { edd: string; alteration_no: string | null; at: string }
+export interface Plan { edd: string | null; alteration_no: string | null; at: string }
 export interface Dispatch { date: string; docket: string; courier: string | null; at: string }
 export interface Fitted { note: string | null; photos: string[]; at: string; by: Actor }
+/** A change the store or the customer asked for after approval, waiting for the plant. */
+export interface ChangeRequest { by: Actor; fields: Record<string, string>; changes: string[]; photos: string[]; note: string; at: string }
 
 /** What a step changes, kept so Undo can put it back. */
 export interface ClaimSnapshot {
@@ -72,11 +84,13 @@ export interface ClaimSnapshot {
     plan: Plan | null;
     dispatch: Dispatch | null;
     fitted: Fitted | null;
+    change_request?: ChangeRequest | null;
 }
 
 export interface FlowClaim extends ClaimSnapshot {
     kind: ClaimKind;
     product_type?: string | null;
+    media?: string[] | null;
     trail?: ClaimSnapshot[];
 }
 
@@ -207,9 +221,12 @@ export function readVehicle(input: ClaimInput, productType: string | null | unde
     const model = text(input.vehicle_model, 60);
     if (!make) return { error: 'Enter the vehicle make' };
     if (!model) return { error: 'Enter the vehicle model' };
-    const airbags = pick(input.airbags, ['with', 'without'] as const);
-    if (asksAirbags(productType) && !airbags) return { error: 'Choose with or without airbags' };
-    return { make, model, airbags: asksAirbags(productType) ? airbags : null };
+    if (!asksAirbags(productType)) return { make, model, airbags: null };
+    const airbags = pick(input.airbags, ['with', 'sab', 'without'] as const);
+    if (!airbags) return { error: 'Choose with airbags, SAB or without airbags' };
+    const major = text(input.major_colour, 40);
+    if (!major) return { error: 'Enter the major colour' };
+    return { make, model, airbags, major_colour: major, minor_colour: text(input.minor_colour, 40) || null };
 }
 
 /** A new claim's issue and description, or why they are not complete. */
@@ -222,7 +239,9 @@ export function readProblem(input: ClaimInput, covered: boolean): { problem: str
     return { problem, description: description || null };
 }
 
-const vehicleText = (v: Vehicle | null) => v ? [v.make, v.model, v.airbags ? `${v.airbags} airbags` : null].filter(Boolean).join(' · ') : '(none)';
+const AIRBAGS = { with: 'with airbags', sab: 'SAB', without: 'without airbags' } as const;
+const vehicleText = (v: Vehicle | null) => v ? [v.make, v.model, v.airbags ? AIRBAGS[v.airbags] : null,
+    [v.major_colour, v.minor_colour].filter(Boolean).join('/') || null].filter(Boolean).join(' · ') : '(none)';
 
 /**
  * The claim's details as corrected, and the changes in words. Only the fields
@@ -232,10 +251,11 @@ function correctDetails(c: FlowClaim, input: ClaimInput): { patch: Partial<Claim
     const changes: string[] = [];
     const patch: Partial<ClaimSnapshot> = {};
     let kind = c.kind;
-    if (input.vehicle_make !== undefined || input.vehicle_model !== undefined || input.airbags !== undefined) {
+    if (['vehicle_make', 'vehicle_model', 'airbags', 'major_colour', 'minor_colour'].some(k => input[k] !== undefined)) {
         const v = readVehicle({
             vehicle_make: input.vehicle_make ?? c.vehicle?.make, vehicle_model: input.vehicle_model ?? c.vehicle?.model,
             airbags: input.airbags ?? c.vehicle?.airbags,
+            major_colour: input.major_colour ?? c.vehicle?.major_colour, minor_colour: input.minor_colour ?? c.vehicle?.minor_colour,
         }, c.product_type);
         if ('error' in v) return v;
         if (vehicleText(v) !== vehicleText(c.vehicle)) {
@@ -264,7 +284,8 @@ function correctDetails(c: FlowClaim, input: ClaimInput): { patch: Partial<Claim
 }
 
 function readDecision(input: ClaimInput, at: string): Decision | { error: string } {
-    const outcome = pick(input.outcome, ['repair_store', 'send_material'] as const);
+    // The plant sends the material; "repair at the store" stays for older claims only.
+    const outcome = pick(input.outcome ?? 'send_material', ['repair_store', 'send_material'] as const);
     if (!outcome) return { error: 'Choose repair at the store or send material' };
     const charge = pick(input.charge, ['foc', 'chargeable'] as const);
     if (!charge) return { error: 'Choose free of cost or chargeable' };
@@ -272,7 +293,8 @@ function readDecision(input: ClaimInput, at: string): Decision | { error: string
     let source: Decision['source'] = null;
     if (outcome === 'send_material') {
         item = text(input.item, 200) || null;
-        source = pick(input.source, ['plant', 'distributor'] as const) ?? 'plant';
+        // Material always comes from the plant now; the field stays for older claims.
+        source = 'plant';
     }
     let old_part: Decision['old_part'] = null;
     if (OLD_PART_ENABLED && input.old_part) {
@@ -283,9 +305,11 @@ function readDecision(input: ClaimInput, at: string): Decision | { error: string
 }
 
 function readPlan(input: ClaimInput, at: string): Plan | { error: string } {
+    const alteration_no = text(input.alteration_no, 60);
+    if (!alteration_no) return { error: 'Enter the alteration no.' };
     const edd = String(input.edd ?? '');
-    if (!DATE.test(edd)) return { error: 'Enter the expected delivery date (EDD)' };
-    return { edd, alteration_no: text(input.alteration_no, 60) || null, at };
+    if (edd && !DATE.test(edd)) return { error: 'Enter the EDD as a date' };
+    return { edd: edd || null, alteration_no, at };
 }
 
 function readDispatch(input: ClaimInput, at: string): Dispatch | { error: string } {
@@ -298,7 +322,16 @@ function readDispatch(input: ClaimInput, at: string): Dispatch | { error: string
 
 /* ─── Steps ───────────────────────────────────────────────────────────────── */
 
-type StepAction = Exclude<ClaimAction, 'edit' | 'undo'>;
+type StepAction = Exclude<ClaimAction, 'edit' | 'undo' | 'redecide' | 'dispatch_info'>;
+
+/** A decision taken again from scratch: until the alteration no. is given, or after a rejection. */
+export const REDECIDE_FROM: ClaimStatus[] = ['consent', 'repair', 'plan', 'rejected'];
+export const DECISIONS = ['approve', 'hold', 'reject', 'ask_more'] as const;
+/** Where the dispatch columns can be filled in, one at a time, like a sheet. */
+export const DISPATCH_INFO_FROM: ClaimStatus[] = ['plan', 'production', 'ready', 'dispatched', 'closed'];
+
+/** Approved and not yet closed: a change now needs the plant's yes. */
+const APPROVED: ClaimStatus[] = ['consent', 'repair', 'plan', 'production', 'ready', 'dispatched'];
 
 const FROM: Record<StepAction, ClaimStatus[]> = {
     verify: ['verify'],
@@ -313,6 +346,11 @@ const FROM: Record<StepAction, ClaimStatus[]> = {
     // Ready is the usual way in, but a set sent straight off the line can skip it.
     dispatch: ['plan', 'production', 'ready'],
     fitted: ['repair', 'dispatched'],
+    change: ['verify', 'review', 'on_hold'],
+    resend: ['rejected'],
+    ask_change: APPROVED,
+    change_ok: APPROVED,
+    change_no: APPROVED,
 };
 
 /** Who may take each step: the customer, the store, or a plant right. */
@@ -322,6 +360,8 @@ const WHO: Record<ClaimAction, (Actor | PlantRight)[]> = {
     consent: ['customer', 'vendor'], decline: ['customer', 'vendor'],
     plan: ['plan'], ready: ['plan'], dispatch: ['dispatch'],
     fitted: ['vendor', 'edit'],
+    change: ['customer', 'vendor'], resend: ['customer', 'vendor'], ask_change: ['customer', 'vendor'],
+    change_ok: ['decide'], change_no: ['decide'], redecide: ['decide'], dispatch_info: ['dispatch', 'edit'],
     edit: ['edit'], undo: ['edit'],
 };
 
@@ -333,8 +373,14 @@ export function mayTake(action: ClaimAction, who: Who): boolean {
 
 /** The steps open on a claim now for this person, in the order they are offered. */
 export function actionsFor(c: FlowClaim, who: Who): ClaimAction[] {
-    const out = (Object.keys(FROM) as StepAction[]).filter(a => FROM[a].includes(c.status) && mayTake(a, who)) as ClaimAction[];
-    if (mayTake('edit', who) && c.status !== 'rejected') out.push('edit');
+    const out = (Object.keys(FROM) as StepAction[]).filter(a => FROM[a].includes(c.status) && mayTake(a, who)
+        // The store corrects while verifying; one change request at a time.
+        && !(a === 'change' && who.actor === 'vendor' && c.status === 'verify')
+        && !(a === 'ask_change' && c.change_request)
+        && !((a === 'change_ok' || a === 'change_no') && !c.change_request)) as ClaimAction[];
+    if (mayTake('redecide', who) && REDECIDE_FROM.includes(c.status)) out.push('redecide');
+    if (mayTake('dispatch_info', who) && DISPATCH_INFO_FROM.includes(c.status)) out.push('dispatch_info');
+    if (mayTake('edit', who)) out.push('edit');
     if (mayTake('undo', who) && c.trail?.length) out.push('undo');
     return out;
 }
@@ -347,8 +393,8 @@ export function waitingOn(status: ClaimStatus): string | null {
         case 'on_hold': return 'Plant (on hold)';
         case 'consent': return "Customer's agreement to the charge";
         case 'repair': return 'Store to repair';
-        case 'plan': return 'Plant to set EDD';
-        case 'production': return 'Plant: being prepared';
+        case 'plan': return 'Plant to set alteration no.';
+        case 'production': return 'Plant: WIP';
         case 'ready': return 'Plant to dispatch';
         case 'dispatched': return 'Store to confirm fitted';
         default: return null;
@@ -358,8 +404,16 @@ export function waitingOn(status: ClaimStatus): string | null {
 const snap = (c: FlowClaim): ClaimSnapshot => ({
     status: c.status, problem: c.problem, description: c.description ?? null, vehicle: c.vehicle ?? null,
     verification: c.verification ?? null, hold: c.hold ?? null, decision: c.decision ?? null, consent: c.consent ?? null,
-    plan: c.plan ?? null, dispatch: c.dispatch ?? null, fitted: c.fitted ?? null,
+    plan: c.plan ?? null, dispatch: c.dispatch ?? null, fitted: c.fitted ?? null, change_request: c.change_request ?? null,
 });
+
+/** The detail fields a change sends, as text, leaving out what was not sent. */
+const DETAIL_FIELDS = ['vehicle_make', 'vehicle_model', 'airbags', 'major_colour', 'minor_colour', 'problem', 'description'];
+const detailFields = (input: ClaimInput): Record<string, string> =>
+    Object.fromEntries(DETAIL_FIELDS.filter(k => input[k] !== undefined).map(k => [k, String(input[k] ?? '')]));
+const photoLine = (n: number) => n ? [`${n} photo${n === 1 ? '' : 's'} added`] : [];
+
+const OUTCOME_TEXT = { repair_store: 'Repair at the store', send_material: 'Material from the plant', reject: 'Not approved' } as const;
 
 /** Where an approved claim goes next: the customer's agreement, the store's repair, or the plant's plan. */
 const afterApproval = (d: Decision): ClaimStatus => d.charge === 'chargeable' ? 'consent' : afterConsent(d);
@@ -385,8 +439,49 @@ export function applyClaimAction<T extends FlowClaim>(claim: T, action: string, 
         return { claim: { ...claim, ...prev, kind: kindOf(prev.problem), trail }, changes: [] };
     }
 
+    if (a === 'dispatch_info') {
+        // The dispatch date, docket and courier, each filled in on its own. An
+        // empty one is just filled; a value already there changes with a reason.
+        // With a date and a docket the claim is dispatched.
+        if (!DISPATCH_INFO_FROM.includes(claim.status)) return { error: 'Dispatch details are filled in once the claim is approved' };
+        const was = claim.dispatch ?? { date: '', docket: '', courier: null, at };
+        const next = { ...was };
+        const changes: string[] = [];
+        let overwrite = false;
+        if (input.dispatch_date !== undefined) {
+            const d = String(input.dispatch_date ?? '');
+            if (d && !DATE.test(d)) return { error: 'Enter the dispatch date as a date' };
+            if (d !== was.date) { if (was.date) overwrite = true; changes.push(`Dispatch date: ${was.date || '(none)'} → ${d || '(none)'}`); next.date = d; }
+        }
+        if (input.docket !== undefined) {
+            const k = text(input.docket, 60);
+            if (k !== was.docket) { if (was.docket) overwrite = true; changes.push(`Docket: ${was.docket || '(none)'} → ${k || '(none)'}`); next.docket = k; }
+        }
+        if (input.courier !== undefined) {
+            const k = text(input.courier, 80) || null;
+            if (k !== was.courier) { if (was.courier) overwrite = true; changes.push(`Courier: ${was.courier ?? '(none)'} → ${k ?? '(none)'}`); next.courier = k; }
+        }
+        if (!changes.length) return { error: 'Nothing was changed' };
+        if (overwrite && note.length < 3) return { error: 'Write why this is being changed' };
+        const sent = Boolean(next.date && next.docket);
+        const status: ClaimStatus = sent && ['plan', 'production', 'ready'].includes(claim.status) ? 'dispatched' : claim.status;
+        return { claim: { ...claim, dispatch: next, status, trail: [...trail, snap(claim)] }, changes };
+    }
+
+    if (a === 'redecide') {
+        // The decision is taken again as if the claim were back with the plant;
+        // one undo puts the old decision back.
+        if (!REDECIDE_FROM.includes(claim.status)) return { error: 'The decision can only be changed before the alteration no. is given' };
+        if (text(input.change_reason, 500).length < 3) return { error: 'Write why the decision is being changed' };
+        const choice = pick(input.choice, DECISIONS);
+        if (!choice) return { error: 'Choose approve, hold, reject or ask the store' };
+        const base = { ...claim, status: 'review' as ClaimStatus, decision: null, consent: null, hold: null, plan: null };
+        const r = applyClaimAction(base, choice, who, input, now);
+        if ('error' in r) return r;
+        return { claim: { ...r.claim, trail: [...trail, snap(claim)] }, changes: [`Decision changed: ${stepText(choice, r.claim)}`] };
+    }
+
     if (a === 'edit') {
-        if (claim.status === 'rejected') return { error: 'A rejected claim cannot be edited: undo the rejection first' };
         if (note.length < 3) return { error: 'Write why this is being changed' };
         const fixed = correctDetails(claim, input);
         if ('error' in fixed) return fixed;
@@ -394,8 +489,44 @@ export function applyClaimAction<T extends FlowClaim>(claim: T, action: string, 
         const changes = [...fixed.changes];
 
         const d = claim.decision;
+        if (d && d.outcome === 'reject') {
+            // A rejection's reason and remarks; turning it into an approval is an undo.
+            const nd = { ...d };
+            if (input.reason !== undefined && input.reason !== d.reason) {
+                const reason = pick(input.reason, Object.keys(REJECT_REASONS));
+                if (!reason) return { error: 'Choose the reason from the T&C' };
+                changes.push(`Reason: ${REJECT_REASONS[d.reason ?? ''] ?? '(none)'} → ${REJECT_REASONS[reason]}`);
+                nd.reason = reason;
+            }
+            if (input.remarks !== undefined) {
+                const r = text(input.remarks, 1000) || null;
+                if (r !== d.remarks) { changes.push('Plant remarks changed'); nd.remarks = r; }
+            }
+            out.decision = nd;
+        }
         if (d && d.outcome !== 'reject') {
             const nd = { ...d };
+            // What is sent and who pays can change until the alteration no. is given.
+            const early = ['consent', 'repair', 'plan'].includes(claim.status);
+            if (input.outcome !== undefined && input.outcome !== d.outcome) {
+                const outcome = pick(input.outcome, ['repair_store', 'send_material'] as const);
+                if (!outcome) return { error: 'Choose repair at the store or send material' };
+                if (!early) return { error: 'The decision can only be changed before the alteration no. is given' };
+                changes.push(`Decision: ${OUTCOME_TEXT[d.outcome]} → ${OUTCOME_TEXT[outcome]}`);
+                nd.outcome = outcome;
+                nd.source = outcome === 'send_material' ? 'plant' : null;
+                if (outcome === 'repair_store') nd.item = null;
+            }
+            if (input.charge !== undefined && input.charge !== d.charge) {
+                const charge = pick(input.charge, ['foc', 'chargeable'] as const);
+                if (!charge) return { error: 'Choose free of cost or chargeable' };
+                if (!early) return { error: 'The charge can only be changed before the alteration no. is given' };
+                changes.push(`Charge: ${d.charge === 'chargeable' ? 'Chargeable' : 'Free of cost'} → ${charge === 'chargeable' ? 'Chargeable' : 'Free of cost'}`);
+                nd.charge = charge;
+                // A new charge needs the customer's answer again.
+                out.consent = null;
+            }
+            if (early && (nd.outcome !== d.outcome || nd.charge !== d.charge)) out.status = afterApproval(nd);
             if (input.remarks !== undefined) {
                 const r = text(input.remarks, 1000) || null;
                 if (r !== d.remarks) { changes.push('Plant remarks changed'); nd.remarks = r; }
@@ -409,7 +540,7 @@ export function applyClaimAction<T extends FlowClaim>(claim: T, action: string, 
         if (claim.plan && (input.edd !== undefined || input.alteration_no !== undefined)) {
             const p = readPlan({ edd: input.edd ?? claim.plan.edd, alteration_no: input.alteration_no ?? claim.plan.alteration_no }, claim.plan.at);
             if ('error' in p) return p;
-            if (p.edd !== claim.plan.edd) changes.push(`EDD: ${claim.plan.edd} → ${p.edd}`);
+            if (p.edd !== claim.plan.edd) changes.push(`EDD: ${claim.plan.edd ?? '(none)'} → ${p.edd ?? '(none)'}`);
             if (p.alteration_no !== claim.plan.alteration_no) changes.push(`Alteration no.: ${claim.plan.alteration_no ?? '(none)'} → ${p.alteration_no ?? '(none)'}`);
             out.plan = p;
         }
@@ -494,6 +625,47 @@ export function applyClaimAction<T extends FlowClaim>(claim: T, action: string, 
             if ('error' in d) return d;
             return { claim: { ...out, status: 'dispatched', dispatch: d }, changes: [] };
         }
+        case 'change': case 'resend': {
+            if (a === 'change' && who.actor === 'vendor' && claim.status === 'verify') return { error: 'Correct the details while verifying' };
+            if (a === 'resend' && note.length < 3) return { error: 'Write what you changed' };
+            const fixed = correctDetails(claim, detailFields(input));
+            if ('error' in fixed) return fixed;
+            const photos = (input.photos ?? []).filter(Boolean).slice(0, 6);
+            const changes = [...fixed.changes, ...photoLine(photos.length)];
+            if (a === 'change' && !changes.length) return { error: 'Nothing was changed' };
+            // A customer's change goes to the store to check; the store's goes on to the plant.
+            const status: ClaimStatus = a === 'resend' ? (who.actor === 'customer' ? 'verify' : 'review')
+                : who.actor === 'customer' ? 'verify' : claim.status;
+            return {
+                claim: {
+                    ...out, ...fixed.patch, kind: fixed.kind, media: [...(claim.media ?? []), ...photos].slice(0, 16), status,
+                    hold: status === claim.status ? claim.hold : null, decision: a === 'resend' ? null : claim.decision,
+                },
+                changes,
+            };
+        }
+        case 'ask_change': {
+            if (claim.change_request) return { error: 'A change request is already waiting for the plant' };
+            if (note.length < 3) return { error: 'Write why the change is needed' };
+            const fields = detailFields(input);
+            const fixed = correctDetails(claim, fields);
+            if ('error' in fixed) return fixed;
+            const photos = (input.photos ?? []).filter(Boolean).slice(0, 6);
+            const changes = [...fixed.changes, ...photoLine(photos.length)];
+            if (!changes.length) return { error: 'Nothing was changed' };
+            return { claim: { ...out, change_request: { by: who.actor, fields, changes, photos, note, at } }, changes };
+        }
+        case 'change_ok': {
+            const rq = claim.change_request;
+            if (!rq) return { error: 'There is no change request' };
+            const fixed = correctDetails(claim, rq.fields);
+            if ('error' in fixed) return fixed;
+            return { claim: { ...out, ...fixed.patch, kind: fixed.kind, media: [...(claim.media ?? []), ...rq.photos].slice(0, 16), change_request: null }, changes: rq.changes };
+        }
+        case 'change_no':
+            if (!claim.change_request) return { error: 'There is no change request' };
+            if (note.length < 3) return { error: 'Write why the change is refused' };
+            return { claim: { ...out, change_request: null }, changes: [] };
         case 'fitted':
             return { claim: { ...out, status: 'closed', fitted: { note: note || null, photos: (input.photos ?? []).slice(0, 5), at, by: who.actor } }, changes: [] };
     }
@@ -510,6 +682,7 @@ export const STATUS_TEXT: Record<ClaimStatus, string> = {
 const PAST: Record<StepAction, string> = {
     verify: 'verified', ask_more: 'sent back to the store', hold: 'put on hold', approve: 'approved', reject: 'rejected',
     consent: 'agreed to', decline: 'declined', plan: 'planned', ready: 'marked ready', dispatch: 'dispatched', fitted: 'marked fitted',
+    change: 'changed', resend: 'sent again', ask_change: 'changed', change_ok: 'changed', change_no: 'changed',
 };
 
 /** A step in words, for the timeline and the notifications. */
@@ -526,10 +699,18 @@ export function stepText(action: ClaimAction, c: FlowClaim): string {
         case 'reject': return `Not approved: ${REJECT_REASONS[d?.reason ?? ''] ?? 'see note'}`;
         case 'consent': return c.consent?.by === 'customer' ? 'Customer agreed to the charge' : 'Store confirmed the customer agreed to the charge';
         case 'decline': return c.consent?.by === 'customer' ? 'Customer declined the charge' : 'Store recorded that the customer declined the charge';
-        case 'plan': return `Expected by ${c.plan?.edd}${c.plan?.alteration_no ? ` · alteration no. ${c.plan.alteration_no}` : ''}`;
+        case 'plan': return `Alteration no. ${c.plan?.alteration_no}: WIP${c.plan?.edd ? ` · expected by ${c.plan.edd}` : ''}`;
         case 'ready': return 'Ready to dispatch';
         case 'dispatch': return `Dispatched on ${c.dispatch?.date} · docket ${c.dispatch?.docket}${c.dispatch?.courier ? ` · ${c.dispatch.courier}` : ''}`;
         case 'fitted': return d?.outcome === 'repair_store' ? 'Repaired at the store' : 'Reached the store and fitted';
+        case 'change': return 'Request changed';
+        case 'resend': return 'Changed and sent again';
+        case 'ask_change': return 'Change asked for: waiting for the plant';
+        case 'change_ok': return 'Change approved by the plant';
+        case 'change_no': return 'Change refused by the plant';
+        case 'dispatch_info': return c.status === 'dispatched' && c.dispatch?.date && c.dispatch?.docket
+            ? `Dispatched on ${c.dispatch.date} · docket ${c.dispatch.docket}${c.dispatch.courier ? ` · ${c.dispatch.courier}` : ''}` : 'Dispatch details updated';
+        case 'redecide': return `Decision changed: ${stepText(c.status === 'rejected' ? 'reject' : c.status === 'on_hold' ? 'hold' : c.status === 'verify' ? 'ask_more' : 'approve', c)}`;
         case 'undo': return `Step undone: back to ${STATUS_TEXT[c.status].toLowerCase()}`;
         case 'edit': return 'Details edited';
     }

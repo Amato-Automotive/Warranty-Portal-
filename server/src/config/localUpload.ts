@@ -309,8 +309,8 @@ export const posmItemUpload = multer({
     },
 });
 
-/** Warranty claims: the problem's photos and video, the store's inspection and
- *  fitting photos, an invoice → uploads/claims/YYYY-MM/. */
+/** Warranty claims: photos only for now (the problem, the store's inspection,
+ *  the fitting) → uploads/claims/YYYY-MM/. */
 export const claimUpload = multer({
     storage: multer.diskStorage({
         destination: createDestination('claims'),
@@ -319,9 +319,8 @@ export const claimUpload = multer({
     limits: { fileSize: 60 * 1024 * 1024, files: 12 },
     fileFilter: (_req, file, cb) => {
         const ext = (file.originalname.split('.').pop() || '').toLowerCase();
-        if (['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf', 'mp4', 'mov', 'webm', '3gp', 'm4v'].includes(ext)
-            || /^(image|video)\//.test(file.mimetype) || file.mimetype === 'application/pdf') cb(null, true);
-        else cb(new Error(`Only photos, videos and PDFs can be attached: ${file.originalname}`));
+        if (['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext) || /^image\//.test(file.mimetype)) cb(null, true);
+        else cb(new Error(`Only photos can be attached: ${file.originalname}`));
     },
 });
 

@@ -109,6 +109,15 @@ const EXAMPLES: Record<string, string[]> = {
     MG: ['Hector', 'Astor', 'Windsor'],
 };
 
+/**
+ * Every make with its models, for the claim screens to pick from. A customer
+ * gets no Maruti Suzuki models (compliance) and types the model instead.
+ */
+export function modelList(forCustomer: boolean): Record<string, string[]> {
+    return Object.fromEntries(Object.entries(MODELS).map(([make, ms]) =>
+        [make, forCustomer && make === 'Maruti Suzuki' ? [] : ms.map(m => m[0]).sort((a, b) => a.localeCompare(b))]));
+}
+
 export function exampleModels(make: string): string {
     return (EXAMPLES[make] ?? (MODELS[make] ?? []).slice(0, 3).map(m => m[0])).join(', ');
 }

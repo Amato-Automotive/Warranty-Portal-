@@ -7,7 +7,8 @@
  */
 
 export type ClaimStatus = 'verify' | 'review' | 'on_hold' | 'consent' | 'repair' | 'plan' | 'production' | 'ready' | 'dispatched' | 'closed' | 'rejected' | 'declined';
-export type ClaimAction = 'verify' | 'ask_more' | 'hold' | 'approve' | 'reject' | 'consent' | 'decline' | 'plan' | 'ready' | 'dispatch' | 'fitted' | 'edit' | 'undo';
+export type ClaimAction = 'verify' | 'ask_more' | 'hold' | 'approve' | 'reject' | 'consent' | 'decline' | 'plan' | 'ready' | 'dispatch' | 'fitted'
+    | 'change' | 'resend' | 'ask_change' | 'change_ok' | 'change_no' | 'redecide' | 'dispatch_info' | 'edit' | 'undo';
 export type ClaimKind = 'warranty' | 'alteration';
 export type PlantRight = 'decide' | 'plan' | 'dispatch' | 'edit';
 
@@ -16,7 +17,7 @@ export interface ClaimHistory {
     by_role: 'customer' | 'vendor' | 'admin'; by_name?: string | null; undone?: boolean;
 }
 
-export interface Vehicle { make: string; model: string; airbags: 'with' | 'without' | null }
+export interface Vehicle { make: string; model: string; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null }
 
 export interface Claim {
     id: number;
@@ -26,6 +27,7 @@ export interface Claim {
     store_id: string | null;
     store_name?: string | null;
     store_city?: string | null;
+    store_phone?: string | null;
     raised_by_role: 'customer' | 'vendor' | 'admin';
     raised_via: string;
     problem: string;
@@ -36,6 +38,8 @@ export interface Claim {
     snapshot: {
         product_type: string; product_name: string; customer_name: string; customer_phone: string;
         car: string | null; registration_number: string | null; warranty_type: string; cover_start: string | null; cover_end: string | null; fitted_store: string | null;
+        /** A row brought in from the plant's production sheet: its depot, row and FOC note. */
+        source?: string; depot?: string | null; sheet_row?: number; foc_note?: string | null;
     } | null;
     status: ClaimStatus;
     status_text: string;
@@ -48,9 +52,11 @@ export interface Claim {
         reason: string | null; remarks: string | null; at: string;
     } | null;
     consent: { agreed: boolean; by: 'customer' | 'store'; note: string | null; at: string } | null;
-    plan: { edd: string; alteration_no: string | null; at: string } | null;
+    plan: { edd: string | null; alteration_no: string | null; at: string } | null;
     dispatch: { date: string; docket: string; courier: string | null; at: string } | null;
     fitted: { note: string | null; photos: string[]; at: string } | null;
+    /** A change the store or customer asked for after approval, waiting for the plant. */
+    change_request?: { by: 'customer' | 'vendor' | 'admin'; changes: string[]; photos: string[]; note: string; at: string } | null;
     history: ClaimHistory[] | null;
     actions: ClaimAction[];
     /** A distributor's view of a store's claim: nothing to do, only to watch. */
@@ -158,8 +164,8 @@ export const STATUS: Record<ClaimStatus, { admin: string; store: string; custome
     on_hold: { admin: 'On hold', store: 'On hold at the plant', customer: 'On hold', tone: 'bg-yellow-100 text-yellow-800' },
     consent: { admin: 'Customer to agree', store: 'Customer to agree', customer: 'Please agree to the charge', tone: 'bg-purple-100 text-purple-800' },
     repair: { admin: 'Store to repair', store: 'To repair', customer: 'Approved: repair at store', tone: 'bg-blue-100 text-blue-800' },
-    plan: { admin: 'To set EDD', store: 'Approved', customer: 'Approved', tone: 'bg-blue-100 text-blue-800' },
-    production: { admin: 'Being prepared', store: 'Being prepared', customer: 'Being prepared', tone: 'bg-indigo-100 text-indigo-800' },
+    plan: { admin: 'To set alteration no.', store: 'Approved', customer: 'Approved', tone: 'bg-blue-100 text-blue-800' },
+    production: { admin: 'WIP', store: 'Being prepared', customer: 'Being prepared', tone: 'bg-indigo-100 text-indigo-800' },
     ready: { admin: 'Ready to dispatch', store: 'Ready to dispatch', customer: 'Ready to dispatch', tone: 'bg-violet-100 text-violet-800' },
     dispatched: { admin: 'Dispatched', store: 'Dispatched: confirm when fitted', customer: 'On the way', tone: 'bg-sky-100 text-sky-800' },
     closed: { admin: 'Closed', store: 'Fitted', customer: 'Done', tone: 'bg-emerald-100 text-emerald-800' },
@@ -168,20 +174,21 @@ export const STATUS: Record<ClaimStatus, { admin: string; store: string; custome
 };
 
 /** The steps of a claim, for the tracker everyone sees; reachedAt: the statuses that mean the step is done. */
-export function trackerSteps(c: Claim): { label: string; done: boolean; current: boolean; detail?: string }[] {
+export function trackerSteps(c: Claim): { label: string; short: string; at?: string | null; edd?: string | null; done: boolean; current: boolean; detail?: string }[] {
     const repair = c.decision?.outcome === 'repair_store';
-    const steps: { label: string; reachedAt: ClaimStatus[]; detail?: string }[] = [
-        { label: 'Claim requested', reachedAt: [] },
-        { label: 'Verified by the store', reachedAt: ['review', 'on_hold'] },
-        { label: 'Approved by the plant', reachedAt: ['consent', 'repair', 'plan'], detail: c.decision && c.decision.outcome !== 'reject' ? (c.decision.charge === 'chargeable' ? 'Chargeable' : 'Free of cost') : undefined },
+    const ready = [...(c.history ?? [])].reverse().find(h => h.action === 'ready' && !h.undone);
+    const steps: { label: string; short: string; at?: string | null; edd?: string | null; reachedAt: ClaimStatus[]; detail?: string }[] = [
+        { label: 'Claim requested', short: 'Requested', at: c.created_at, reachedAt: [] },
+        { label: 'Verified by the store', short: 'Verified', at: c.verification?.at, reachedAt: ['review', 'on_hold'] },
+        { label: 'Approved by the plant', short: 'Approved', at: c.decision?.at, reachedAt: ['consent', 'repair', 'plan'], detail: c.decision && c.decision.outcome !== 'reject' ? (c.decision.charge === 'chargeable' ? 'Chargeable' : 'Free of cost') : undefined },
     ];
-    if (c.decision?.charge === 'chargeable') steps.push({ label: 'Customer agreed to the charge', reachedAt: repair ? ['repair'] : ['plan'] });
+    if (c.decision?.charge === 'chargeable') steps.push({ label: 'Customer agreed to the charge', short: 'Agreed', at: c.consent?.at, reachedAt: repair ? ['repair'] : ['plan'] });
     if (!repair) {
-        steps.push({ label: 'Being prepared', reachedAt: ['ready'], detail: c.plan ? `Expected by ${day(c.plan.edd)}` : undefined });
-        steps.push({ label: 'Ready to dispatch', reachedAt: ['dispatched'] });
-        steps.push({ label: 'Dispatched', reachedAt: ['dispatched'], detail: c.dispatch ? `${day(c.dispatch.date)} · docket ${c.dispatch.docket}` : undefined });
+        steps.push({ label: 'Being prepared', short: 'Being prepared', at: c.plan?.at, edd: c.plan?.edd, reachedAt: ['ready'], detail: c.plan?.edd ? `Expected by ${day(c.plan.edd)}` : undefined });
+        steps.push({ label: 'Ready to dispatch', short: 'Ready', at: ready?.at, reachedAt: ['dispatched'] });
+        steps.push({ label: 'Dispatched', short: 'Dispatched', at: c.dispatch?.date, reachedAt: ['dispatched'], detail: c.dispatch ? `${day(c.dispatch.date)} · docket ${c.dispatch.docket}` : undefined });
     }
-    steps.push({ label: repair ? 'Repaired at the store' : 'Reached the store and fitted', reachedAt: ['closed'] });
+    steps.push({ label: repair ? 'Repaired at the store' : 'Reached the store and fitted', short: repair ? 'Repaired' : 'Fitted', at: c.fitted?.at, reachedAt: ['closed'] });
 
     // A step is done once the claim has reached any status that comes after it;
     // the first step not yet done is the one it is on.
@@ -189,13 +196,15 @@ export function trackerSteps(c: Claim): { label: string; done: boolean; current:
     const pos = order.indexOf(c.status);
     const done = steps.map((s, i) => i === 0 || c.status === 'closed' || s.reachedAt.some(st => order.indexOf(st) <= pos));
     const current = done.indexOf(false);
-    return steps.map((s, i) => ({ label: s.label, done: done[i], current: i === current, detail: s.detail }));
+    return steps.map((s, i) => ({ label: s.label, short: s.short, at: s.at, edd: s.edd, done: done[i], current: i === current, detail: s.detail }));
 }
 
 export const isPhoto = (url: string) => /\.(jpe?g|png|webp|heic|heif)(\?|$)/i.test(url);
 export const isVideo = (url: string) => /\.(mp4|mov|webm|3gp|m4v)(\?|$)/i.test(url);
 export const day = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-export const vehicleText = (v: Vehicle | null | undefined) => v ? [v.make, v.model, v.airbags ? `${v.airbags} airbags` : null].filter(Boolean).join(' · ') : null;
+export const AIRBAGS = { with: 'With airbags', sab: 'SAB', without: 'Without airbags' } as const;
+export const vehicleText = (v: Vehicle | null | undefined) => v ? [v.make, v.model, v.airbags ? AIRBAGS[v.airbags] : null,
+    [v.major_colour, v.minor_colour].filter(Boolean).join(' / ') || null].filter(Boolean).join(' · ') : null;
 
 /** What the plant decided, in one line. */
 export function decisionText(c: Claim): string | null {

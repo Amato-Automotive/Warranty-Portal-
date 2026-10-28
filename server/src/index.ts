@@ -527,7 +527,8 @@ async function runMigrations() {
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     // The plant's flow (24 Oct): store verifies, plant holds/decides, the
     // customer agrees to a charge, the plant plans (EDD) and dispatches.
-    for (const col of ['vehicle', 'verification', 'hold_info', 'consent', 'plan_info', 'fitted']) {
+    // A change asked for after approval, waiting for the plant (27 Oct).
+    for (const col of ['vehicle', 'verification', 'hold_info', 'consent', 'plan_info', 'fitted', 'change_request']) {
       await addColumn('warranty_claims', col, `${col} JSON NULL`);
     }
 

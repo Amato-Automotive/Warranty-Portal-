@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Camera, Check, ChevronDown, FileText, Loader2, Play, Truck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import api from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { cn, formatToIST } from "@/lib/utils";
 import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
+import { PhotoViewer } from "@/components/claims/PhotoViewer";
 import {
-    PROBLEMS, NEEDS_DESCRIPTION, STATUS, NOT_COVERED_LINE, trackerSteps, isPhoto, isVideo, day, vehicleText,
-    type Claim, type ClaimHistory, type ClaimStatus,
+    PROBLEMS, NEEDS_DESCRIPTION, STATUS, NOT_COVERED_LINE, AIRBAGS, trackerSteps, isPhoto, isVideo, day, vehicleText,
+    type Claim, type ClaimHistory, type ClaimStatus, type Vehicle,
 } from "@/lib/claims";
 
 type Who = 'admin' | 'store' | 'customer';
@@ -17,19 +19,27 @@ export const ClaimStatusPill = ({ status, who, className }: { status: ClaimStatu
     </span>
 );
 
-/** Photos, videos and PDFs on a claim, each opening in a new tab. */
-export const MediaGrid = ({ urls, className }: { urls: string[] | null | undefined; className?: string }) => {
+/** What each attachment is called in the viewer. */
+export const mediaItems = (urls: string[], claimId?: number) => urls.map((u, i) => ({ url: u, claimId, label: isVideo(u) ? `Video ${i + 1}` : isPhoto(u) ? `Photo ${i + 1}` : `File ${i + 1}` }));
+
+/** Photos, videos and PDFs on a claim, each opening large in the viewer. */
+export const MediaGrid = ({ urls, className, claimId }: { urls: string[] | null | undefined; className?: string; claimId?: number }) => {
+    const [open, setOpen] = useState<number | null>(null);
     if (!urls?.length) return null;
     return (
-        <div className={cn("grid grid-cols-3 sm:grid-cols-4 gap-2", className)}>
-            {urls.map((u, i) => (
-                <a key={i} href={u} target="_blank" rel="noreferrer" className="relative aspect-square overflow-hidden rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center">
-                    {isPhoto(u) ? <img src={u} alt={`Attachment ${i + 1}`} className="h-full w-full object-cover" loading="lazy" />
-                        : isVideo(u) ? <span className="flex flex-col items-center gap-1 text-xs font-semibold text-gray-600"><Play className="h-6 w-6" />Video</span>
-                            : <span className="flex flex-col items-center gap-1 text-xs font-semibold text-gray-600"><FileText className="h-6 w-6" />File</span>}
-                </a>
-            ))}
-        </div>
+        <>
+            <div className={cn("grid grid-cols-3 sm:grid-cols-4 gap-2", className)}>
+                {urls.map((u, i) => (
+                    <button key={i} type="button" onClick={() => setOpen(i)} aria-label={`Open attachment ${i + 1}`}
+                        className="relative aspect-square overflow-hidden rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center hover:border-orange-400">
+                        {isPhoto(u) ? <img src={u} alt={`Attachment ${i + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                            : isVideo(u) ? <span className="flex flex-col items-center gap-1 text-xs font-semibold text-gray-600"><Play className="h-6 w-6" />Video</span>
+                                : <span className="flex flex-col items-center gap-1 text-xs font-semibold text-gray-600"><FileText className="h-6 w-6" />File</span>}
+                    </button>
+                ))}
+            </div>
+            {open !== null && <PhotoViewer items={mediaItems(urls, claimId)} start={open} onClose={() => setOpen(null)} />}
+        </>
     );
 };
 
@@ -105,31 +115,88 @@ export const ProblemPicker = ({ options, value, onChange }: { options: string[];
     );
 };
 
-export interface VehicleValue { vehicle_make: string; vehicle_model: string; airbags: '' | 'with' | 'without' }
-export const EMPTY_VEHICLE: VehicleValue = { vehicle_make: '', vehicle_model: '', airbags: '' };
+export interface VehicleValue {
+    vehicle_make: string; vehicle_model: string; airbags: '' | 'with' | 'sab' | 'without'; major_colour: string; minor_colour: string;
+}
+export const EMPTY_VEHICLE: VehicleValue = { vehicle_make: '', vehicle_model: '', airbags: '', major_colour: '', minor_colour: '' };
+export const vehicleValueOf = (v: Vehicle | null | undefined): VehicleValue => ({
+    vehicle_make: v?.make ?? '', vehicle_model: v?.model ?? '', airbags: v?.airbags ?? '', major_colour: v?.major_colour ?? '', minor_colour: v?.minor_colour ?? '',
+});
 
-/** Make, model and (for seat covers) airbags, entered with the request. */
+/* The make → model list, loaded once a page; a customer gets no Maruti Suzuki models and types it. */
+let modelsOnce: Promise<Record<string, string[]>> | null = null;
+function useCarModels() {
+    const [models, setModels] = useState<Record<string, string[]>>({});
+    useEffect(() => {
+        modelsOnce ??= api.get('/claims/meta').then(r => r.data.models ?? {}).catch(() => { modelsOnce = null; return {}; });
+        let alive = true;
+        modelsOnce.then(m => alive && setModels(m));
+        return () => { alive = false; };
+    }, []);
+    return models;
+}
+
+const OTHER = '__other';
+
+/** A list to pick from, with "Other" to type one that is not in it. */
+const PickOrType = ({ label, options, value, onChange, placeholder }: {
+    label: string; options: string[]; value: string; onChange: (v: string) => void; placeholder: string;
+}) => {
+    const [typing, setTyping] = useState(false);
+    const listed = options.includes(value);
+    if (!options.length || typing || (value && !listed)) return (
+        <div className="space-y-1">
+            <Input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} maxLength={60} className="h-12 rounded-xl" aria-label={label} />
+            {options.length > 0 && (
+                <button type="button" onClick={() => { setTyping(false); onChange(''); }} className="text-xs font-semibold text-orange-700">Pick from the list</button>
+            )}
+        </div>
+    );
+    return (
+        <select value={listed ? value : ''} aria-label={label} onChange={e => { if (e.target.value === OTHER) { setTyping(true); onChange(''); } else onChange(e.target.value); }}
+            className="h-12 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold">
+            <option value="">{label}</option>
+            {options.map(o => <option key={o} value={o}>{o}</option>)}
+            <option value={OTHER}>Other (type it)</option>
+        </select>
+    );
+};
+
+/** Make and model from the list, and for seat covers the airbags and the cover's colours. */
 export const VehicleFields = ({ value, onChange, airbags, registered }: {
     value: VehicleValue; onChange: (v: VehicleValue) => void; airbags: boolean; registered?: string | null;
-}) => (
-    <div className="space-y-2">
-        <div className="grid grid-cols-2 gap-2">
-            <Input value={value.vehicle_make} onChange={e => onChange({ ...value, vehicle_make: e.target.value })} placeholder="Make (e.g. Hyundai)" maxLength={60} className="h-12 rounded-xl" aria-label="Vehicle make" />
-            <Input value={value.vehicle_model} onChange={e => onChange({ ...value, vehicle_model: e.target.value })} placeholder="Model (e.g. Creta)" maxLength={60} className="h-12 rounded-xl" aria-label="Vehicle model" />
+}) => {
+    const models = useCarModels();
+    const makes = Object.keys(models);
+    return (
+        <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+                <PickOrType label="Make" options={makes} value={value.vehicle_make} placeholder="Make"
+                    onChange={v => onChange({ ...value, vehicle_make: v, vehicle_model: v === value.vehicle_make ? value.vehicle_model : '' })} />
+                <PickOrType key={value.vehicle_make} label="Model" options={models[value.vehicle_make] ?? []} value={value.vehicle_model} placeholder="Model"
+                    onChange={v => onChange({ ...value, vehicle_model: v })} />
+            </div>
+            {airbags && (
+                <>
+                    <ChoiceRow<'with' | 'sab' | 'without'> name="airbags" value={value.airbags} onChange={v => onChange({ ...value, airbags: v })}
+                        options={(['with', 'sab', 'without'] as const).map(k => ({ value: k, label: AIRBAGS[k] }))} />
+                    <div className="grid grid-cols-2 gap-2">
+                        <Input value={value.major_colour} onChange={e => onChange({ ...value, major_colour: e.target.value })} placeholder="Major colour" maxLength={40} className="h-12 rounded-xl" aria-label="Major colour" />
+                        <Input value={value.minor_colour} onChange={e => onChange({ ...value, minor_colour: e.target.value })} placeholder="Minor colour" maxLength={40} className="h-12 rounded-xl" aria-label="Minor colour" />
+                    </div>
+                </>
+            )}
+            {registered && <p className="text-xs text-gray-500">Registered as: {registered}</p>}
         </div>
-        {airbags && (
-            <ChoiceRow<'with' | 'without'> name="airbags" value={value.airbags} onChange={v => onChange({ ...value, airbags: v })}
-                options={[{ value: 'with', label: 'With airbags' }, { value: 'without', label: 'Without airbags' }]} />
-        )}
-        {registered && <p className="text-xs text-gray-500">Registered as: {registered}</p>}
-    </div>
-);
+    );
+};
 
 /** What a new request is missing, in the words a toast shows; null when complete. */
 export function missingForRequest(f: { problem: string; description: string; vehicle: VehicleValue; airbags: boolean; photos: number }): string | null {
     if (!f.vehicle.vehicle_make.trim()) return 'Enter the vehicle make';
     if (!f.vehicle.vehicle_model.trim()) return 'Enter the vehicle model';
-    if (f.airbags && !f.vehicle.airbags) return 'Choose with or without airbags';
+    if (f.airbags && !f.vehicle.airbags) return 'Choose with airbags, SAB or without airbags';
+    if (f.airbags && !f.vehicle.major_colour.trim()) return 'Enter the major colour';
     if (!f.problem) return 'Choose the issue';
     if (NEEDS_DESCRIPTION.includes(f.problem) && f.description.trim().length < 5) return 'Describe the problem';
     if (!f.photos) return 'Add at least one photo';
@@ -282,6 +349,28 @@ export const StepJump = ({ label }: { label: string | null }) => {
         </MobileActionBar>
     );
 };
+
+/** One numbered step of a request form, ticked once it is filled in. */
+export const FormStep = ({ n, title, note, done, action, children }: {
+    n: number; title: string; note?: string; done?: boolean; action?: React.ReactNode; children: React.ReactNode;
+}) => (
+    <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+                <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-extrabold",
+                    done ? "bg-emerald-600 text-white" : "bg-orange-100 text-orange-800")}>
+                    {done ? <Check className="h-4 w-4" strokeWidth={3} /> : n}
+                </span>
+                <div className="min-w-0">
+                    <h2 className="text-base font-extrabold text-gray-900">{title}</h2>
+                    {note && <p className="text-xs text-gray-500">{note}</p>}
+                </div>
+            </div>
+            {action}
+        </div>
+        <div className="space-y-3">{children}</div>
+    </section>
+);
 
 /** A row of chips that scrolls sideways on a phone rather than wrapping onto several lines. */
 export const ChipRow = ({ children, className }: { children: React.ReactNode; className?: string }) => (
