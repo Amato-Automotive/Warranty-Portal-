@@ -7,6 +7,8 @@ import { storesOfAsm, storeDetailForAsm } from '../services/asmStores.js';
 import { cleanAsmName } from '../services/asmAccount.service.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { fieldChanges } from '../services/profileChanges.js';
+import { parseFollowUp } from '../services/leadFollowUp.js';
+import { addFollowUp, attachFollowUps } from '../services/leadFollowUpLog.js';
 import { urlToDiskPath, UPLOADS_BASE_DIR } from '../config/localUpload.js';
 import fs from 'fs';
 import path from 'path';
@@ -22,7 +24,9 @@ function removeUpload(url: string) {
  * The ASM's own view of their work: the leads routed to them, the areas they
  * cover, the stores assigned to them, and a summary for their home screen.
  *
- * Entirely read-only: ASMs do not record lead outcomes (head office does).
+ * Read-only but for one thing: an ASM logs each time they call, WhatsApp or
+ * visit a lead's customer (services/leadFollowUp.ts). The lead's outcome
+ * proper stays head office's.
  */
 
 /*
@@ -99,16 +103,35 @@ export class AsmPortalController {
                   LIMIT 1000`,
                 [asmId]
             );
-            res.json({
-                success: true,
-                leads: rows.map(({ raw_payload, ...l }: any) => ({
-                    ...l,
-                    pincode: leadPincode(raw_payload, l.raw_area),
-                })),
-            });
+            const leads = rows.map(({ raw_payload, ...l }: any) => ({
+                ...l,
+                pincode: leadPincode(raw_payload, l.raw_area),
+            }));
+            await attachFollowUps(leads);
+            res.json({ success: true, leads });
         } catch (error) {
             console.error('[ASM portal] leads failed:', error);
             res.status(500).json({ error: 'Could not load your leads' });
+        }
+    }
+
+    /** POST /api/asm-portal/leads/:id/followups — the ASM called, WhatsApped or visited the customer. */
+    static async addFollowUp(req: AuthRequest, res: Response) {
+        try {
+            const asmId = await asmIdFor(req);
+            if (!asmId) return res.status(403).json({ error: 'Your ASM account was not found' });
+            const parsed = parseFollowUp(req.body);
+            if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+            // Only a lead that was sent to this ASM.
+            const [own]: any = await db.execute(`SELECT l.id FROM leads l WHERE l.id = ? AND ${MINE}`, [req.params.id, asmId]);
+            if (!own.length) return res.status(404).json({ error: 'Lead not found' });
+            await addFollowUp(own[0].id, asmId, parsed.value);
+            const lead: any = { id: own[0].id };
+            await attachFollowUps([lead]);
+            res.json({ success: true, followups: lead.followups, followup: lead.followup });
+        } catch (error) {
+            console.error('[ASM portal] add follow-up failed:', error);
+            res.status(500).json({ error: 'Could not save that' });
         }
     }
 

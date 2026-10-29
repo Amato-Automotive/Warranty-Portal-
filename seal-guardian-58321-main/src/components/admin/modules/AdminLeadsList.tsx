@@ -14,6 +14,8 @@ import { Label } from "@/components/ui/label";
 import { downloadCSV } from "@/lib/utils";
 import { getPhoneError, getCityError, cleanPlaceName } from "@/lib/validation";
 import { Textarea } from "@/components/ui/textarea";
+import { FollowUpBadge, FollowUpLog } from "@/components/asm/LeadFollowUp";
+import type { FollowUp } from "@/lib/asmLeads";
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
@@ -44,6 +46,9 @@ interface Lead {
     asm_id: string | null;
     asm_name: string | null;
     asm_phone: string | null;
+    /* What the ASM did with it (calls, WhatsApps, visits), newest first. */
+    followups?: FollowUp[];
+    followup?: { count: number; first_at: string; last: FollowUp } | null;
     status: "sent" | "failed" | "unmatched" | "duplicate" | "throttled" | "matched";
     failure_reason: string | null;
     created_at: string;
@@ -264,6 +269,8 @@ interface Counts {
     product: Record<string, number>;
     channel: Record<string, number>;
     review_pending: number;
+    /* Of the leads sent to ASMs: how many they contacted, and how many within a day. */
+    asm_followup?: { sent: number; contacted: number; within_24h: number; due: number; within_24h_pct: number | null };
     /* Leads in the date range and search, by vehicle — for the Vehicle filter. */
     vehicle?: Record<string, number>;
 }
@@ -493,6 +500,7 @@ export const AdminLeadsList = () => {
     const [asmId, setAsmId] = useState("all");
     const [channel, setChannel] = useState("all");
     const [review, setReview] = useState("all");
+    const [followFilter, setFollowFilter] = useState("all");
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
     const [asmOptions, setAsmOptions] = useState<
@@ -574,10 +582,11 @@ export const AdminLeadsList = () => {
             if (asmId !== "all") params.asm_id = asmId;
             if (channel !== "all") params.source = channel;
             if (review !== "all") params.review = review;
+            if (followFilter !== "all") params.followup = followFilter;
             if (dateFrom) params.dateFrom = dateFrom;
             if (dateTo) params.dateTo = dateTo;
             return params;
-    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, vehicleFilter, product, delivery, asmId, channel, review, dateFrom, dateTo]);
+    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, vehicleFilter, product, delivery, asmId, channel, review, followFilter, dateFrom, dateTo]);
 
     /* A new filter starts again from the first page. */
     useEffect(() => { setPage(1); }, [filterParams, pageSize]);
@@ -1035,7 +1044,7 @@ export const AdminLeadsList = () => {
         search.trim() || stage !== "all" || product !== "all" ||
         forwardedTo !== "all" || storeId !== "all" || ivrCall !== "all" || stateFilter !== "all" || vehicleFilter !== "all" ||
         delivery !== "all" || asmId !== "all" || channel !== "all" ||
-        review !== "all" || dateFrom || dateTo
+        review !== "all" || followFilter !== "all" || dateFrom || dateTo
     );
 
     /*
@@ -1059,6 +1068,7 @@ export const AdminLeadsList = () => {
         delivery !== "all" && chip("dl", `Alert: ${DELIVERY_FILTER_LABEL[delivery] ?? delivery}`, () => setDelivery("all")),
         review !== "all" && chip("rv", review === "pending" ? "Not reviewed" : `Review: ${OUTCOME_LABEL[review] ?? review}`, () => setReview("all")),
         asmId !== "all" && chip("asm", `ASM: ${asmOptions.find(a => a.id === asmId)?.name ?? "…"}`, () => setAsmId("all")),
+        followFilter !== "all" && chip("fu", followFilter === "contacted" ? "ASM contacted" : "ASM not contacted yet", () => setFollowFilter("all")),
         stateFilter !== "all" && chip("state", stateFilter === "none" ? "State not known" : stateFilter, () => setStateFilter("all")),
     ].filter(Boolean) as { key: string; label: string; clear: () => void }[];
 
@@ -1121,12 +1131,16 @@ export const AdminLeadsList = () => {
             label: "ASM", value: asmId, set: setAsmId,
             options: [["all", "All ASMs"], ...asmOptions.map(a => [a.id, `${a.name}${a.is_active ? "" : " (inactive)"}`])] as [string, string][],
         }] : []),
+        ...(shows.asm ? [{
+            label: "ASM follow-up", value: followFilter, set: setFollowFilter,
+            options: [["all", "Any"], ["not_contacted", "Not contacted yet"], ["contacted", "Contacted"]] as [string, string][],
+        }] : []),
         ...(stateOptions.length ? [{
             label: "State", value: stateFilter, set: setStateFilter,
             options: [["all", "All states"], ...stateOptions.map(s => [s.name, `${s.name} · ${s.count}`]), ["none", "State not known"]] as [string, string][],
         }] : []),
     ];
-    const panelCount = [forwardedTo, storeId, delivery, review, asmId, stateFilter, ivrCall].filter(v => v !== "all").length;
+    const panelCount = [forwardedTo, storeId, delivery, review, asmId, followFilter, stateFilter, ivrCall].filter(v => v !== "all").length;
 
     /* "Last 7 days", or "12 Sept – 20 Sept" for a custom range. */
     const shortDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
@@ -1376,6 +1390,14 @@ export const AdminLeadsList = () => {
                             </SelectContent>
                         </Select>
                     ))}
+                    {/* How the ASMs are keeping up with the leads in this list. */}
+                    {shows.asm && counts?.asm_followup && counts.asm_followup.sent > 0 && (
+                        <span className="ml-auto text-xs text-slate-500 tabular-nums"
+                            title="Of the leads in this list that reached an ASM. A lead under a day old that nobody has contacted yet is not counted as late.">
+                            ASMs contacted <b className="text-slate-700">{counts.asm_followup.contacted}</b> of {counts.asm_followup.sent}
+                            {counts.asm_followup.within_24h_pct !== null && <> · <b className="text-slate-700">{counts.asm_followup.within_24h_pct}%</b> within 24h</>}
+                        </span>
+                    )}
                     <span className="ml-auto text-xs text-slate-400 tabular-nums">
                         {matched > visible.length
                             ? `${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + visible.length} of ${matched} enquiries`
@@ -1605,6 +1627,7 @@ export const AdminLeadsList = () => {
                                                 <>
                                                     <div className="text-slate-800 font-medium truncate">{lead.asm_name}</div>
                                                     <div className="text-xs text-slate-400 font-mono">{lead.asm_phone}</div>
+                                                    {lead.status === "sent" && <FollowUpBadge lead={lead} className="mt-1" />}
                                                     {lead.delivery_status ? (
                                                         <div
                                                             className={`text-[11px] mt-0.5 flex items-center gap-1 ${DELIVERY_TONE[lead.delivery_status] || "text-slate-400"}`}
@@ -1778,6 +1801,16 @@ export const AdminLeadsList = () => {
                     </DialogHeader>
 
                     <div className="space-y-4 py-1 min-w-0">
+                        {/* What the ASM did with it — their own log, read-only here. */}
+                        {editing?.status === "sent" && (
+                            <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold text-slate-700">ASM follow-up</span>
+                                    <FollowUpBadge lead={editing} />
+                                </div>
+                                <FollowUpLog followups={editing.followups ?? []} showAsm />
+                            </div>
+                        )}
                         {/* What was captured. Editable, but not the reason anybody
                             opened this — so it sits compact at the top rather than
                             taking a third of the dialog. */}

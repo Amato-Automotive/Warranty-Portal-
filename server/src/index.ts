@@ -45,6 +45,7 @@ import { getISTTimestamp } from './utils/dateUtils.js';
 import pool, { getDbRetryStats, pingDatabase } from './config/database.js';
 import { ensureCustomerMobileLimitTable } from './utils/customerMobileLimits.js';
 import { ensureAsmExpenseTables } from './controllers/asmExpense.controller.js';
+import { ensureLeadFollowUpTable } from './services/leadFollowUpLog.js';
 import { backfillWarrantyStores } from './services/warrantyStore.js';
 import { PORTAL_ACTIVITY_TABLE } from './services/portalActivity.service.js';
 import { APP_ORIGINS } from './config/appOrigins.js';
@@ -304,6 +305,8 @@ async function runMigrations() {
     }
 
     await ensureAsmExpenseTables();
+    // An ASM's calls / WhatsApps / visits on a lead (services/leadFollowUp.ts).
+    await ensureLeadFollowUpTable();
 
     // Phones running the Android app that accepted push notifications
     // (push.service.ts). user_id matches profiles.id, collation included.

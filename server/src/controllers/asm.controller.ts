@@ -26,6 +26,8 @@ import { titleCase } from '../services/asmTerritory.js';
 import { normalizeAsmMobile, normalizeAsmEmail, syncAsmAccount, AsmAccountError } from '../services/asmAccount.service.js';
 import { invalidateSessionState } from '../middleware/auth.js';
 import { storesOfAsm } from '../services/asmStores.js';
+import { followUpFigures } from '../services/leadFollowUp.js';
+import { attachFollowUps } from '../services/leadFollowUpLog.js';
 
 /**
  * The verified franchises in a state, with the ones the customer's own words
@@ -1390,7 +1392,7 @@ export class AsmController {
         try {
             const {
                 status, stage, source, asm_id, product, delivery, review, dateFrom, dateTo, q, limit,
-                forwarded_to, store, ivr_call, state, vehicle, offset, export: forExport,
+                forwarded_to, store, ivr_call, state, vehicle, offset, export: forExport, followup,
             } = req.query as Record<string, string>;
             /*
              * The date range and the plain column filters narrow in SQL.
@@ -1548,6 +1550,8 @@ export class AsmController {
             for (const row of rows) row.ivr = row.source === 'ivr' ? summariseIvr(row.raw_payload) : null;
 
             await attachRouting(rows);
+            // What the ASM did with each lead they were sent (services/leadFollowUp.ts).
+            await attachFollowUps(rows);
 
             /* The pincode the customer gave (WhatsApp and Instagram ask for one;
                an auditor may add it to an IVR lead), the district it sits in,
@@ -1618,6 +1622,9 @@ export class AsmController {
                 if (ivr_call && r.ivr?.status !== ivr_call) return false;
                 if (state && (state === 'none' ? Boolean(r.state) : r.state !== state)) return false;
                 if (withVehicle && vehicle && (vehicle === '2w') !== isTwoWheeler(r)) return false;
+                // Only leads that reached an ASM can be "not contacted".
+                if (followup === 'contacted' && !r.followup) return false;
+                if (followup === 'not_contacted' && (r.status !== 'sent' || r.followup)) return false;
                 return true;
             };
             const found = searched.filter((r: any) => passes(r, true));
@@ -1646,6 +1653,12 @@ export class AsmController {
                 product: { 'Seat Covers': 0, Mats: 0, Accessories: 0, none: 0 } as Record<string, number>,
                 channel: Object.fromEntries(leadLists.channels.map(c => [c, 0])) as Record<string, number>,
                 review_pending: matching.filter((r: any) => !r.review_status).length,
+                /* How the ASMs are keeping up: of the leads sent to them, how
+                   many they have contacted, and how many within a day. */
+                asm_followup: followUpFigures(matching.filter((r: any) => r.status === 'sent').map((r: any) => ({
+                    received_at: r.sent_at ?? r.created_at,
+                    first_at: r.followup?.first_at ?? null,
+                }))),
                 // The Vehicle pills: every other filter, not its own.
                 vehicle: (() => {
                     const base = searched.filter((r: any) => passes(r, false) && byStage(r) && byProduct(r) && bySource(r));

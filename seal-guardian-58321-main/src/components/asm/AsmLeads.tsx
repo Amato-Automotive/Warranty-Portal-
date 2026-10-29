@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import api, { getErrorMessage } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -6,13 +6,18 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } f
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
-import { PRODUCTS, SOURCE_LABEL, phoneTail, type AsmLead } from "@/lib/asmLeads";
-import { Calendar, Car, ChevronRight, Hash, Inbox, Loader2, MapPin, MessageCircle, Package, Phone, Radio, RefreshCw, Search, X } from "lucide-react";
+import { PRODUCTS, SOURCE_LABEL, phoneTail, type AsmLead, type FollowUp, type FollowUpChannel } from "@/lib/asmLeads";
+import { FollowUpBadge, FollowUpDialog, FollowUpLog } from "./LeadFollowUp";
+import { Calendar, Car, ChevronRight, ClipboardCheck, Hash, Inbox, Loader2, MapPin, MessageCircle, Package, Phone, Radio, RefreshCw, Search, X } from "lucide-react";
 
 /**
- * The leads routed to this ASM — read-only. A dense list that stays usable
- * at hundreds of leads: filter by period and product, search, and rows are
- * rendered a page at a time.
+ * The leads routed to this ASM. A dense list that stays usable at hundreds of
+ * leads: filter by period, product and whether they have been contacted,
+ * search, and rows are rendered a page at a time.
+ *
+ * The ASM logs each contact with a customer (LeadFollowUp). Coming back from
+ * the Call or WhatsApp button asks how it went, so the log fills itself in
+ * without being a chore; head office sees the same log on the lead.
  */
 
 type Period = "all" | "today" | "week" | "month";
@@ -23,6 +28,13 @@ const PERIODS: { id: Period; label: string }[] = [
     { id: "month", label: "This month" },
 ];
 const PAGE = 50;
+
+type Contact = "all" | "not" | "done";
+const CONTACTS: { id: Contact; label: string }[] = [
+    { id: "all", label: "Contacted or not" },
+    { id: "not", label: "Not contacted" },
+    { id: "done", label: "Contacted" },
+];
 
 const istDay = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
@@ -53,7 +65,7 @@ const fullWhen = (iso: string) =>
     });
 
 /** Every detail of one lead, with the two ways to reach the customer. */
-const LeadDetail = ({ lead }: { lead: AsmLead }) => {
+const LeadDetail = ({ lead, onReach, onLog }: { lead: AsmLead; onReach: (channel: FollowUpChannel) => void; onLog: () => void }) => {
     const tail = phoneTail(lead.customer_phone);
     const rows: { icon: typeof Phone; label: string; value: string | null; mono?: boolean }[] = [
         { icon: Phone, label: "Mobile", value: tail ? `+91 ${tail.slice(0, 5)} ${tail.slice(5)}` : null, mono: true },
@@ -80,16 +92,26 @@ const LeadDetail = ({ lead }: { lead: AsmLead }) => {
             </dl>
             {tail && (
                 <div className="grid grid-cols-2 gap-3">
-                    <a href={`tel:+91${tail}`}
+                    <a href={`tel:+91${tail}`} onClick={() => onReach("call")}
                         className="h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2 active:scale-95 transition">
                         <Phone className="h-4 w-4" /> Call
                     </a>
-                    <a href={`https://wa.me/91${tail}`} target="_blank" rel="noopener noreferrer"
+                    <a href={`https://wa.me/91${tail}`} target="_blank" rel="noopener noreferrer" onClick={() => onReach("whatsapp")}
                         className="h-12 rounded-2xl bg-green-500 hover:bg-green-600 text-white font-bold flex items-center justify-center gap-2 active:scale-95 transition">
                         <MessageCircle className="h-4 w-4" /> WhatsApp
                     </a>
                 </div>
             )}
+            <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-bold text-slate-800">Your follow-ups</h3>
+                    <button type="button" onClick={onLog}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 hover:bg-orange-100">
+                        <ClipboardCheck className="h-3.5 w-3.5" /> Log a contact
+                    </button>
+                </div>
+                <FollowUpLog followups={lead.followups ?? []} />
+            </div>
         </div>
     );
 };
@@ -106,7 +128,45 @@ export const AsmLeads = () => {
     const [search, setSearch] = useState("");
     const [shown, setShown] = useState(PAGE);
     const [openLead, setOpenLead] = useState<AsmLead | null>(null);
+    const [contact, setContact] = useState<Contact>("all");
+    const [logging, setLogging] = useState<{ lead: AsmLead; channel?: FollowUpChannel } | null>(null);
+    /* The lead whose Call / WhatsApp button was just tapped: asked about when the ASM comes back. */
+    const reaching = useRef<{ lead: AsmLead; channel: FollowUpChannel } | null>(null);
     const isMobile = useIsMobile();
+
+    const askTimer = useRef<number>();
+
+    // Back from the dialer or WhatsApp: ask how it went.
+    const ask = useRef(() => {
+        const r = reaching.current;
+        if (!r || document.visibilityState !== "visible") return;
+        window.clearTimeout(askTimer.current);
+        reaching.current = null;
+        setOpenLead(null);
+        setLogging(r);
+    }).current;
+
+    const reach = (lead: AsmLead, channel: FollowUpChannel) => {
+        reaching.current = { lead, channel };
+        // A desktop with no dialer never leaves the page, so ask after a moment there too.
+        window.clearTimeout(askTimer.current);
+        askTimer.current = window.setTimeout(() => { if (document.hasFocus()) ask(); }, 2500);
+    };
+
+    useEffect(() => {
+        document.addEventListener("visibilitychange", ask);
+        window.addEventListener("focus", ask);
+        return () => {
+            window.clearTimeout(askTimer.current);
+            document.removeEventListener("visibilitychange", ask);
+            window.removeEventListener("focus", ask);
+        };
+    }, [ask]);
+
+    const saved = (leadId: string, followups: FollowUp[], followup: AsmLead["followup"]) => {
+        setLeads(list => list.map(l => l.id === leadId ? { ...l, followups, followup } : l));
+        setOpenLead(o => o && o.id === leadId ? { ...o, followups, followup } : o);
+    };
 
     const load = async (silent = false) => {
         if (silent) setRefreshing(true);
@@ -124,18 +184,20 @@ export const AsmLeads = () => {
     };
 
     useEffect(() => { load(); }, []);
-    useEffect(() => { setShown(PAGE); }, [period, product, search]);
+    useEffect(() => { setShown(PAGE); }, [period, product, search, contact]);
 
     const visible = useMemo(() => {
         const q = search.trim().toLowerCase();
         return leads.filter(l =>
             inPeriod(l.created_at, period)
             && (product === "all" || l.product === product)
+            && (contact === "all" || (contact === "done") === Boolean(l.followup))
             && (!q || [l.customer_name, l.customer_phone, l.matched_area, l.raw_area, l.pincode, l.car_model, l.state]
                 .some(v => (v || "").toLowerCase().includes(q))));
-    }, [leads, period, product, search]);
+    }, [leads, period, product, search, contact]);
 
-    const filtered = period !== "all" || product !== "all" || !!search.trim();
+    const filtered = period !== "all" || product !== "all" || contact !== "all" || !!search.trim();
+    const notContacted = leads.filter(l => !l.followup).length;
 
     if (loading) {
         return (
@@ -186,6 +248,12 @@ export const AsmLeads = () => {
                             {PRODUCTS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                         </SelectContent>
                     </Select>
+                    <Select value={contact} onValueChange={v => setContact(v as Contact)}>
+                        <SelectTrigger className="h-11 flex-1 md:w-48 rounded-xl border-slate-200 bg-white text-sm font-semibold"><SelectValue /></SelectTrigger>
+                        <SelectContent className="rounded-xl">
+                            {CONTACTS.map(c => <SelectItem key={c.id} value={c.id}>{c.label}{c.id === "not" ? ` (${notContacted})` : ""}</SelectItem>)}
+                        </SelectContent>
+                    </Select>
                     <button
                         onClick={() => load(true)}
                         disabled={refreshing}
@@ -200,7 +268,7 @@ export const AsmLeads = () => {
             <div className="flex items-center justify-between text-xs text-slate-500 px-1">
                 <span><b className="text-slate-700 tabular-nums">{visible.length}</b> lead{visible.length === 1 ? "" : "s"}{filtered && ` of ${leads.length}`}</span>
                 {filtered && (
-                    <button onClick={() => { setPeriod("all"); setProduct("all"); setSearch(""); }} className="font-semibold text-orange-600 hover:underline">
+                    <button onClick={() => { setPeriod("all"); setProduct("all"); setContact("all"); setSearch(""); }} className="font-semibold text-orange-600 hover:underline">
                         Clear filters
                     </button>
                 )}
@@ -249,6 +317,7 @@ export const AsmLeads = () => {
                                                 {fresh && <span className="h-1.5 w-1.5 rounded-full bg-orange-500 shrink-0" title="Last 24 hours" />}
                                             </p>
                                             <p className="text-xs font-mono text-slate-400 truncate hidden md:block mt-0.5">{tail}</p>
+                                            <FollowUpBadge lead={l} className="mt-1" />
                                             {/* Phone: the rest of the row collapses into one line */}
                                             <p className="text-xs text-slate-500 truncate md:hidden mt-0.5">
                                                 {[l.product, l.car_model, area].filter(Boolean).join(" · ")}
@@ -267,11 +336,11 @@ export const AsmLeads = () => {
                                     <div className="flex items-center gap-1.5 shrink-0 md:justify-end" onClick={e => e.stopPropagation()}>
                                         {tail && (
                                             <>
-                                                <a href={`tel:+91${tail}`} aria-label={`Call ${name}`}
+                                                <a href={`tel:+91${tail}`} aria-label={`Call ${name}`} onClick={() => reach(l, "call")}
                                                     className="h-10 w-10 rounded-xl flex items-center justify-center text-emerald-600 bg-emerald-50/60 hover:bg-emerald-100 active:scale-90 transition">
                                                     <Phone className="h-4 w-4" />
                                                 </a>
-                                                <a href={`https://wa.me/91${tail}`} target="_blank" rel="noopener noreferrer" aria-label={`WhatsApp ${name}`}
+                                                <a href={`https://wa.me/91${tail}`} target="_blank" rel="noopener noreferrer" aria-label={`WhatsApp ${name}`} onClick={() => reach(l, "whatsapp")}
                                                     className="h-10 w-10 rounded-xl flex items-center justify-center text-green-600 bg-green-50/60 hover:bg-green-100 active:scale-90 transition">
                                                     <MessageCircle className="h-4 w-4" />
                                                 </a>
@@ -306,7 +375,7 @@ export const AsmLeads = () => {
                                     </DrawerTitle>
                                     <DrawerDescription>Lead details</DrawerDescription>
                                 </DrawerHeader>
-                                <LeadDetail lead={openLead} />
+                                <LeadDetail lead={openLead} onReach={c => reach(openLead, c)} onLog={() => { setLogging({ lead: openLead }); setOpenLead(null); }} />
                             </div>
                         )}
                     </DrawerContent>
@@ -320,12 +389,14 @@ export const AsmLeads = () => {
                                     <DialogTitle className="text-lg font-black">{openLead.customer_name?.trim() || "Customer"}</DialogTitle>
                                     <DialogDescription>Lead details</DialogDescription>
                                 </DialogHeader>
-                                <LeadDetail lead={openLead} />
+                                <LeadDetail lead={openLead} onReach={c => reach(openLead, c)} onLog={() => { setLogging({ lead: openLead }); setOpenLead(null); }} />
                             </>
                         )}
                     </DialogContent>
                 </Dialog>
             )}
+
+            <FollowUpDialog lead={logging?.lead ?? null} channel={logging?.channel} onClose={() => setLogging(null)} onSaved={saved} />
         </div>
     );
 };
