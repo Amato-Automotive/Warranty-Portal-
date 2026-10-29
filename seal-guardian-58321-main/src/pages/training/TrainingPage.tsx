@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { GraduationCap, RotateCcw, LogOut, Loader2, Store, Warehouse } from "lucide-react";
+import { GraduationCap, Loader2 } from "lucide-react";
 import FranchiseDashboard from "@/pages/FranchiseDashboard";
 import { API_URL } from "@/lib/api";
-import { TRAINING, TRAINING_EXIT_KEY } from "@/training/flag";
-import { cn } from "@/lib/utils";
-import { useToast } from "@/hooks/use-toast";
+import { TRAINING, TRAINING_EXIT_KEY, admit } from "@/training/flag";
 
 type Who = "checking" | "admin" | "asm" | "none";
 
@@ -16,27 +14,12 @@ type Who = "checking" | "admin" | "asm" | "none";
  *
  * Only an ASM or an admin gets in. Their real session is checked here with a
  * separate client, the one call this page makes to the server; everything
- * inside answers from the browser.
+ * inside answers from the browser. The training bar (TrainingBar) sits over
+ * every page of the tab once they are in, not just this one: the dashboard
+ * can lead elsewhere, e.g. to /thank-you after a correction.
  */
 const TrainingPage = () => {
     const [who, setWho] = useState<Who>("checking");
-    const distributor = new URLSearchParams(window.location.search).get("as") === "distributor";
-    const { toast } = useToast();
-
-    // The sample numbers look real (the forms insist on it), so no Call,
-    // WhatsApp or email link may actually open from the training store.
-    useEffect(() => {
-        const stop = (e: MouseEvent) => {
-            const a = (e.target as HTMLElement).closest?.("a");
-            const href = a?.getAttribute("href") ?? "";
-            if (!/^(tel:|mailto:|sms:|whatsapp:)|wa\.me\//i.test(href)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            toast({ title: "Not placed in training", description: "Calls and messages don't go out from the training store." });
-        };
-        document.addEventListener("click", stop, true);
-        return () => document.removeEventListener("click", stop, true);
-    }, [toast]);
 
     useEffect(() => {
         // Reached by in-app navigation: the live adapter is still in place, so
@@ -50,6 +33,7 @@ const TrainingPage = () => {
             .then(role => {
                 sessionStorage.setItem(TRAINING_EXIT_KEY, role === "admin" ? "/dashboard/admin" : "/asm");
                 setWho(role);
+                admit();
             })
             .catch(() => setWho("none"));
     }, []);
@@ -79,43 +63,7 @@ const TrainingPage = () => {
         );
     }
 
-    const exit = () => {
-        window.close();
-        // Not opened by a script (or the browser refused): go back instead.
-        setTimeout(() => window.location.assign(sessionStorage.getItem(TRAINING_EXIT_KEY) || "/"), 150);
-    };
-    const switchTo = (as: "franchise" | "distributor") => window.location.assign(as === "distributor" ? "/training?as=distributor" : "/training");
-
-    return (
-        <>
-            <FranchiseDashboard />
-            <div role="region" aria-label="Training mode"
-                className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50/95 py-1 pl-3 pr-1 shadow-lg backdrop-blur text-xs sm:text-sm max-w-[calc(100vw-16px)]">
-                <GraduationCap className="h-4 w-4 shrink-0 text-amber-700" />
-                <span className="font-semibold text-amber-900 whitespace-nowrap">Training</span>
-                <span className="hidden md:inline text-amber-800 whitespace-nowrap">· nothing here is real or sent to anyone</span>
-                <div className="ml-1 inline-flex rounded-full bg-white/80 p-0.5 border border-amber-200">
-                    {([["franchise", "Franchise", Store], ["distributor", "Distributor", Warehouse]] as const).map(([key, label, Icon]) => {
-                        const on = (key === "distributor") === distributor;
-                        return (
-                            <button key={key} type="button" aria-pressed={on} onClick={() => !on && switchTo(key)}
-                                className={cn("inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium", on ? "bg-amber-500 text-white" : "text-amber-900 hover:bg-amber-100")}>
-                                <Icon className="h-3.5 w-3.5" /><span className="hidden sm:inline">{label}</span>
-                            </button>
-                        );
-                    })}
-                </div>
-                <button type="button" onClick={() => window.location.reload()} title="Start over with a fresh store"
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium text-amber-900 hover:bg-amber-100">
-                    <RotateCcw className="h-3.5 w-3.5" /><span className="hidden sm:inline">Start over</span>
-                </button>
-                <button type="button" onClick={exit}
-                    className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 font-medium text-white hover:bg-slate-700">
-                    <LogOut className="h-3.5 w-3.5" /><span className="hidden sm:inline">Exit</span>
-                </button>
-            </div>
-        </>
-    );
+    return <FranchiseDashboard />;
 };
 
 export default TrainingPage;

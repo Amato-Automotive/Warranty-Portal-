@@ -141,7 +141,7 @@ export function seed(mode: Mode): TrainingState {
             const uid = String(9100000000000 + i * 104729);
             const [product, term] = pick(SEAT_COVERS);
             const registration = reg();
-            const photo = (f: string) => `${window.location.origin}/training/${f}`;
+            const photo = (f: string) => `${window.location.origin}/images/training/${f}`;
             const product_details = ppf ? {
                 product: "Paint Protection Film (PPF)", rolls: [{ serial: `PPF-${24000 + i}`, sqft: 120, installArea: "Full body" }],
                 manpowerId: mp.id, manpowerName: mp.name, storeName, storeEmail: profile.store_email, dealerMobile: profile.contact_number,
@@ -199,7 +199,7 @@ export function seed(mode: Mode): TrainingState {
     const line = (p: typeof products[number], qty: number) => ({ product_id: p.id, name: p.name, points: p.points, qty, subtotal: p.points * qty });
     const entry = (i: number, ago: number, status: string, lines: any[]) => ({
         id: `e${i}`, answers: { invoice_no: `INV-${2400 + i}`, distributor: "Practice Distributors" },
-        files: { invoice: [{ name: `invoice-${2400 + i}.jpg`, url: `${window.location.origin}/training/invoice.svg`, size: 182_000, ext: "jpg" }] },
+        files: { invoice: [{ name: `invoice-${2400 + i}.jpg`, url: `${window.location.origin}/images/training/invoice.svg`, size: 182_000, ext: "jpg" }] },
         score: status === "approved" ? lines.reduce((n: number, l: any) => n + l.subtotal, 0) : 0,
         lines: status === "approved" ? lines : null, claimed_lines: null, status,
         review_note: status === "rejected" ? "Invoice is from before the scheme started." : null, created_at: iso(now - ago * DAY),

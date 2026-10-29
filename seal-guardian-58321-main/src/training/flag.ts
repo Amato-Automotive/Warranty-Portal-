@@ -20,6 +20,14 @@ export const TRAINING = typeof window !== "undefined" && /^\/training(\/|$)/.tes
 /** Where Exit (or signing out of the training store) goes: the ASM portal or the admin panel. */
 export const TRAINING_EXIT_KEY = "training_exit";
 
+/* Set once TrainingPage has confirmed an ASM or admin; the training bar waits for it. */
+let admitted = false;
+export const isAdmitted = () => admitted;
+export function admit() {
+    admitted = true;
+    window.dispatchEvent(new Event("training:admitted"));
+}
+
 /** Loads the sandbox on first use, so a normal session never downloads it. */
 export const trainingAdapter: AxiosAdapter = async (config) => (await import("./mockApi")).handle(config);
 
