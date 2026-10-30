@@ -373,6 +373,22 @@ export const grievanceUpload = multer({
  * .html or .svg must never land here.
  */
 /** An ASM's profile photo: one image, compressed in the browser first. */
+/** A distributor's own photos of a product it sells, and of each car row: 8 MB each, 60 in one save. */
+export const distributorProductUpload = multer({
+    storage: multer.diskStorage({
+        destination: createDestination('distributor-products'),
+        filename: genericFileName,
+    }),
+    limits: { fileSize: 8 * 1024 * 1024, files: 60 },
+    fileFilter: (_req, file, cb) => {
+        const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+        const okExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
+        const okMime = /^image\/(jpeg|jpg|png|webp)$/.test(file.mimetype);
+        if (okExt && okMime) cb(null, true);
+        else cb(new Error('Only a photo can be used (JPG, PNG or WebP)'));
+    },
+});
+
 export const asmPhotoUpload = multer({
     storage: multer.diskStorage({
         destination: createDestination('asm-photos'),

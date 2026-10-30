@@ -9,6 +9,7 @@ import { transporter } from '../config/email.js';
 import { formatDateIST, formatDateTimeIST } from '../utils/dateUtils.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { WhatsAppService } from '../services/whatsapp.service.js';
+import { modelList } from '../services/carModels.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -113,6 +114,19 @@ export class OrderController {
         for (const item of items) {
             if (!item.product_id) continue;
 
+            // A line for a car takes its stock from that car's row.
+            if (item.car_stock_id) {
+                const [carRows]: any = await connection.execute(
+                    'SELECT id, stock_quantity FROM distributor_car_stock WHERE id = ? AND distributor_id = ? FOR UPDATE',
+                    [item.car_stock_id, distributorId]);
+                const left = carRows.length ? Number(carRows[0].stock_quantity) : 0;
+                if (left < item.quantity) {
+                    throw new Error(`Insufficient stock for "${item.product_name}" (${item.car_label || 'this car'}). Available: ${left}, required: ${item.quantity}.`);
+                }
+                await connection.execute('UPDATE distributor_car_stock SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.car_stock_id]);
+                continue;
+            }
+
             const [stockRows]: any = await connection.execute(
                 `SELECT id, stock_quantity FROM distributor_inventory
                  WHERE distributor_id = ? AND product_id = ? AND variation_id <=> ?
@@ -136,6 +150,13 @@ export class OrderController {
     private static async restoreStockForOrderItems(connection: any, distributorId: string, items: any[]): Promise<void> {
         for (const item of items) {
             if (!item.product_id) continue;
+
+            if (item.car_stock_id) {
+                await connection.execute(
+                    'UPDATE distributor_car_stock SET stock_quantity = stock_quantity + ? WHERE id = ? AND distributor_id = ?',
+                    [item.quantity, item.car_stock_id, distributorId]);
+                continue;
+            }
 
             await connection.execute(
                 `UPDATE distributor_inventory
@@ -176,7 +197,7 @@ export class OrderController {
                     <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; color: #64748b;">${index + 1}</td>
                     <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
                         <div style="font-weight: 700; color: #111827;">${OrderController.escapeHtml(item.product_name || 'Unknown Product')}</div>
-                        <div style="font-size: 12px; color: #64748b; margin-top: 2px;">${OrderController.escapeHtml(item.variation_name || 'Default')}</div>
+                        <div style="font-size: 12px; color: #64748b; margin-top: 2px;">${OrderController.escapeHtml([item.variation_name || 'Default', item.car_label].filter(Boolean).join(' · '))}</div>
                         ${customizationBlock}
                     </td>
                     <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right; font-weight: 700; color: #111827;">${Number(item.quantity || 0)}</td>
@@ -466,7 +487,7 @@ export class OrderController {
                 const values = [
                     String(index + 1),
                     item.product_name || 'Unknown Product',
-                    item.variation_name || 'Default',
+                    [item.variation_name || 'Default', item.car_label].filter(Boolean).join(' · '),
                     String(itemQuantity),
                 ];
                 doc.font('Helvetica').fontSize(9).fillColor('#374151');
@@ -667,6 +688,27 @@ export class OrderController {
                     price = Number(varRows[0]?.price || price);
                 }
 
+                // A product this distributor holds per car is ordered for one of its cars.
+                let carStockId: string | null = null;
+                let carLabel: string | null = null;
+                const [modeRows]: any = await connection.execute(
+                    'SELECT stock_mode FROM distributor_product_info WHERE distributor_id = ? AND product_id = ?', [distributor.id, item.productId]);
+                if (modeRows[0]?.stock_mode === 'car') {
+                    if (!item.carStockId) {
+                        await connection.rollback();
+                        return res.status(400).json({ error: `Choose the car for "${prodRows[0].name}".` });
+                    }
+                    const [carRows]: any = await connection.execute(
+                        `SELECT * FROM distributor_car_stock WHERE id = ? AND distributor_id = ? AND product_id = ? AND variation_id <=> ?`,
+                        [item.carStockId, distributor.id, item.productId, hasVariation ? item.variationId : null]);
+                    if (!carRows.length) {
+                        await connection.rollback();
+                        return res.status(400).json({ error: `"${prodRows[0].name}" is no longer listed for that car. Refresh the catalogue and try again.` });
+                    }
+                    carStockId = carRows[0].id;
+                    carLabel = OrderController.carText(carRows[0]);
+                }
+
                 const orderItem = {
                     id: uuidv4(),
                     product_id: item.productId,
@@ -676,7 +718,9 @@ export class OrderController {
                     quantity: item.quantity,
                     price: price,
                     needs_customization: item.needsCustomization || false,
-                    customization_remarks: item.customizationRemarks || null
+                    customization_remarks: item.customizationRemarks || null,
+                    car_stock_id: carStockId,
+                    car_label: carLabel,
                 };
 
                 if (!groupsByDistributor.has(distributor.id)) {
@@ -691,7 +735,7 @@ export class OrderController {
             const requestedQty = new Map<string, number>();
             for (const { distributor, items: groupItems } of groupsByDistributor.values()) {
                 for (const oi of groupItems) {
-                    const key = `${distributor.id}::${oi.product_id}::${oi.variation_id ?? ''}`;
+                    const key = `${distributor.id}::${oi.product_id}::${oi.variation_id ?? ''}::${oi.car_stock_id ?? ''}`;
                     requestedQty.set(key, (requestedQty.get(key) || 0) + oi.quantity);
                 }
             }
@@ -699,21 +743,24 @@ export class OrderController {
             for (const { distributor, items: groupItems } of groupsByDistributor.values()) {
                 const seen = new Set<string>();
                 for (const oi of groupItems) {
-                    const key = `${distributor.id}::${oi.product_id}::${oi.variation_id ?? ''}`;
+                    const key = `${distributor.id}::${oi.product_id}::${oi.variation_id ?? ''}::${oi.car_stock_id ?? ''}`;
                     if (seen.has(key)) continue;
                     seen.add(key);
 
-                    const [stockRows]: any = await connection.execute(
-                        `SELECT stock_quantity FROM distributor_inventory
-                         WHERE distributor_id = ? AND product_id = ? AND variation_id <=> ?`,
-                        [distributor.id, oi.product_id, oi.variation_id]
-                    );
+                    const [stockRows]: any = oi.car_stock_id
+                        ? await connection.execute('SELECT stock_quantity FROM distributor_car_stock WHERE id = ?', [oi.car_stock_id])
+                        : await connection.execute(
+                            `SELECT stock_quantity FROM distributor_inventory
+                             WHERE distributor_id = ? AND product_id = ? AND variation_id <=> ?`,
+                            [distributor.id, oi.product_id, oi.variation_id]
+                        );
                     const available = stockRows.length > 0 ? Number(stockRows[0].stock_quantity) : 0;
                     const requested = requestedQty.get(key) || 0;
 
                     if (requested > available) {
                         await connection.rollback();
-                        const label = oi.variation_name ? `${oi.product_name} (${oi.variation_name})` : oi.product_name;
+                        const label = [oi.variation_name, oi.car_label].filter(Boolean).length
+                            ? `${oi.product_name} (${[oi.variation_name, oi.car_label].filter(Boolean).join(' · ')})` : oi.product_name;
                         return res.status(400).json({
                             error: `Insufficient stock for "${label}" at ${distributor.name}. Available: ${available}, requested: ${requested}.`
                         });
@@ -744,9 +791,9 @@ export class OrderController {
                 for (const oi of groupItems) {
                     await connection.execute(
                         `INSERT INTO store_order_items
-                         (id, order_id, product_id, variation_id, product_name, variation_name, quantity, price, needs_customization, customization_remarks)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [oi.id, orderId, oi.product_id, oi.variation_id, oi.product_name, oi.variation_name, oi.quantity, oi.price, oi.needs_customization, oi.customization_remarks]
+                         (id, order_id, product_id, variation_id, product_name, variation_name, quantity, price, needs_customization, customization_remarks, car_stock_id, car_label)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [oi.id, orderId, oi.product_id, oi.variation_id, oi.product_name, oi.variation_name, oi.quantity, oi.price, oi.needs_customization, oi.customization_remarks, oi.car_stock_id, oi.car_label]
                     );
                 }
 
@@ -1310,7 +1357,10 @@ export class OrderController {
                     spv.sku,
                     fd.distributor_id,
                     d.name as distributor_name,
-                    d.allowed_brands as distributor_brands
+                    d.allowed_brands as distributor_brands,
+                    dpi.fitment,
+                    COALESCE(dpi.stock_mode, 'product') AS stock_mode,
+                    CASE WHEN dpi.own_images = 1 THEN dpi.images END AS dist_images
                  FROM franchise_distributors fd
                  JOIN distributors d ON d.id = fd.distributor_id
                  JOIN distributor_allowed_categories dac ON dac.distributor_id = fd.distributor_id
@@ -1319,6 +1369,7 @@ export class OrderController {
                  LEFT JOIN distributor_inventory di ON di.product_id = sp.id
                     AND di.variation_id <=> spv.id
                     AND di.distributor_id = fd.distributor_id
+                 LEFT JOIN distributor_product_info dpi ON dpi.distributor_id = fd.distributor_id AND dpi.product_id = sp.id
                  WHERE fd.franchise_user_id = ?
                    AND (d.allowed_brands = 'AFAC' OR d.allowed_brands = sp.brand)
                    -- Per-mapping limit: 'all' inherits the distributor's full
@@ -1376,11 +1427,23 @@ export class OrderController {
                 (categories as any[]).forEach((cat: any) => { categoryMap[cat.id] = cat.name; });
             }
 
+            // Stock held per car, for the products its distributor holds that way.
+            const [carStock]: any = await db.execute(
+                `SELECT dcs.id, dcs.distributor_id, dcs.product_id, dcs.variation_id, dcs.make, dcs.model,
+                        dcs.year_from AS \`from\`, dcs.year_to AS \`to\`, dcs.stock_quantity, dcs.images
+                   FROM distributor_car_stock dcs
+                   JOIN franchise_distributors fd ON fd.distributor_id = dcs.distributor_id AND fd.franchise_user_id = ?
+                   JOIN distributor_product_info dpi ON dpi.distributor_id = dcs.distributor_id AND dpi.product_id = dcs.product_id AND dpi.stock_mode = 'car'
+                  ORDER BY dcs.make, dcs.model, dcs.year_from`,
+                [user.id]
+            );
+
             res.json({
                 success: true,
                 inventory,
                 productImages,
-                categoryMap
+                categoryMap,
+                carStock
             });
         } catch (error: any) {
             console.error('Get franchise catalogue error:', error);
@@ -1646,7 +1709,18 @@ export class OrderController {
                     parent_sc.name as parent_category_name,
                     COALESCE(spv.name, 'Default') as variation_name,
                     COALESCE(spv.price, sp.price, 0) as price,
-                    spv.sku
+                    spv.sku,
+                    dpi.fitment,
+                    dpi.own_images,
+                    JSON_LENGTH(dpi.images) AS own_image_count,
+                    COALESCE(dpi.stock_mode, 'product') AS stock_mode,
+                    (SELECT COALESCE(SUM(dcs.stock_quantity), 0) FROM distributor_car_stock dcs
+                      WHERE dcs.distributor_id = dac.distributor_id AND dcs.product_id = sp.id AND dcs.variation_id <=> spv.id) AS car_stock_total,
+                    (SELECT COUNT(*) FROM distributor_car_stock dcs
+                      WHERE dcs.distributor_id = dac.distributor_id AND dcs.product_id = sp.id AND dcs.variation_id <=> spv.id) AS car_count,
+                    CASE WHEN dpi.own_images = 1 THEN JSON_UNQUOTE(JSON_EXTRACT(dpi.images, '$[0]'))
+                         ELSE (SELECT spi.url FROM store_product_images spi WHERE spi.product_id = sp.id
+                                ORDER BY spi.is_primary DESC, spi.display_order ASC LIMIT 1) END AS main_image
                  FROM distributor_allowed_categories dac
                  JOIN store_categories sc ON sc.id = dac.category_id
                  LEFT JOIN store_categories parent_sc ON parent_sc.id = sc.parent_id
@@ -1655,6 +1729,7 @@ export class OrderController {
                  LEFT JOIN distributor_inventory di ON di.product_id = sp.id
                     AND di.variation_id <=> spv.id
                     AND di.distributor_id = dac.distributor_id
+                 LEFT JOIN distributor_product_info dpi ON dpi.distributor_id = dac.distributor_id AND dpi.product_id = sp.id
                  WHERE dac.distributor_id = ?
                  ORDER BY sp.name ASC, spv.name ASC`,
                 [distributorId]
@@ -1711,6 +1786,10 @@ export class OrderController {
             if (allowed.length === 0) {
                 return res.status(403).json({ error: 'This product\'s category is not in your allowed categories.' });
             }
+            const [mode]: any = await db.execute('SELECT stock_mode FROM distributor_product_info WHERE distributor_id = ? AND product_id = ?', [distributorId, productId]);
+            if (mode[0]?.stock_mode === 'car') {
+                return res.status(400).json({ error: 'This product\'s stock is set per car: change it in Cars & photos.' });
+            }
 
             // Manual upsert (not ON DUPLICATE KEY) because MySQL unique keys treat
             // multiple NULL variation_id rows as distinct, so the key alone can't
@@ -1738,6 +1817,189 @@ export class OrderController {
         } catch (error: any) {
             console.error('Update own stock error:', error);
             res.status(500).json({ error: 'Failed to update stock' });
+        }
+    }
+
+    /** A car row in words: "Hyundai Creta 2020–2024", "Tata (all models)". */
+    static carText(c: { make: string; model?: string | null; year_from?: number | null; year_to?: number | null }): string {
+        const from = c.year_from ?? null, to = c.year_to ?? null;
+        const years = from && to ? (from === to ? `${from}` : `${from}–${to}`) : from ? `${from} on` : to ? `up to ${to}` : '';
+        return [c.make, c.model || '(all models)', years].filter(Boolean).join(' ');
+    }
+
+    /** The distributor signed in, or null. */
+    private static async distributorOf(userId: string): Promise<{ id: string; name: string } | null> {
+        const [rows]: any = await db.execute('SELECT id, name FROM distributors WHERE profile_id = ?', [userId]);
+        return rows[0] ?? null;
+    }
+
+    /** A product this distributor may sell (its category is on the distributor's list), with Autoform's photos. */
+    private static async sellableProduct(distributorId: string, productId: string) {
+        const [rows]: any = await db.execute(
+            `SELECT sp.id, sp.name, sp.brand FROM store_products sp
+               JOIN distributor_allowed_categories dac ON dac.category_id = sp.category_id AND dac.distributor_id = ?
+              WHERE sp.id = ?`, [distributorId, productId]);
+        if (!rows[0]) return null;
+        const [images]: any = await db.execute(
+            'SELECT url FROM store_product_images WHERE product_id = ? ORDER BY is_primary DESC, display_order ASC', [productId]);
+        return { ...rows[0], autoform_images: images.map((i: any) => i.url) as string[] };
+    }
+
+    /**
+     * Make → models, for the distributor to say which cars a product fits.
+     * B2B only (distributors and franchises), so the full list.
+     */
+    static async getVehicleList(_req: Request, res: Response) {
+        res.json({ success: true, models: modelList(false) });
+    }
+
+    /** What a distributor has added to one product: the cars it fits and its own photos, beside Autoform's. */
+    static async getProductListing(req: Request, res: Response) {
+        try {
+            const dist = await OrderController.distributorOf((req as any).user.id);
+            if (!dist) return res.status(403).json({ error: 'You are not registered as a distributor.' });
+            const product = await OrderController.sellableProduct(dist.id, req.params.productId);
+            if (!product) return res.status(404).json({ error: 'This product is not in your categories.' });
+            const [rows]: any = await db.execute(
+                'SELECT fitment, images, own_images, stock_mode, updated_at FROM distributor_product_info WHERE distributor_id = ? AND product_id = ?',
+                [dist.id, product.id]);
+            const info = rows[0];
+            const [variations]: any = await db.execute('SELECT id, name FROM store_product_variations WHERE product_id = ? ORDER BY name', [product.id]);
+            const [cars]: any = await db.execute(
+                `SELECT id, variation_id, make, model, year_from AS \`from\`, year_to AS \`to\`, stock_quantity AS stock, images
+                   FROM distributor_car_stock WHERE distributor_id = ? AND product_id = ? ORDER BY make, model, year_from`,
+                [dist.id, product.id]);
+            res.json({
+                success: true, product,
+                variations: variations.length ? variations : [{ id: null, name: 'Default' }],
+                fitment: info?.fitment ?? [],
+                images: info?.images ?? [],
+                own_images: Boolean(info?.own_images),
+                stock_mode: info?.stock_mode ?? 'product',
+                cars: cars.map((c: any) => ({ ...c, images: c.images ?? [] })),
+                updated_at: info?.updated_at ?? null,
+            });
+        } catch (error: any) {
+            console.error('Get product listing error:', error);
+            res.status(500).json({ error: 'Could not load the product' });
+        }
+    }
+
+    /**
+     * Save a distributor's additions to a product. Sent as a form: `fitment`
+     * (JSON list of { make, model, from, to }; a blank model is every model,
+     * blank years any year), `own_images` ("true": franchises see its photos,
+     * else Autoform's), `keep` (JSON list of its photos to keep, in order) and
+     * new photos. Its own photos are kept even while it shows Autoform's.
+     */
+    static async saveProductListing(req: Request, res: Response) {
+        try {
+            const dist = await OrderController.distributorOf((req as any).user.id);
+            if (!dist) return res.status(403).json({ error: 'You are not registered as a distributor.' });
+            const product = await OrderController.sellableProduct(dist.id, req.params.productId);
+            if (!product) return res.status(404).json({ error: 'This product is not in your categories.' });
+
+            const parse = (v: unknown, fallback: any) => { try { return typeof v === 'string' ? JSON.parse(v) : (v ?? fallback); } catch { return fallback; } };
+            const year = (v: unknown) => {
+                if (v === '' || v === null || v === undefined) return null;
+                const n = Number(v);
+                return Number.isInteger(n) && n >= 1980 && n <= 2100 ? n : NaN;
+            };
+            const fitment: { make: string; model: string; from: number | null; to: number | null }[] = [];
+            for (const f of (Array.isArray(parse(req.body?.fitment, [])) ? parse(req.body?.fitment, []) : []).slice(0, 200)) {
+                const make = String(f?.make ?? '').trim().slice(0, 60);
+                const model = String(f?.model ?? '').trim().slice(0, 60);
+                const from = year(f?.from), to = year(f?.to);
+                if (!make) continue;
+                if (Number.isNaN(from) || Number.isNaN(to)) return res.status(400).json({ error: `${make} ${model}: a year must be between 1980 and 2100` });
+                if (from !== null && to !== null && from > to) return res.status(400).json({ error: `${make} ${model}: "from" year is after "to" year` });
+                fitment.push({ make, model, from, to });
+            }
+
+            const files = (req.files as Express.Multer.File[]) ?? [];
+            const [rows]: any = await db.execute('SELECT images FROM distributor_product_info WHERE distributor_id = ? AND product_id = ?', [dist.id, product.id]);
+            const had: string[] = rows[0]?.images ?? [];
+            // Only photos it already has can be kept: a URL typed in is never taken.
+            const keep = (Array.isArray(parse(req.body?.keep, had)) ? parse(req.body?.keep, had) : had).map(String).filter((u: string) => had.includes(u));
+            const added = files.filter(f => f.fieldname === 'photos').map(f => f.path);
+            const images = [...keep, ...added];
+            if (images.length > 8) return res.status(400).json({ error: 'Up to 8 photos per product' });
+            // Photos are optional: "my photos" with none to show falls back to Autoform's.
+            const ownImages = (req.body?.own_images === 'true' || req.body?.own_images === true) && images.length > 0;
+
+            // Stock per car: one row per option and car, each with its stock and photos.
+            const stockMode: 'product' | 'car' = req.body?.stock_mode === 'car' ? 'car' : 'product';
+            const [variationRows]: any = await db.execute('SELECT id FROM store_product_variations WHERE product_id = ?', [product.id]);
+            const variationIds = new Set<string | null>(variationRows.length ? variationRows.map((v: any) => String(v.id)) : [null]);
+            const [oldCars]: any = await db.execute('SELECT id, images FROM distributor_car_stock WHERE distributor_id = ? AND product_id = ?', [dist.id, product.id]);
+            const oldById = new Map<string, string[]>(oldCars.map((c: any) => [String(c.id), c.images ?? []]));
+            const cars: { id: string; isNew: boolean; variation_id: string | null; make: string; model: string; from: number | null; to: number | null; stock: number; images: string[] }[] = [];
+            if (stockMode === 'car') {
+                const list = parse(req.body?.cars, []);
+                for (const [i, c] of (Array.isArray(list) ? list : []).slice(0, 300).entries()) {
+                    const make = String(c?.make ?? '').trim().slice(0, 60);
+                    const model = String(c?.model ?? '').trim().slice(0, 60);
+                    const from = year(c?.from), to = year(c?.to);
+                    const variationId = c?.variation_id ? String(c.variation_id) : null;
+                    const stock = Number(c?.stock);
+                    if (!make) return res.status(400).json({ error: 'Every car row needs a make' });
+                    if (!variationIds.has(variationId)) return res.status(400).json({ error: `${make} ${model}: that option is not on this product` });
+                    if (Number.isNaN(from) || Number.isNaN(to)) return res.status(400).json({ error: `${make} ${model}: a year must be between 1980 and 2100` });
+                    if (from !== null && to !== null && from > to) return res.status(400).json({ error: `${make} ${model}: "from" year is after "to" year` });
+                    if (!Number.isInteger(stock) || stock < 0 || stock > 1_000_000) return res.status(400).json({ error: `${make} ${model}: stock must be a whole number, 0 or more` });
+                    const id = c?.id && oldById.has(String(c.id)) ? String(c.id) : null;
+                    const had = id ? oldById.get(id)! : [];
+                    const kept = (Array.isArray(c?.keep) ? c.keep : had).map(String).filter((u: string) => had.includes(u));
+                    const photos = [...kept, ...files.filter(f => f.fieldname === `car_${i}`).map(f => f.path)];
+                    if (photos.length > 6) return res.status(400).json({ error: `${make} ${model}: up to 6 photos a car` });
+                    cars.push({ id: id ?? uuidv4(), isNew: !id, variation_id: variationId, make, model, from, to, stock, images: photos });
+                }
+                if (!cars.length) return res.status(400).json({ error: 'Add at least one car, or keep the same stock for all cars' });
+                // The cars it fits are its car rows, so the franchise's car filter keeps working.
+                const seen = new Set<string>();
+                fitment.length = 0;
+                for (const c of cars) {
+                    const k = `${c.make}|${c.model}|${c.from}|${c.to}`;
+                    if (!seen.has(k)) { seen.add(k); fitment.push({ make: c.make, model: c.model, from: c.from, to: c.to }); }
+                }
+            }
+
+            const conn = await db.getConnection();
+            try {
+                await conn.beginTransaction();
+                await conn.execute(
+                    `INSERT INTO distributor_product_info (distributor_id, product_id, fitment, images, own_images, stock_mode, updated_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE fitment = VALUES(fitment), images = VALUES(images), own_images = VALUES(own_images),
+                                             stock_mode = VALUES(stock_mode), updated_by = VALUES(updated_by)`,
+                    [dist.id, product.id, JSON.stringify(fitment), JSON.stringify(images), ownImages ? 1 : 0, stockMode, (req as any).user.id]);
+                if (stockMode === 'car') {
+                    const keepIds = cars.filter(c => !c.isNew).map(c => c.id);
+                    await conn.execute(
+                        `DELETE FROM distributor_car_stock WHERE distributor_id = ? AND product_id = ?${keepIds.length ? ` AND id NOT IN (${keepIds.map(() => '?').join(',')})` : ''}`,
+                        [dist.id, product.id, ...keepIds]);
+                    for (const c of cars) {
+                        const vals = [c.variation_id, c.make, c.model, c.from, c.to, c.stock, JSON.stringify(c.images)];
+                        if (c.isNew) await conn.execute(
+                            `INSERT INTO distributor_car_stock (id, distributor_id, product_id, variation_id, make, model, year_from, year_to, stock_quantity, images)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [c.id, dist.id, product.id, ...vals]);
+                        else await conn.execute(
+                            `UPDATE distributor_car_stock SET variation_id = ?, make = ?, model = ?, year_from = ?, year_to = ?, stock_quantity = ?, images = ?
+                              WHERE id = ? AND distributor_id = ?`, [...vals, c.id, dist.id]);
+                    }
+                }
+                // Back to the same stock for all cars: the car rows stay, unused, should it switch again.
+                await conn.commit();
+            } catch (e) {
+                await conn.rollback();
+                throw e;
+            } finally {
+                conn.release();
+            }
+            res.json({ success: true, fitment, images, own_images: ownImages, stock_mode: stockMode });
+        } catch (error: any) {
+            console.error('Save product listing error:', error);
+            res.status(500).json({ error: 'Could not save the product' });
         }
     }
 

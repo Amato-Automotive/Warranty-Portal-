@@ -1,6 +1,16 @@
 import { Router } from 'express';
 import { OrderController } from '../controllers/order.controller.js';
 import { authenticateToken, requirePermission, requireRole } from '../middleware/auth.js';
+import { distributorProductUpload, attachPublicUrls } from '../config/localUpload.js';
+
+/* A distributor's photos of a product, with the reason shown when one is refused. */
+const productPhotos = (req: any, res: any, next: any) => {
+    // "photos" for the product, "car_<n>" for car row n.
+    distributorProductUpload.any()(req, res, (err: any) => {
+        if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_COUNT' ? 'Too many photos in one save' : err.code === 'LIMIT_FILE_SIZE' ? 'A photo is over 8 MB' : (err.message || 'Upload failed') });
+        attachPublicUrls(req, res, next);
+    });
+};
 
 const router = Router();
 
@@ -19,6 +29,10 @@ router.get('/distributor', authenticateToken, requireRole('vendor'), OrderContro
 router.get('/distributor/franchises', authenticateToken, requireRole('vendor'), OrderController.getDistributorFranchises);
 router.get('/distributor/inventory', authenticateToken, requireRole('vendor'), OrderController.getOwnInventory);
 router.put('/distributor/inventory', authenticateToken, requireRole('vendor'), OrderController.updateOwnStock);
+// What a distributor adds to a product: the cars it fits and its own photos.
+router.get('/vehicles', authenticateToken, requireRole('vendor'), OrderController.getVehicleList);
+router.get('/distributor/products/:productId', authenticateToken, requireRole('vendor'), OrderController.getProductListing);
+router.put('/distributor/products/:productId', authenticateToken, requireRole('vendor'), productPhotos, OrderController.saveProductListing);
 router.get('/distributor/incoming', authenticateToken, requireRole('vendor'), OrderController.getDistributorIncomingOrders);
 router.post('/distributor/incoming/:id/confirm', authenticateToken, requireRole('vendor'), OrderController.confirmDistributorOrder);
 router.post('/distributor/incoming/:id/hold', authenticateToken, requireRole('vendor'), OrderController.holdDistributorOrder);
