@@ -9,6 +9,7 @@ import { B2BCartProvider } from "./contexts/B2BCartContext";
 import { LanguageProvider } from "./contexts/LanguageContext";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
+import { TRAINING } from "./training/flag";
 
 // Eager-loaded (critical path - login/auth)
 import Login from "./pages/Login";
@@ -38,6 +39,8 @@ const ConnectStorePage = lazy(() => import("./pages/public/ConnectStorePage"));
 const ThankYouPage = lazy(() => import("./pages/ThankYouPage"));
 const AsmLogin = lazy(() => import("./pages/asm/AsmLogin"));
 const AsmHome = lazy(() => import("./pages/asm/AsmHome"));
+const TrainingPage = lazy(() => import("./pages/training/TrainingPage"));
+const TrainingBar = lazy(() => import("./pages/training/TrainingBar"));
 
 const queryClient = new QueryClient();
 
@@ -90,6 +93,8 @@ const App = () => (
                 {/* ASM portal — the login URL is handed out, never linked */}
                 <Route path="/asm/login" element={<AsmLogin />} />
                 <Route path="/asm" element={<AsmHome />} />
+                {/* The franchise dashboard on a made-up store; see training/flag.ts */}
+                <Route path="/training" element={<TrainingPage />} />
                 <Route path="/assignment/update/:token" element={<AssignmentUpdatePanel />} />
                 {/* Public QR Registration Route */}
                 <Route element={<PublicLayout />}>
@@ -99,6 +104,8 @@ const App = () => (
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              {/* Over every page of a training tab, wherever the dashboard leads. */}
+              {TRAINING && <TrainingBar />}
             </Suspense>
           </BrowserRouter>
         </TooltipProvider>

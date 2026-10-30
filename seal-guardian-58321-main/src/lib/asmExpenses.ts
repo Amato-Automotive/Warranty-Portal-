@@ -40,6 +40,72 @@ export interface ExpenseClaim {
     asm_phone?: string | null;
     created_at: string;
     items: ExpenseItem[];
+    /** Head office's list only: the pool this claim draws on. Null when no budget is set. */
+    budget?: ClaimBudgetPosition | null;
+}
+
+// ── Quarterly budgets (server: services/asmExpenseBudget.ts) ─────────────────
+
+export interface BudgetPool {
+    allocated: number;
+    used: number;
+    pending: number;
+    left: number;
+    over: number;
+}
+
+/** Local is a fixed allowance: each month's amount comes off on the 1st. */
+export interface BudgetMonth {
+    key: string;
+    label: string;
+    state: "past" | "current" | "future";
+    allocated: number;
+    deducted: boolean;
+}
+
+export interface BudgetQuarter {
+    key: string;
+    label: string;
+    span: string;
+    start: string;
+    end: string;
+}
+
+export interface BudgetSummary {
+    quarter: BudgetQuarter;
+    set: boolean;
+    total: number;
+    local_monthly: number;
+    local_quarter: number;
+    tour: BudgetPool;
+    months: BudgetMonth[];
+    local_deducted: number;
+    local_upcoming: number;
+    used: number;
+    pending: number;
+    lapsed: number;
+    remaining: number;
+    over: number;
+}
+
+export interface ClaimBudgetPosition {
+    pool: "tour";
+    label: string;
+    allocated: number;
+    used_by_others: number;
+    this_claim: number;
+    over: number;
+}
+
+/**
+ * How far a new tour claim would take the tour pool over, counting what is
+ * already approved and awaiting approval — 0 if it fits, null if the budget
+ * doesn't cover that date. Over is allowed; the ASM is only told.
+ */
+export function budgetOverspend(budget: BudgetSummary | null, date: string, amount: number) {
+    if (!budget?.set || date < budget.quarter.start || date > budget.quarter.end) return null;
+    const pool = budget.tour;
+    return Math.max(0, Math.round((pool.used + pool.pending + amount - pool.allocated) * 100) / 100);
 }
 
 export const EXPENSE_STATUS: Record<string, { label: string; tone: string }> = {

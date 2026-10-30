@@ -5,7 +5,7 @@ import { adminModuleTitle } from "./adminModules";
 import { AdminModuleLayout } from "./AdminModuleLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Navigate } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { Loader2, GraduationCap } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 import { AdminCommandPalette } from "../AdminCommandPalette";
@@ -167,7 +167,19 @@ export const AdminLayout = () => {
                     title={getModuleTitle()}
                     description={`Managed by ${user.name}`}
                     actions={
-                        <AdminCommandPalette onNavigate={setActiveModule} />
+                        <>
+                            {/* The franchise dashboard on a made-up store, in its own tab, for demos and ASM training. */}
+                            <button
+                                type="button"
+                                onClick={() => window.open("/training", "_blank")}
+                                title="Open the training store: the franchise dashboard on made-up data"
+                                className="flex items-center gap-2 text-sm text-muted-foreground bg-white border border-orange-100 rounded-md px-2.5 md:px-3 py-1.5 hover:bg-orange-50/50 hover:border-orange-200 transition-colors shadow-sm"
+                            >
+                                <GraduationCap className="h-3.5 w-3.5" />
+                                <span className="hidden lg:inline">Training store</span>
+                            </button>
+                            <AdminCommandPalette onNavigate={setActiveModule} />
+                        </>
                     }
                     onMenuToggle={() => setIsMobileMenuOpen(true)}
                     onProfileClick={() => setActiveModule('profile')}

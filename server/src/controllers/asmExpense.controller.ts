@@ -8,6 +8,10 @@ import {
     validateExpenseClaim, decideExpenseClaim, ExpenseRuleError, type BillField,
     canChangeDecision, canMarkPaid, validatePayment, expenseUpdateValues,
 } from '../services/asmExpenseRules.js';
+import {
+    quarterOf, parseQuarter, shiftQuarter, validateBudget, summariseBudget, claimBudgetPosition,
+    BudgetRuleError, type BudgetClaim, type BudgetInput, type Quarter,
+} from '../services/asmExpenseBudget.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { WhatsAppService } from '../services/whatsapp.service.js';
 
@@ -70,6 +74,22 @@ export async function ensureAsmExpenseTables() {
             KEY idx_asm_expense_items_claim (claim_id),
             CONSTRAINT fk_asm_expense_items_claim FOREIGN KEY (claim_id)
                 REFERENCES asm_expense_claims (id) ON DELETE CASCADE
+        )
+    `);
+
+    // One budget per ASM per quarter, set by HR. quarter is "2026-Q3" (FY start year).
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS asm_expense_budgets (
+            id VARCHAR(36) NOT NULL PRIMARY KEY,
+            asm_id VARCHAR(36) NOT NULL,
+            quarter VARCHAR(7) NOT NULL,
+            total_amount DECIMAL(12,2) NOT NULL,
+            local_monthly DECIMAL(10,2) NOT NULL,
+            set_by VARCHAR(36) NULL,
+            set_by_name VARCHAR(100) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_asm_expense_budget (asm_id, quarter)
         )
     `);
 
@@ -172,6 +192,60 @@ async function loadClaims(where: string, params: any[], limit = 200) {
     }));
 }
 
+// ── Budgets ──────────────────────────────────────────────────────────────────
+
+/** The quarter asked for, or today's. */
+const quarterParam = (v: unknown): Quarter => parseQuarter(v) ?? quarterOf(istToday());
+
+type StoredBudget = BudgetInput & { set_by_name: string | null; updated_at: string };
+
+/** Budgets by asm_id for one quarter. */
+async function loadBudgets(quarter: string, asmIds?: string[]): Promise<Map<string, StoredBudget>> {
+    if (asmIds && !asmIds.length) return new Map();
+    const [rows]: any = await db.execute(
+        `SELECT asm_id, total_amount, local_monthly, set_by_name, updated_at FROM asm_expense_budgets
+          WHERE quarter = ? ${asmIds ? 'AND asm_id IN (?)' : ''}`,
+        asmIds ? [quarter, asmIds] : [quarter]
+    );
+    return new Map(rows.map((r: any) => [r.asm_id, {
+        total: Number(r.total_amount), local_monthly: Number(r.local_monthly),
+        set_by_name: r.set_by_name, updated_at: r.updated_at,
+    }]));
+}
+
+/** What the budget maths needs from these ASMs' claims travelling between two dates. */
+async function loadBudgetClaims(asmIds: string[], from: string, to: string): Promise<(BudgetClaim & { id: string; asm_id: string })[]> {
+    if (!asmIds.length) return [];
+    const [rows]: any = await db.execute(
+        `SELECT id, asm_id, type, status, DATE_FORMAT(start_date, '%Y-%m-%d') AS start_date, total_amount, approved_amount
+           FROM asm_expense_claims WHERE asm_id IN (?) AND start_date BETWEEN ? AND ?`,
+        [asmIds, from, to]
+    );
+    return rows.map((r: any) => ({
+        ...r,
+        total_amount: Number(r.total_amount),
+        approved_amount: r.approved_amount === null ? null : Number(r.approved_amount),
+    }));
+}
+
+/** Each claim's place in its pool, for HR to see beside the decision. */
+async function attachBudgetPositions(claims: any[]) {
+    if (!claims.length) return claims;
+    const quarters = new Map<string, Quarter>();
+    for (const c of claims) { const q = quarterOf(c.start_date); quarters.set(q.key, q); }
+    const asmIds = [...new Set(claims.map(c => c.asm_id as string))];
+    const budgets = new Map<string, BudgetInput>();
+    for (const q of quarters.values()) {
+        for (const [asm, b] of await loadBudgets(q.key, asmIds)) budgets.set(`${asm}|${q.key}`, b);
+    }
+    const ordered = [...quarters.values()].sort((a, b) => a.start.localeCompare(b.start));
+    const all = await loadBudgetClaims(asmIds, ordered[0].start, ordered[ordered.length - 1].end);
+    return claims.map(c => {
+        const budget = budgets.get(`${c.asm_id}|${quarterOf(c.start_date).key}`) ?? null;
+        return { ...c, budget: claimBudgetPosition(budget, all.filter(o => o.asm_id === c.asm_id), c) };
+    });
+}
+
 export class AsmExpenseController {
     /** POST /api/asm-portal/expenses — multipart: `claim` (JSON) + bill files. */
     static async submit(req: AuthRequest, res: Response) {
@@ -258,7 +332,144 @@ export class AsmExpenseController {
         }
     }
 
+    /** GET /api/asm-portal/expenses/budget?quarter= — the ASM's budget for a quarter (this one by default). */
+    static async myBudget(req: AuthRequest, res: Response) {
+        try {
+            const asmId = await asmIdFor(req);
+            if (!asmId) return res.status(403).json({ error: 'Your ASM account was not found' });
+            const quarter = quarterParam(req.query.quarter);
+            const current = quarterOf(istToday());
+            // The ASM looks back, never ahead: a future budget is HR's planning.
+            if (quarter.start > current.start) return res.status(400).json({ error: 'That quarter has not started' });
+            const budget = (await loadBudgets(quarter.key, [asmId])).get(asmId) ?? null;
+            const claims = await loadBudgetClaims([asmId], quarter.start, quarter.end);
+            res.json({
+                success: true,
+                budget: summariseBudget(budget, claims, quarter, istToday()),
+                previous: shiftQuarter(quarter, -1).key,
+                next: quarter.key === current.key ? null : shiftQuarter(quarter, 1).key,
+            });
+        } catch (error) {
+            console.error('[ASM expense] budget failed:', error);
+            res.status(500).json({ error: 'Could not load your budget' });
+        }
+    }
+
     // ── Head office ──────────────────────────────────────────────────────────
+
+    /** GET /api/asm/expense-budgets?quarter= — every ASM's budget for one quarter, and where they stand. */
+    static async adminBudgets(req: AuthRequest, res: Response) {
+        try {
+            const quarter = quarterParam(req.query.quarter);
+            const today = istToday();
+            const [asms]: any = await db.execute('SELECT id, name, is_active FROM asms ORDER BY name');
+            const budgets = await loadBudgets(quarter.key);
+            const claims = await loadBudgetClaims(asms.map((a: any) => a.id), quarter.start, quarter.end);
+            res.json({
+                success: true,
+                quarter,
+                previous: shiftQuarter(quarter, -1).key,
+                next: shiftQuarter(quarter, 1).key,
+                current: quarterOf(today).key,
+                rows: asms
+                    // An inactive ASM is listed only if the quarter holds something of theirs.
+                    .filter((a: any) => a.is_active || budgets.has(a.id) || claims.some(c => c.asm_id === a.id))
+                    .map((a: any) => {
+                        const b = budgets.get(a.id) ?? null;
+                        return {
+                            asm_id: a.id,
+                            name: a.name,
+                            is_active: !!a.is_active,
+                            set_by_name: b?.set_by_name ?? null,
+                            updated_at: b?.updated_at ?? null,
+                            summary: summariseBudget(b, claims.filter(c => c.asm_id === a.id), quarter, today),
+                        };
+                    }),
+            });
+        } catch (error) {
+            console.error('[ASM expense] budgets failed:', error);
+            res.status(500).json({ error: 'Could not load budgets' });
+        }
+    }
+
+    /** PUT /api/asm/expense-budgets/:asmId/:quarter — { total, local_monthly }. Sets or changes it. */
+    static async setBudget(req: AuthRequest, res: Response) {
+        try {
+            const quarter = parseQuarter(req.params.quarter);
+            if (!quarter) return res.status(400).json({ error: 'Not a quarter' });
+            const input = validateBudget(req.body);
+            const [asms]: any = await db.execute('SELECT id, name FROM asms WHERE id = ?', [req.params.asmId]);
+            if (!asms.length) return res.status(404).json({ error: 'ASM not found' });
+            const asm = asms[0];
+
+            const before = (await loadBudgets(quarter.key, [asm.id])).get(asm.id) ?? null;
+            await db.execute(
+                `INSERT INTO asm_expense_budgets (id, asm_id, quarter, total_amount, local_monthly, set_by, set_by_name)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE total_amount = VALUES(total_amount), local_monthly = VALUES(local_monthly),
+                                         set_by = VALUES(set_by), set_by_name = VALUES(set_by_name)`,
+                [uuidv4(), asm.id, quarter.key, input.total, input.local_monthly, req.user!.id, req.user!.name || null]
+            );
+
+            ActivityLogService.log({
+                adminId: req.user!.id,
+                adminName: req.user!.name,
+                adminEmail: req.user!.email,
+                actionType: before ? 'ASM_BUDGET_CHANGED' : 'ASM_BUDGET_SET',
+                targetType: 'asm',
+                targetId: asm.id,
+                targetName: `${asm.name} · ${quarter.label}`,
+                details: {
+                    quarter: quarter.key,
+                    total: input.total,
+                    local_monthly: input.local_monthly,
+                    ...(before ? {
+                        changes: {
+                            total: { from: before.total, to: input.total },
+                            local_monthly: { from: before.local_monthly, to: input.local_monthly },
+                        },
+                    } : {}),
+                },
+                ipAddress: req.ip,
+            }).catch(() => {});
+
+            res.json({ success: true, message: `${quarter.label} budget ${before ? 'changed' : 'set'} for ${asm.name}` });
+        } catch (error: any) {
+            if (error instanceof BudgetRuleError) return res.status(400).json({ error: error.message });
+            console.error('[ASM expense] set budget failed:', error);
+            res.status(500).json({ error: 'Could not save the budget' });
+        }
+    }
+
+    /** DELETE /api/asm/expense-budgets/:asmId/:quarter — take a budget off again. */
+    static async removeBudget(req: AuthRequest, res: Response) {
+        try {
+            const quarter = parseQuarter(req.params.quarter);
+            if (!quarter) return res.status(400).json({ error: 'Not a quarter' });
+            const [asms]: any = await db.execute('SELECT id, name FROM asms WHERE id = ?', [req.params.asmId]);
+            if (!asms.length) return res.status(404).json({ error: 'ASM not found' });
+            const asm = asms[0];
+            const before = (await loadBudgets(quarter.key, [asm.id])).get(asm.id);
+            if (!before) return res.status(404).json({ error: 'No budget is set for this quarter' });
+
+            await db.execute('DELETE FROM asm_expense_budgets WHERE asm_id = ? AND quarter = ?', [asm.id, quarter.key]);
+            ActivityLogService.log({
+                adminId: req.user!.id,
+                adminName: req.user!.name,
+                adminEmail: req.user!.email,
+                actionType: 'ASM_BUDGET_REMOVED',
+                targetType: 'asm',
+                targetId: asm.id,
+                targetName: `${asm.name} · ${quarter.label}`,
+                details: { quarter: quarter.key, total: before.total, local_monthly: before.local_monthly },
+                ipAddress: req.ip,
+            }).catch(() => {});
+            res.json({ success: true, message: `${quarter.label} budget removed for ${asm.name}` });
+        } catch (error) {
+            console.error('[ASM expense] remove budget failed:', error);
+            res.status(500).json({ error: 'Could not remove the budget' });
+        }
+    }
 
     /**
      * GET /api/asm/expenses?status=&asm_id= — claims for review, newest first,
@@ -272,7 +483,7 @@ export class AsmExpenseController {
             if (status && status !== 'all') { where.push('c.status = ?'); params.push(status); }
             if (asm_id) { where.push('c.asm_id = ?'); params.push(asm_id); }
 
-            const claims = await loadClaims(where.join(' AND '), params, 500);
+            const claims = await attachBudgetPositions(await loadClaims(where.join(' AND '), params, 500));
             const countParams = asm_id ? [asm_id] : [];
             const [counts]: any = await db.execute(
                 `SELECT status, COUNT(*) AS n, SUM(total_amount) AS claimed
@@ -340,7 +551,7 @@ export class AsmExpenseController {
             );
             await conn.commit();
 
-            const [saved] = await loadClaims('c.id = ?', [id]);
+            const [saved] = await attachBudgetPositions(await loadClaims('c.id = ?', [id]));
             ActivityLogService.log({
                 adminId: req.user!.id,
                 adminName: req.user!.name,
@@ -404,7 +615,7 @@ export class AsmExpenseController {
             );
             if (!result.affectedRows) return res.status(409).json({ error: 'This claim changed meanwhile. Reload and try again.' });
 
-            const [saved] = await loadClaims('c.id = ?', [id]);
+            const [saved] = await attachBudgetPositions(await loadClaims('c.id = ?', [id]));
             ActivityLogService.log({
                 adminId: req.user!.id,
                 adminName: req.user!.name,

@@ -7,17 +7,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn, getISTTodayISO } from "@/lib/utils";
 import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
+import { budgetOverspend, type BudgetSummary } from "@/lib/asmExpenses";
 import {
-    ArrowLeft, Bus, Car, CarTaxiFront, Check, FileText, Hotel, Loader2, MapPin, Paperclip, Plane, Plus, TrainFront, Trash2, X
+    AlertTriangle, ArrowLeft, Bus, Car, CarTaxiFront, Check, FileText, Hotel, Loader2, Paperclip, Plane, Plus, TrainFront, Trash2, X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 /**
- * A new expense claim. Mirrors the server's rules (asmExpenseRules.ts) so the
- * ASM finds out before submitting; the server's check is the one that counts.
+ * A new expense claim — an outstation tour. Mirrors the server's rules
+ * (asmExpenseRules.ts) so the ASM finds out before submitting; the server's
+ * check is the one that counts.
+ *
+ * ASMs no longer file local conveyance (owner's call, 27 Oct 2026): it is the
+ * fixed monthly part of their budget. The server still reads local claims, so
+ * the ones already filed show as before.
  */
 
-type ClaimType = "local" | "tour";
 type Mode = "train" | "bus" | "flight" | "cab" | "own_vehicle";
 type Bill = "onward_ticket" | "return_ticket" | "hotel_bill";
 
@@ -134,22 +139,19 @@ const BillPicker = ({ label, file, onChange }: { label: string; file?: File; onC
 // ── The form ─────────────────────────────────────────────────────────────────
 
 interface Props {
+    /** This quarter's budget, to warn when a claim goes over it. */
+    budget?: BudgetSummary | null;
     onCancel: () => void;
     onSubmitted: () => void;
 }
 
-export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
+export const AsmExpenseForm = ({ budget = null, onCancel, onSubmitted }: Props) => {
     const { toast } = useToast();
     const today = getISTTodayISO();
     const earliest = shiftDay(today, -BACKDATE_DAYS);
 
-    const [type, setType] = useState<ClaimType | null>(null);
     const [remarks, setRemarks] = useState("");
     const [submitting, setSubmitting] = useState(false);
-
-    // Local
-    const [date, setDate] = useState(today);
-    const [trips, setTrips] = useState([{ from: "", to: "", amount: "" }]);
 
     // Tour
     const [startDate, setStartDate] = useState(today);
@@ -175,7 +177,6 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
     const maxNights = Math.max(1, span);
 
     const requiredBills = useMemo<Bill[]>(() => {
-        if (type !== "tour") return [];
         const r: Bill[] = [];
         if (paidBySelf && needsBill) {
             r.push("onward_ticket");
@@ -183,11 +184,9 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
         }
         if (hotelStay) r.push("hotel_bill");
         return r;
-    }, [type, paidBySelf, needsBill, oneWay, hotelStay]);
+    }, [paidBySelf, needsBill, oneWay, hotelStay]);
 
     const total = useMemo(() => {
-        if (type === "local") return trips.reduce((t, x) => t + amountOf(x.amount), 0);
-        if (type !== "tour") return 0;
         let t = 0;
         if (paidBySelf) {
             t += amountOf(onwardAmount);
@@ -195,7 +194,10 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
         }
         if (hotelStay) t += amountOf(hotelAmount);
         return t + others.reduce((s, o) => s + amountOf(o.amount), 0);
-    }, [type, trips, paidBySelf, onwardAmount, oneWay, returnAmount, hotelStay, hotelAmount, others]);
+    }, [paidBySelf, onwardAmount, oneWay, returnAmount, hotelStay, hotelAmount, others]);
+
+    // Going over is allowed; the ASM is only told, and HR sees it when deciding.
+    const over = total > 0 ? budgetOverspend(budget, startDate, total) : null;
 
     const pickStart = (v: string) => {
         setStartDate(v);
@@ -215,13 +217,11 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
             return;
         }
 
-        const claim = type === "local"
-            ? { type, date, trips, remarks }
-            : {
-                type, startDate, endDate, fromCity, toCity, travelMode: mode, ticketsBy: ticketed ? ticketsBy : null,
-                oneWay, onwardAmount, returnAmount, hotelStay: !!hotelStay, hotelNights, hotelPersons, hotelAmount,
-                others, remarks,
-            };
+        const claim = {
+            type: "tour", startDate, endDate, fromCity, toCity, travelMode: mode, ticketsBy: ticketed ? ticketsBy : null,
+            oneWay, onwardAmount, returnAmount, hotelStay: !!hotelStay, hotelNights, hotelPersons, hotelAmount,
+            others, remarks,
+        };
 
         setSubmitting(true);
         try {
@@ -250,69 +250,8 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
                 <ArrowLeft className="h-4 w-4" /> Back to my claims
             </button>
 
-            <Section title="1 · Claim type">
-                <div className="grid gap-3 sm:grid-cols-2">
-                    <Choice selected={type === "local"} onClick={() => setType("local")} icon={MapPin}
-                        label="Local Conveyance" sub="Travel within your city, one day" />
-                    <Choice selected={type === "tour"} onClick={() => setType("tour")} icon={Plane}
-                        label="Outstation Tour" sub="Travel to another city" />
-                </div>
-                <p className="text-[11px] text-slate-400">
-                    Claims can be filed for travel in the last {BACKDATE_DAYS} days.
-                </p>
-            </Section>
-
-            {type === "local" && (
-                <>
-                    <Section title="2 · Date of travel" delay={0}>
-                        <div className="max-w-xs">
-                            <DatePicker value={date} onChange={setDate} minDate={toDate(earliest)} maxDate={toDate(today)} className={inputCls} />
-                        </div>
-                    </Section>
-
-                    <Section title="3 · Trips" delay={80}>
-                        <div className="space-y-3">
-                            {trips.map((t, i) => (
-                                <div key={i} className={cn("rounded-2xl bg-slate-50 border border-slate-100 p-3 md:p-4 space-y-3", reveal)}>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Trip {i + 1}</span>
-                                        {trips.length > 1 && (
-                                            <button type="button" onClick={() => setTrips(trips.filter((_, j) => j !== i))}
-                                                className="text-slate-400 hover:text-rose-600" title="Remove trip">
-                                                <Trash2 className="h-4 w-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr_140px]">
-                                        <Field label="From">
-                                            <Input value={t.from} placeholder="e.g. Office" className={inputCls}
-                                                onChange={e => setTrips(trips.map((x, j) => j === i ? { ...x, from: e.target.value } : x))} />
-                                        </Field>
-                                        <Field label="To">
-                                            <Input value={t.to} placeholder="e.g. Store, Sector 18" className={inputCls}
-                                                onChange={e => setTrips(trips.map((x, j) => j === i ? { ...x, to: e.target.value } : x))} />
-                                        </Field>
-                                        <Field label="Amount (₹)">
-                                            <Input value={t.amount} inputMode="decimal" placeholder="0" className={inputCls}
-                                                onChange={e => setTrips(trips.map((x, j) => j === i ? { ...x, amount: e.target.value.replace(/[^\d.]/g, "") } : x))} />
-                                        </Field>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                        {trips.length < 20 && (
-                            <Button type="button" variant="outline" onClick={() => setTrips([...trips, { from: trips[trips.length - 1]?.to || "", to: "", amount: "" }])}
-                                className="rounded-xl border-orange-200 text-orange-600 hover:bg-orange-50 font-bold">
-                                <Plus className="h-4 w-4 mr-1.5" /> Add another trip
-                            </Button>
-                        )}
-                    </Section>
-                </>
-            )}
-
-            {type === "tour" && (
-                <>
-                    <Section title="2 · Trip" delay={0}>
+            <>
+                    <Section title="1 · Outstation tour" delay={0}>
                         <div className="grid gap-3 sm:grid-cols-2">
                             <Field label="Start date">
                                 <DatePicker value={startDate} onChange={pickStart} maxDate={toDate(today)} className={inputCls} />
@@ -330,7 +269,7 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
                         </div>
                     </Section>
 
-                    <Section title="3 · Mode of travel" delay={80}>
+                    <Section title="2 · Mode of travel" delay={80}>
                         <div className="grid gap-2 grid-cols-2 sm:grid-cols-3">
                             {MODES.map(m => (
                                 <Choice key={m.id} selected={mode === m.id} onClick={() => setMode(m.id)} icon={m.icon} label={m.label} />
@@ -384,7 +323,7 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
                         )}
                     </Section>
 
-                    <Section title="4 · Hotel stay" delay={160}>
+                    <Section title="3 · Hotel stay" delay={160}>
                         <div className="grid gap-2 grid-cols-2 max-w-sm">
                             <Choice selected={hotelStay === true} onClick={() => chooseHotel(true)} icon={Hotel} label="Yes" />
                             <Choice selected={hotelStay === false} onClick={() => setHotelStay(false)} label="No" />
@@ -410,7 +349,7 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
                         )}
                     </Section>
 
-                    <Section title="5 · Other expenses (optional)" delay={240}>
+                    <Section title="4 · Other expenses (optional)" delay={240}>
                         <p className="text-[11px] text-slate-400 -mt-2">Local cabs at the destination, food and similar.</p>
                         {others.map((o, i) => (
                             <div key={i} className={cn("grid gap-3 grid-cols-[1fr_120px_auto] items-end", reveal)}>
@@ -435,19 +374,22 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
                             </Button>
                         )}
                     </Section>
-                </>
-            )}
+            </>
 
-            {type && (
-                <Section title={type === "local" ? "4 · Remarks" : "6 · Remarks"} delay={type === "local" ? 160 : 320}>
-                    <Textarea value={remarks} onChange={e => setRemarks(e.target.value)} rows={3} maxLength={1000}
-                        placeholder="Optional — e.g. stores visited, purpose of the trip" className="rounded-xl border-slate-200" />
-                </Section>
-            )}
+            <Section title="5 · Remarks" delay={320}>
+                <Textarea value={remarks} onChange={e => setRemarks(e.target.value)} rows={3} maxLength={1000}
+                    placeholder="Optional — e.g. stores visited, purpose of the trip" className="rounded-xl border-slate-200" />
+            </Section>
 
             {/* Total and submit, kept in reach on a phone */}
-            {type && (
-                <div className="fixed md:sticky bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-3 right-3 md:left-0 md:right-0 md:bottom-4 z-30 rounded-[24px] border border-orange-100 bg-white/95 backdrop-blur px-5 py-3 md:px-6 md:py-4 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] flex items-center justify-between gap-4 animate-in slide-in-from-bottom-8 fade-in duration-500">
+            <div className="fixed md:sticky bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-3 right-3 md:left-0 md:right-0 md:bottom-4 z-30 rounded-[24px] border border-orange-100 bg-white/95 backdrop-blur px-5 py-3 md:px-6 md:py-4 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] animate-in slide-in-from-bottom-8 fade-in duration-500">
+                    {!!over && (
+                        <p className="mb-2 flex items-start gap-1.5 text-xs font-bold text-amber-700 animate-in fade-in duration-300">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                            This goes {rupees(over)} over your {budget?.quarter.label} tour budget. You can still submit; head office will decide.
+                        </p>
+                    )}
+                    <div className="flex items-center justify-between gap-4">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Total claim</p>
                         <p key={total} className="text-2xl font-black text-slate-900 tabular-nums animate-in zoom-in-90 fade-in duration-300">{rupees(total)}</p>
@@ -457,8 +399,8 @@ export const AsmExpenseForm = ({ onCancel, onSubmitted }: Props) => {
                         {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                         Submit claim
                     </Button>
+                    </div>
                 </div>
-            )}
         </div>
     );
 };

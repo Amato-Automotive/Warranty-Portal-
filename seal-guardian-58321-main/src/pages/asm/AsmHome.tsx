@@ -13,10 +13,11 @@ import { AsmAreas } from "@/components/asm/AsmAreas";
 import { AsmStores } from "@/components/asm/AsmStores";
 import { AsmProfile, AsmAvatar, type AsmProfileData } from "@/components/asm/AsmProfile";
 import api from "@/lib/api";
-import { rupees } from "@/lib/asmExpenses";
+import { rupees, type BudgetSummary } from "@/lib/asmExpenses";
+import { BudgetCard } from "@/components/asm/BudgetCard";
 import {
     Loader2, LogOut, Home, Receipt, User, ChevronLeft, ChevronRight, BriefcaseBusiness,
-    Inbox, MapPinned, CalendarDays, ArrowUpRight, Store
+    Inbox, MapPinned, CalendarDays, ArrowUpRight, Store, GraduationCap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -27,7 +28,8 @@ import type { LucideIcon } from "lucide-react";
 
 type AsmModule = "home" | "leads" | "stores" | "areas" | "expenses" | "profile";
 
-const MENU: { label: string; items: { id: AsmModule; label: string; icon: LucideIcon; comingSoon?: boolean }[] }[] = [
+/* "training" is not a module: it opens the training store in its own tab. */
+const MENU: { label: string; items: { id: AsmModule | "training"; label: string; icon: LucideIcon; comingSoon?: boolean }[] }[] = [
     { label: "Overview", items: [{ id: "home", label: "Home", icon: Home }] },
     {
         label: "Sales",
@@ -38,6 +40,7 @@ const MENU: { label: string; items: { id: AsmModule; label: string; icon: Lucide
         ],
     },
     { label: "Operations", items: [{ id: "expenses", label: "Expenses", icon: Receipt }] },
+    { label: "Learn", items: [{ id: "training", label: "Training Store", icon: GraduationCap }] },
 ];
 
 const TITLES: Record<AsmModule, string> = {
@@ -60,9 +63,11 @@ const AsmHome = () => {
     const [mobileOpen, setMobileOpen] = useState(false);
     const [summary, setSummary] = useState<Summary | null>(null);
     const [profile, setProfile] = useState<AsmProfileData | null>(null);
+    const [budget, setBudget] = useState<BudgetSummary | null>(null);
 
     const loadSummary = useCallback(() => {
         api.get("/asm-portal/summary").then(res => setSummary(res.data)).catch(() => {});
+        api.get("/asm-portal/expenses/budget").then(res => setBudget(res.data.budget)).catch(() => {});
     }, []);
 
     useEffect(() => {
@@ -142,7 +147,7 @@ const AsmHome = () => {
                         icon={item.icon}
                         label={item.label}
                         active={active === item.id}
-                        onClick={() => go(item.id)}
+                        onClick={() => item.id === "training" ? window.open("/training", "_blank") : go(item.id)}
                         isCollapsed={isCollapsed}
                         comingSoon={item.comingSoon}
                         badge={item.id === "leads" && summary?.leads.today ? String(summary.leads.today) : undefined}
@@ -257,7 +262,7 @@ const AsmHome = () => {
                 >
                     {/* Room for the bottom tab bar on phones */}
                     <div className="pb-28 md:pb-0">
-                        {active === "home" && <AsmHomeModule name={displayName} summary={summary} onOpen={go} />}
+                        {active === "home" && <AsmHomeModule name={displayName} summary={summary} budget={budget} onOpen={go} />}
                         {active === "leads" && <AsmLeads />}
                         {active === "stores" && <AsmStores />}
                         {active === "areas" && <AsmAreas />}
@@ -333,7 +338,7 @@ const greeting = () => {
     return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 };
 
-const AsmHomeModule = ({ name, summary, onOpen }: { name: string; summary: Summary | null; onOpen: (m: AsmModule) => void }) => {
+const AsmHomeModule = ({ name, summary, budget, onOpen }: { name: string; summary: Summary | null; budget: BudgetSummary | null; onOpen: (m: AsmModule) => void }) => {
     const stats: { label: string; value: string; sub: string; icon: LucideIcon; tone: string; to: AsmModule }[] = [
         { label: "Leads today", value: String(summary?.leads.today ?? "–"), sub: `${summary?.leads.week ?? 0} in the last 7 days`, icon: Inbox, tone: "bg-orange-50 text-orange-600", to: "leads" },
         { label: "This month", value: String(summary?.leads.this_month ?? "–"), sub: `${summary?.leads.total ?? 0} leads in total`, icon: CalendarDays, tone: "bg-blue-50 text-blue-600", to: "leads" },
@@ -372,6 +377,8 @@ const AsmHomeModule = ({ name, summary, onOpen }: { name: string; summary: Summa
                     </button>
                 ))}
             </div>
+
+            <BudgetCard budget={budget} compact onOpen={() => onOpen("expenses")} />
         </div>
     );
 };

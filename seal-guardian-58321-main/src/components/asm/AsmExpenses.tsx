@@ -3,11 +3,12 @@ import api, { getErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AsmExpenseForm } from "./AsmExpenseForm";
-import { EXPENSE_STATUS, claimDates, isCut, rupees, type ExpenseClaim } from "@/lib/asmExpenses";
+import { EXPENSE_STATUS, claimDates, isCut, rupees, type BudgetSummary, type ExpenseClaim } from "@/lib/asmExpenses";
+import { BudgetCard } from "./BudgetCard";
 import { ExpenseClaimLines } from "./ExpenseClaimLines";
 import { ChevronDown, Loader2, MapPin, Plane, Plus, Receipt } from "lucide-react";
 
-/** The ASM's expense claims, and the form for a new one. */
+/** The ASM's budget for the quarter, their expense claims, and the form for a new one. */
 
 
 export const AsmExpenses = () => {
@@ -16,6 +17,26 @@ export const AsmExpenses = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [open, setOpen] = useState<string | null>(null);
+    const [budget, setBudget] = useState<BudgetSummary | null>(null);
+    const [budgetNav, setBudgetNav] = useState<{ previous: string | null; next: string | null }>({ previous: null, next: null });
+    const [quarter, setQuarter] = useState<string | null>(null);
+    const [budgetLoading, setBudgetLoading] = useState(true);
+    // What the form warns against: always this quarter's, whichever one is on show.
+    const [currentBudget, setCurrentBudget] = useState<BudgetSummary | null>(null);
+
+    const loadBudget = async (q: string | null) => {
+        setBudgetLoading(true);
+        try {
+            const res = await api.get("/asm-portal/expenses/budget", { params: q ? { quarter: q } : {} });
+            setBudget(res.data.budget);
+            setBudgetNav({ previous: res.data.previous, next: res.data.next });
+            if (!q) setCurrentBudget(res.data.budget);
+        } catch {
+            setBudget(null);
+        } finally {
+            setBudgetLoading(false);
+        }
+    };
 
     const load = async () => {
         setLoading(true);
@@ -31,28 +52,35 @@ export const AsmExpenses = () => {
     };
 
     useEffect(() => { load(); }, []);
+    useEffect(() => { loadBudget(quarter); }, [quarter]);
 
     if (view === "new") {
-        return <AsmExpenseForm onCancel={() => setView("list")} onSubmitted={() => { setView("list"); load(); }} />;
+        return <AsmExpenseForm budget={currentBudget} onCancel={() => setView("list")}
+            onSubmitted={() => { setView("list"); load(); setQuarter(null); loadBudget(null); }} />;
     }
 
     const pending = claims.filter(c => c.status === "submitted");
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                <div className="grid grid-cols-2 gap-3 sm:gap-4 flex-1 min-w-[260px] max-w-md">
-                    <div className="rounded-[24px] border border-blue-50 bg-gradient-to-br from-blue-50 to-white p-4">
-                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Awaiting review</p>
-                        <p className="text-2xl font-black text-slate-900 tabular-nums">{pending.length}</p>
-                    </div>
-                    <div className="rounded-[24px] border border-slate-100 bg-gradient-to-br from-slate-50 to-white p-4">
-                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Amount pending</p>
-                        <p className="text-2xl font-black text-slate-900 tabular-nums">{rupees(pending.reduce((t, c) => t + c.total_amount, 0))}</p>
-                    </div>
+            <BudgetCard
+                budget={budget}
+                loading={budgetLoading}
+                onPrevious={budgetNav.previous ? () => setQuarter(budgetNav.previous) : undefined}
+                onNext={budgetNav.next ? () => setQuarter(budgetNav.next) : undefined}
+            />
+
+            <div className="flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <div className="min-w-0">
+                    <p className="text-sm font-black text-slate-800">My claims</p>
+                    <p className="text-xs text-slate-500 tabular-nums truncate">
+                        {pending.length
+                            ? `${pending.length} awaiting review · ${rupees(pending.reduce((t, c) => t + c.total_amount, 0))}`
+                            : "None awaiting review"}
+                    </p>
                 </div>
                 <Button onClick={() => setView("new")}
-                    className="h-12 px-6 rounded-xl bg-orange-500 hover:bg-orange-600 font-black uppercase tracking-wide shadow-lg shadow-orange-200 transition-all hover:-translate-y-0.5 active:scale-95">
+                    className="h-11 px-5 shrink-0 rounded-xl bg-orange-500 hover:bg-orange-600 font-black uppercase tracking-wide shadow-lg shadow-orange-200 transition-all hover:-translate-y-0.5 active:scale-95">
                     <Plus className="h-4 w-4 mr-1.5" /> New claim
                 </Button>
             </div>
@@ -70,7 +98,7 @@ export const AsmExpenses = () => {
                     </div>
                     <h3 className="text-lg font-black tracking-tight text-slate-800 uppercase mb-2">No claims yet</h3>
                     <p className="text-sm text-slate-500 max-w-sm mx-auto">
-                        Tap New claim to file local conveyance or an outstation tour. Claims must be filed within 7 days of travel.
+                        Tap New claim to file an outstation tour. Claims must be filed within 7 days of travel.
                     </p>
                 </div>
             ) : (
