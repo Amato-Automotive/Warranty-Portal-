@@ -4543,98 +4543,101 @@ export class AdminController {
         }
     }
 
+    /**
+     * Map franchises to a distributor: one (`vendorId`) or many at once
+     * (`vendorIds`). Each is checked on its own: a store already mapped to this
+     * distributor is left as it is, and a store that is not a franchise or whose
+     * brand the distributor does not carry is skipped with the reason. The rest
+     * are mapped; the answer says how many, and which were skipped and why.
+     */
     static async mapFranchiseToDistributor(req: Request, res: Response) {
         try {
             const { id } = req.params; // Distributor ID
-            const { vendorId } = req.body; // Vendor's User Profile ID
+            const ids: string[] = [...new Set<string>(
+                (Array.isArray(req.body?.vendorIds) ? req.body.vendorIds : req.body?.vendorId ? [req.body.vendorId] : [])
+                    .map((v: unknown) => String(v ?? '').trim()).filter(Boolean)
+            )].slice(0, 1000);
 
-            if (!vendorId) {
-                return res.status(400).json({ error: 'Franchise vendorId is required' });
+            if (!ids.length) {
+                return res.status(400).json({ error: 'Choose at least one franchise' });
             }
 
             // Verify distributor exists
-            const [dists]: any = await db.execute('SELECT name FROM distributors WHERE id = ?', [id]);
+            const [dists]: any = await db.execute('SELECT name, allowed_brands FROM distributors WHERE id = ?', [id]);
             if (dists.length === 0) {
                 return res.status(404).json({ error: 'Distributor not found' });
             }
+            const distBrands: string = dists[0].allowed_brands || 'AF';
 
-            // Verify vendor is a franchise
-            const [vendors]: any = await db.execute('SELECT store_name, is_franchise FROM vendor_details WHERE user_id = ?', [vendorId]);
-            if (vendors.length === 0) {
-                return res.status(404).json({ error: 'Franchise store not found' });
-            }
-            if (!vendors[0].is_franchise) {
-                return res.status(400).json({ error: 'Only franchise stores can be mapped to a distributor.' });
-            }
+            const [vendors]: any = await db.query(
+                'SELECT user_id, store_name, is_franchise, allowed_brands FROM vendor_details WHERE user_id IN (?)', [ids]);
+            const [already]: any = await db.query(
+                'SELECT franchise_user_id FROM franchise_distributors WHERE distributor_id = ? AND franchise_user_id IN (?)', [id, ids]);
+            const mapped = new Set(already.map((r: any) => String(r.franchise_user_id)));
+            const byId = new Map<string, any>(vendors.map((v: any) => [String(v.user_id), v]));
 
-            // Guard: brand compatibility â€” franchise and distributor must share at least one brand.
-            // AF franchise â†’ needs AF or AFAC distributor
-            // AC franchise â†’ needs AC or AFAC distributor
-            // AFAC franchise â†’ any distributor is fine
-            const [brandRows]: any = await db.execute(
-                `SELECT d.allowed_brands as dist_brands, vd.allowed_brands as franchise_brands
-                 FROM distributors d, vendor_details vd
-                 WHERE d.id = ? AND vd.user_id = ?`,
-                [id, vendorId]
-            );
-            if (brandRows.length > 0) {
-                const distBrands: string = brandRows[0].dist_brands || 'AF';
-                const franchiseBrands: string = brandRows[0].franchise_brands || 'AF';
-                const compatible =
-                    distBrands === 'AFAC' ||
-                    franchiseBrands === 'AFAC' ||
-                    distBrands === franchiseBrands;
-                if (!compatible) {
-                    return res.status(400).json({
-                        error: `Brand mismatch: this franchise is assigned to "${franchiseBrands}" products but the distributor only carries "${distBrands}" products. Update one of them to be compatible before assigning.`
-                    });
-                }
+            // Optional: the categories the new mappings may buy (only ones the distributor sells). Absent = everything.
+            let limitTo: string[] | null = null;
+            if (Array.isArray(req.body?.categoryIds)) {
+                const [sells]: any = await db.execute('SELECT category_id FROM distributor_allowed_categories WHERE distributor_id = ?', [id]);
+                const sold = new Set(sells.map((r: any) => String(r.category_id)));
+                limitTo = [...new Set<string>(req.body.categoryIds.map(String))].filter(c => sold.has(c));
             }
 
-            // NOTE: no category-overlap restriction. A franchise may be connected to
-            // as many distributors as needed (any brand) — the admin manages these
-            // assignments manually. (Order routing resolves the distributor per
-            // product's category/brand at order time.)
-
-            // Record the mapping in the many-to-many table — a franchise can be
-            // connected to several distributors. (This previously overwrote the single
-            // vendor_details.distributor_id column, so mapping a 2nd distributor
-            // silently replaced the 1st and the franchise's distributor selector,
-            // which reads franchise_distributors, only ever showed one.)
-            await db.execute(
-                `INSERT INTO franchise_distributors (id, franchise_user_id, distributor_id)
-                 VALUES (?, ?, ?)
-                 ON DUPLICATE KEY UPDATE id = id`,
-                [uuidv4(), vendorId, id]
-            );
-
-            // Keep the legacy single-FK pointing at a valid distributor for any older
-            // queries that still read it (it can only hold one; the M2M table is the
-            // source of truth).
-            await db.execute(
-                'UPDATE vendor_details SET distributor_id = ? WHERE user_id = ?',
-                [id, vendorId]
-            );
-
-            // Log activity
+            const added: string[] = [];
+            const skipped: { name: string; reason: string }[] = [];
             const admin = (req as any).user;
-            const [vendor]: any = await db.execute('SELECT store_name FROM vendor_details WHERE user_id = ?', [vendorId]);
+            for (const vendorId of ids) {
+                const v = byId.get(vendorId);
+                if (!v) { skipped.push({ name: vendorId, reason: 'Store not found' }); continue; }
+                if (!v.is_franchise) { skipped.push({ name: v.store_name, reason: 'Not a franchise store' }); continue; }
+                if (mapped.has(vendorId)) { skipped.push({ name: v.store_name, reason: 'Already mapped' }); continue; }
+                // Brand: the franchise and the distributor must share one (AFAC carries both).
+                const franchiseBrands: string = v.allowed_brands || 'AF';
+                if (!(distBrands === 'AFAC' || franchiseBrands === 'AFAC' || distBrands === franchiseBrands)) {
+                    skipped.push({ name: v.store_name, reason: `Brand: the store is ${franchiseBrands}, the distributor carries ${distBrands}` });
+                    continue;
+                }
 
-            await ActivityLogService.log({
-                adminId: admin.id,
-                adminName: admin.name,
-                adminEmail: admin.email,
-                actionType: 'FRANCHISE_MAPPED_DISTRIBUTOR',
-                targetType: 'VENDOR',
-                targetId: vendorId,
-                targetName: vendor[0]?.store_name,
-                details: { distributor_id: id, distributor_name: dists[0].name },
-                ipAddress: req.ip || req.socket?.remoteAddress
-            });
+                // The many-to-many table is the source of truth: a franchise can buy from several distributors.
+                await db.execute(
+                    `INSERT INTO franchise_distributors (id, franchise_user_id, distributor_id)
+                     VALUES (?, ?, ?)
+                     ON DUPLICATE KEY UPDATE id = id`,
+                    [uuidv4(), vendorId, id]
+                );
+                // Keep the legacy single-FK pointing at a valid distributor for any older queries that still read it.
+                await db.execute('UPDATE vendor_details SET distributor_id = ? WHERE user_id = ?', [id, vendorId]);
+                if (limitTo) {
+                    for (const categoryId of limitTo) {
+                        await db.execute(
+                            `INSERT INTO franchise_distributor_categories (id, franchise_user_id, distributor_id, category_id) VALUES (?, ?, ?, ?)`,
+                            [uuidv4(), vendorId, id, categoryId]);
+                    }
+                    await db.execute(`UPDATE franchise_distributors SET category_scope = 'selected' WHERE franchise_user_id = ? AND distributor_id = ?`, [vendorId, id]);
+                }
+                added.push(v.store_name);
+
+                await ActivityLogService.log({
+                    adminId: admin.id,
+                    adminName: admin.name,
+                    adminEmail: admin.email,
+                    actionType: 'FRANCHISE_MAPPED_DISTRIBUTOR',
+                    targetType: 'VENDOR',
+                    targetId: vendorId,
+                    targetName: v.store_name,
+                    details: { distributor_id: id, distributor_name: dists[0].name },
+                    ipAddress: req.ip || req.socket?.remoteAddress
+                });
+            }
 
             res.json({
                 success: true,
-                message: `Successfully assigned ${vendor[0]?.store_name || 'franchise'} to ${dists[0].name}`
+                added: added.length,
+                skipped,
+                message: added.length === 1 && !skipped.length
+                    ? `Successfully assigned ${added[0]} to ${dists[0].name}`
+                    : `${added.length} franchise${added.length === 1 ? '' : 's'} mapped to ${dists[0].name}${skipped.length ? `, ${skipped.length} skipped` : ''}`,
             });
         } catch (error: any) {
             console.error('Map franchise to distributor error:', error);
@@ -4706,6 +4709,7 @@ export class AdminController {
                        vd.city, 
                        vd.state,
                        vd.distributor_id,
+                       COALESCE(vd.allowed_brands, 'AF') as brand,
                        d.name as distributor_name
                 FROM vendor_details vd
                 JOIN profiles p ON vd.user_id = p.id
@@ -4730,14 +4734,24 @@ export class AdminController {
             const { id } = req.params; // Distributor ID
 
             const [categories]: any = await db.execute(
-                `SELECT dac.category_id, sc.name as category_name
+                `SELECT dac.category_id, sc.name as category_name,
+                        CASE WHEN sc.id LIKE '%-ac' THEN 'AC' ELSE 'AF' END AS brand,
+                        (SELECT COUNT(*) FROM store_products sp WHERE sp.category_id = sc.id) AS product_count
                  FROM distributor_allowed_categories dac
                  JOIN store_categories sc ON dac.category_id = sc.id
                  WHERE dac.distributor_id = ?
                  ORDER BY sc.name ASC`,
                 [id]
             );
-            res.json({ success: true, categories });
+            // Also each one's path from the top, to draw them as a tree.
+            const tree = await categoryTree();
+            res.json({
+                success: true,
+                categories: categories.map((c: any) => ({
+                    ...c, id: c.category_id, name: c.category_name, productCount: Number(c.product_count || 0),
+                    path: tree.pathOf(String(c.category_id)),
+                })),
+            });
         } catch (error: any) {
             console.error('Get distributor allowed categories error:', error);
             res.status(500).json({ error: 'Failed to fetch allowed categories' });
@@ -5704,6 +5718,7 @@ export class AdminController {
                     vd.city,
                     vd.state,
                     vd.is_distributor,
+                    COALESCE(vd.allowed_brands, 'AF') AS franchise_brand,
                     d.id                  AS distributor_id,
                     d.name                AS distributor_name,
                     d.city                AS distributor_city,
@@ -5730,7 +5745,7 @@ export class AdminController {
                  LEFT JOIN store_categories sc      ON sc.id = dac.category_id
                  WHERE vd.is_franchise = 1 ${searchClause}
                  GROUP BY vd.user_id, vd.id, vd.store_name, vd.store_code, vd.city, vd.state,
-                          vd.is_distributor, d.id, d.name, d.city, d.allowed_brands, fd.category_scope
+                          vd.is_distributor, vd.allowed_brands, d.id, d.name, d.city, d.allowed_brands, fd.category_scope
                  ORDER BY vd.store_name ASC, d.name ASC`,
                 params
             );
@@ -5747,6 +5762,7 @@ export class AdminController {
                         city: r.city,
                         state: r.state,
                         is_distributor: Boolean(r.is_distributor),
+                        brand: r.franchise_brand,
                         distributors: []
                     });
                 }

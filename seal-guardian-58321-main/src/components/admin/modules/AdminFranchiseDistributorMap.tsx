@@ -64,6 +64,8 @@ interface FranchiseRow {
     city: string | null;
     state: string | null;
     is_distributor: boolean;
+    /* The store's brand (AF, AC or AFAC), to say which distributors suit it. */
+    brand?: string;
     distributors: MappedDistributor[];
 }
 
@@ -117,6 +119,139 @@ function LimitBranch({ group, level, onSet }: { group: LimitGroup; level: number
     );
 }
 
+/**
+ * Map one or many stores to a distributor from the sourcing map: pick the
+ * distributor (its brand checked against the stores), then what they may buy
+ * from it — everything it sells, or only the categories ticked.
+ */
+function MapToDistributorDialog({ stores, onClose, onDone }: { stores: FranchiseRow[]; onClose: () => void; onDone: () => void }) {
+    const { toast } = useToast();
+    const [dists, setDists] = useState<{ id: string; name: string; city: string | null; state: string | null; allowed_brands: string | null }[] | null>(null);
+    const [find, setFind] = useState("");
+    const [distId, setDistId] = useState<string | null>(null);
+    const [mode, setMode] = useState<"all" | "some">("all");
+    const [cats, setCats] = useState<LimitCategory[] | null>(null);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        api.get("/admin/distributors").then(r => setDists(r.data.distributors ?? []))
+            .catch(e => { toast({ title: "Could not load distributors", description: getErrorMessage(e, ""), variant: "destructive" }); onClose(); });
+    }, []);
+    useEffect(() => {
+        if (!distId) return;
+        setCats(null);
+        api.get(`/admin/distributors/${distId}/categories`)
+            .then(r => setCats((r.data.categories ?? []).map((c: any) => ({ id: c.id, name: c.name, parentName: null, brand: c.brand, productCount: c.productCount, allowed: false, path: c.path }))))
+            .catch(() => setCats([]));
+    }, [distId]);
+
+    const fits = (d: { allowed_brands: string | null }, s: FranchiseRow) => {
+        const db = d.allowed_brands || "AF", sb = s.brand || "AF";
+        return db === "AFAC" || sb === "AFAC" || db === sb;
+    };
+    const needle = find.trim().toLowerCase();
+    const shown = (dists ?? []).filter(d => !needle || [d.name, d.city, d.state].some(x => String(x ?? "").toLowerCase().includes(needle)));
+    const chosen = dists?.find(d => d.id === distId) ?? null;
+    const misfit = chosen ? stores.filter(s => !fits(chosen, s)).length : 0;
+    const already = chosen ? stores.filter(s => s.distributors.some(x => x.id === chosen.id)).length : 0;
+    const ticked = (cats ?? []).filter(c => c.allowed).map(c => c.id);
+
+    const save = async () => {
+        if (!chosen) return;
+        if (mode === "some" && !ticked.length) return toast({ title: "Tick at least one category, or let them buy everything", variant: "destructive" });
+        setBusy(true);
+        try {
+            const r = await api.post(`/admin/distributors/${chosen.id}/franchise-assignments`, {
+                vendorIds: stores.map(s => s.franchise_user_id),
+                ...(mode === "some" ? { categoryIds: ticked } : {}),
+            });
+            const skipped: { name: string; reason: string }[] = r.data.skipped ?? [];
+            toast({
+                title: r.data.added ? `${r.data.added} mapped to ${chosen.name}` : "Nothing mapped",
+                description: skipped.length ? `${skipped.length} skipped: ${skipped.slice(0, 3).map(x => `${x.name} (${x.reason})`).join(", ")}${skipped.length > 3 ? "…" : ""}` : undefined,
+                variant: r.data.added ? undefined : "destructive",
+            });
+            onDone();
+        } catch (e) {
+            toast({ title: "Not mapped", description: getErrorMessage(e, "Try again"), variant: "destructive" });
+        } finally { setBusy(false); }
+    };
+
+    return (
+        <Dialog open onOpenChange={o => { if (!o && !busy) onClose(); }}>
+            <DialogContent className="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-[600px]">
+                <DialogHeader className="border-b border-slate-100 px-5 py-4 text-left">
+                    <DialogTitle className="text-base">Map to a distributor</DialogTitle>
+                    <DialogDescription className="text-xs">
+                        {stores.length === 1 ? <b>{stores[0].store_name}</b> : <><b>{stores.length} stores</b>: {stores.slice(0, 3).map(s => s.store_name).join(", ")}{stores.length > 3 ? "…" : ""}</>}
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+                    <section className="space-y-2">
+                        <p className="text-[11px] font-black uppercase tracking-wider text-slate-500">1 · Distributor</p>
+                        <div className="relative">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                            <Input value={find} onChange={e => setFind(e.target.value)} placeholder="Search distributor, city or state" className="h-10 pl-9" aria-label="Search distributors" />
+                        </div>
+                        <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                            {dists === null ? <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div>
+                                : !shown.length ? <p className="py-3 text-sm text-slate-500">No distributor found.</p>
+                                : shown.map(d => {
+                                    const off = stores.filter(s => !fits(d, s)).length;
+                                    const on = d.id === distId;
+                                    return (
+                                        <button key={d.id} type="button" onClick={() => { setDistId(d.id); setMode("all"); }} aria-pressed={on}
+                                            className={`flex min-h-[48px] w-full items-center gap-3 rounded-xl border px-3 py-2 text-left ${on ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:bg-slate-50"}`}>
+                                            <Building2 className="h-4 w-4 shrink-0 text-orange-500" />
+                                            <span className="min-w-0 flex-1">
+                                                <span className="block truncate text-sm font-bold text-slate-800">{d.name}</span>
+                                                <span className="block truncate text-[11px] text-slate-500">{[d.city, d.state].filter(Boolean).join(", ")}</span>
+                                            </span>
+                                            <Badge variant="secondary" className="shrink-0 border border-slate-200 bg-white text-[10px] text-slate-500">{d.allowed_brands || "AF"}</Badge>
+                                            {off > 0 && <span className="shrink-0 text-[10px] font-bold text-amber-700">{off === stores.length ? "Brand doesn't fit" : `${off} brand mismatch`}</span>}
+                                        </button>
+                                    );
+                                })}
+                        </div>
+                    </section>
+
+                    {chosen && (
+                        <section className="space-y-2">
+                            <p className="text-[11px] font-black uppercase tracking-wider text-slate-500">2 · What they can buy from {chosen.name}</p>
+                            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+                                {([["all", "Everything it sells"], ["some", "Only some categories"]] as const).map(([v, label]) => (
+                                    <button key={v} type="button" onClick={() => setMode(v)} aria-pressed={mode === v}
+                                        className={`min-h-[40px] rounded-lg text-sm font-bold ${mode === v ? "bg-white text-slate-900 shadow" : "text-slate-600"}`}>{label}</button>
+                                ))}
+                            </div>
+                            {mode === "some" && (cats === null ? <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div>
+                                : !cats.length ? <p className="text-sm text-slate-500">This distributor has no categories assigned yet.</p>
+                                : <div className="max-h-72 space-y-1 overflow-y-auto rounded-xl border border-slate-100 p-1">
+                                    <LimitBranch group={limitTree(cats)} level={0} onSet={(ids, allowed) => setCats(cs => (cs ?? []).map(c => (ids.has(c.id) ? { ...c, allowed } : c)))} />
+                                </div>)}
+                            {(misfit > 0 || already > 0) && (
+                                <p className="flex items-start gap-1.5 text-[11px] text-amber-700">
+                                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                                    <span>{[misfit ? `${misfit} store${misfit === 1 ? "" : "s"} won't be mapped (brand doesn't fit)` : null, already ? `${already} already mapped here` : null].filter(Boolean).join(" · ")}</span>
+                                </p>
+                            )}
+                        </section>
+                    )}
+                </div>
+
+                <DialogFooter className="gap-2 border-t border-slate-100 px-5 py-3">
+                    <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+                    <Button onClick={save} disabled={busy || !chosen || misfit + already >= stores.length} className="bg-orange-600 text-white hover:bg-orange-700">
+                        {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Map {stores.length - misfit - already > 1 ? `${stores.length - misfit - already} stores` : "store"}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 export const AdminFranchiseDistributorMap = () => {
     const { toast } = useToast();
     const [rows, setRows] = useState<FranchiseRow[]>([]);
@@ -125,6 +260,11 @@ export const AdminFranchiseDistributorMap = () => {
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState<Filter>("all");
     const [expanded, setExpanded] = useState<string | null>(null);
+    // Stores ticked to map (on the Unmapped tab), and the stores the map dialog is open for.
+    const [picked, setPicked] = useState<Set<string>>(new Set());
+    const [mapFor, setMapFor] = useState<FranchiseRow[] | null>(null);
+    const togglePick = (id: string) => setPicked(p => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    useEffect(() => { setPicked(new Set()); }, [filter]);
 
     // Per-mapping category limit editor
     const [editTarget, setEditTarget] = useState<{ franchise: FranchiseRow; distributor: MappedDistributor } | null>(null);
@@ -327,6 +467,20 @@ export const AdminFranchiseDistributorMap = () => {
                 })}
             </div>
 
+            {filter === "unmapped" && visible.length > 0 && (
+                <label className="flex cursor-pointer items-center gap-3 px-3 text-xs font-bold text-slate-600">
+                    <Checkbox
+                        checked={visible.every(f => picked.has(f.franchise_user_id)) ? true : visible.some(f => picked.has(f.franchise_user_id)) ? "indeterminate" : false}
+                        onCheckedChange={() => setPicked(p => {
+                            const all = visible.every(f => p.has(f.franchise_user_id));
+                            const n = new Set(p);
+                            visible.forEach(f => (all ? n.delete(f.franchise_user_id) : n.add(f.franchise_user_id)));
+                            return n;
+                        })} />
+                    Select all shown ({visible.length})
+                </label>
+            )}
+
             {/* Rows */}
             {visible.length === 0 ? (
                 <div className="text-center py-16 text-slate-400">
@@ -340,10 +494,16 @@ export const AdminFranchiseDistributorMap = () => {
                         const isOpen = expanded === f.franchise_user_id;
                         const count = f.distributors.length;
                         return (
-                            <Card key={f.franchise_user_id} className="border-slate-100 shadow-none overflow-hidden">
+                            <Card key={f.franchise_user_id} className={`shadow-none overflow-hidden ${picked.has(f.franchise_user_id) ? "border-orange-300" : "border-slate-100"}`}>
+                                <div className="flex items-stretch">
+                                {filter === "unmapped" && (
+                                    <label className="flex shrink-0 cursor-pointer items-center pl-3">
+                                        <Checkbox checked={picked.has(f.franchise_user_id)} onCheckedChange={() => togglePick(f.franchise_user_id)} aria-label={`Select ${f.store_name}`} />
+                                    </label>
+                                )}
                                 <button
                                     onClick={() => setExpanded(isOpen ? null : f.franchise_user_id)}
-                                    className="w-full text-left p-3 hover:bg-orange-50/40 transition-colors"
+                                    className="min-w-0 flex-1 text-left p-3 hover:bg-orange-50/40 transition-colors"
                                 >
                                     <div className="flex items-center gap-3">
                                         <ChevronRight className={`h-4 w-4 shrink-0 text-slate-300 transition-transform ${isOpen ? "rotate-90" : ""}`} />
@@ -379,6 +539,12 @@ export const AdminFranchiseDistributorMap = () => {
                                         </div>
                                     </div>
                                 </button>
+                                <div className="flex shrink-0 items-center pr-3">
+                                    <Button variant="outline" size="sm" onClick={() => setMapFor([f])} className="h-8 border-slate-200 text-[11px]" aria-label={`Map ${f.store_name} to a distributor`}>
+                                        <Building2 className="mr-1 h-3 w-3" /> + Distributor
+                                    </Button>
+                                </div>
+                                </div>
 
                                 {isOpen && count > 0 && (
                                     <CardContent className="pt-0 pb-3 px-3 space-y-2">
@@ -462,6 +628,19 @@ export const AdminFranchiseDistributorMap = () => {
                     })}
                 </div>
             )}
+
+            {picked.size > 0 && (
+                <div className="sticky bottom-3 z-20 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-xl">
+                    <span className="text-sm font-bold">{picked.size} store{picked.size === 1 ? "" : "s"} selected</span>
+                    <div className="flex gap-2">
+                        <Button variant="ghost" className="h-10 text-white hover:bg-white/10 hover:text-white" onClick={() => setPicked(new Set())}>Clear</Button>
+                        <Button className="h-10 bg-orange-500 font-bold text-white hover:bg-orange-600" onClick={() => setMapFor(rows.filter(r => picked.has(r.franchise_user_id)))}>
+                            <Building2 className="mr-1.5 h-4 w-4" /> Map to a distributor
+                        </Button>
+                    </div>
+                </div>
+            )}
+            {mapFor && <MapToDistributorDialog stores={mapFor} onClose={() => setMapFor(null)} onDone={() => { setMapFor(null); setPicked(new Set()); fetchMap(); }} />}
 
             {/* Per-mapping category limit editor */}
             <Dialog open={!!editTarget} onOpenChange={open => { if (!open) setEditTarget(null); }}>

@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AdminFranchiseOrdersDialog } from "./AdminFranchiseOrdersDialog";
+import { FranchiseMultiPicker } from "./FranchiseMultiPicker";
 
 interface Distributor {
     id: string;
@@ -88,7 +89,9 @@ export const AdminOrderManagement = () => {
     
     const [searchQuery, setSearchQuery] = useState("");
     const [franchiseSearchQuery, setFranchiseSearchQuery] = useState("");
-    const [selectedFranchiseId, setSelectedFranchiseId] = useState<string>("");
+    // The stores picked to map to the selected distributor, many at once.
+    const [selectedFranchiseIds, setSelectedFranchiseIds] = useState<string[]>([]);
+    useEffect(() => { setSelectedFranchiseIds([]); }, [selectedDist?.id]);
     
     // Modals
     const [mappingFranchise, setMappingFranchise] = useState(false);
@@ -379,10 +382,10 @@ export const AdminOrderManagement = () => {
 
 
     const handleMapFranchise = async () => {
-        if (!selectedDist || !selectedFranchiseId) {
+        if (!selectedDist || !selectedFranchiseIds.length) {
             toast({
                 title: "Error",
-                description: "Please select a franchise to map.",
+                description: "Please select the franchise stores to map.",
                 variant: "destructive"
             });
             return;
@@ -391,15 +394,17 @@ export const AdminOrderManagement = () => {
         setMappingFranchise(true);
         try {
             const res = await api.post(`/admin/distributors/${selectedDist.id}/franchise-assignments`, {
-                vendorId: selectedFranchiseId
+                vendorIds: selectedFranchiseIds
             });
 
             if (res.data.success) {
+                const skipped: { name: string; reason: string }[] = res.data.skipped ?? [];
                 toast({
-                    title: "Mapped successfully",
-                    description: res.data.message
+                    title: res.data.added ? "Mapped successfully" : "Nothing mapped",
+                    description: [res.data.message, ...skipped.slice(0, 5).map(x => `${x.name}: ${x.reason}`), skipped.length > 5 ? `+${skipped.length - 5} more skipped` : null].filter(Boolean).join("\n"),
+                    variant: res.data.added ? undefined : "destructive",
                 });
-                setSelectedFranchiseId("");
+                setSelectedFranchiseIds([]);
                 setFranchiseSearchQuery("");
                 await fetchMappedFranchises(selectedDist.id);
                 await fetchEligibleFranchises();
@@ -654,23 +659,18 @@ export const AdminOrderManagement = () => {
                             
                             <div className="flex flex-col sm:flex-row gap-3">
                                 <div className="flex-1">
-                                    <Combobox
-                                        options={availableFranchises.map(franchise => ({
-                                            value: franchise.user_id,
-                                            label: `${franchise.store_name} (${franchise.city}, ${franchise.state})`
-                                        }))}
-                                        value={selectedFranchiseId}
-                                        onChange={setSelectedFranchiseId}
-                                        placeholder="-- Select Franchise Store --"
-                                        searchPlaceholder="Search franchise by name or city..."
-                                        emptyMessage="No franchise found."
-                                        className="h-10 bg-white border-orange-100 rounded-xl text-xs font-bold text-slate-700"
+                                    <FranchiseMultiPicker
+                                        franchises={eligibleFranchises as any}
+                                        mappedIds={mappedFranchiseIds}
+                                        distributorBrand={selectedDist.allowed_brands || 'AF'}
+                                        value={selectedFranchiseIds}
+                                        onChange={setSelectedFranchiseIds}
                                     />
                                 </div>
                                 
                                 <Button
                                     onClick={handleMapFranchise}
-                                    disabled={mappingFranchise || !selectedFranchiseId}
+                                    disabled={mappingFranchise || !selectedFranchiseIds.length}
                                     className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl h-10 px-6 font-black text-xs shrink-0"
                                 >
                                     {mappingFranchise ? (
@@ -678,7 +678,7 @@ export const AdminOrderManagement = () => {
                                     ) : (
                                         <Check className="w-4 h-4 mr-1.5" />
                                     )}
-                                    Map Franchise
+                                    {selectedFranchiseIds.length > 1 ? `Map ${selectedFranchiseIds.length} Franchises` : 'Map Franchise'}
                                 </Button>
                             </div>
                         </div>
