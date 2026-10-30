@@ -9,7 +9,7 @@ import {
   Download, XCircle, Search, Building2, MapPin, Phone, Mail,
   CheckCircle2, Clock, Truck, AlertCircle, Ban, ChevronDown, ChevronUp, ChevronRight,
   ShoppingCart, FileText, Warehouse, TrendingUp, BarChart3, Info,
-  Car, Settings, LayoutList, Lightbulb, Volume2, Wind, Eye, Send, ArrowLeft, Pencil, Upload, MessageSquare,
+  Car, Settings, LayoutList, LayoutGrid, ArrowUpNarrowWide, ArrowDownWideNarrow, Lightbulb, Volume2, Wind, Eye, Send, ArrowLeft, Pencil, Upload, MessageSquare, Share2,
   Loader2
 } from 'lucide-react';
 import { cn, downloadCSV } from '@/lib/utils';
@@ -18,6 +18,7 @@ import type { Category } from '@/lib/catalogService';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DistributorProductDialog, carLabel, fitmentText, fitsCar, fitsVehicle, shareProductOnWhatsApp, type Fitment, type ShopCar } from './DistributorProductDialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -64,8 +65,8 @@ interface Order {
 
 // â"€â"€â"€ Status Badge â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
-/* "On the way": the distributor has shared a docket but the order isn't
-   received yet. Nothing in the app sets "shipped", so the docket is the sign. */
+/* Sharing the docket ships an order ("Shipped"). An older open order that got
+   a docket before that still reads "On the way". */
 const StatusBadge = ({ status, isIncoming = false, docket }: { status: Order['status']; isIncoming?: boolean; docket?: string | null }) => {
   const config: Record<string, { label: string; icon: any; className: string }> = {
     pending:    isIncoming
@@ -186,6 +187,7 @@ type FilterOption = { value: string; label: string; activeBg: string; activeText
 const ORDER_FILTER_OPTIONS: FilterOption[] = [
   { value: 'all',       label: 'All Orders', activeBg: 'bg-orange-50',  activeText: 'text-orange-600',  dot: 'bg-orange-400' },
   { value: 'active',    label: 'Active',      activeBg: 'bg-blue-50',   activeText: 'text-blue-600',    dot: 'bg-blue-500'   },
+  { value: 'shipped',   label: 'Shipped',     activeBg: 'bg-indigo-50', activeText: 'text-indigo-600',  dot: 'bg-indigo-500' },
   { value: 'onhold',    label: 'On Hold',     activeBg: 'bg-amber-50',  activeText: 'text-amber-600',   dot: 'bg-amber-400'  },
   { value: 'completed', label: 'Completed',   activeBg: 'bg-emerald-50',activeText: 'text-emerald-600', dot: 'bg-emerald-500'},
   { value: 'declined',  label: 'Declined',    activeBg: 'bg-rose-50',   activeText: 'text-rose-600',    dot: 'bg-rose-500'   },
@@ -286,7 +288,7 @@ const B2BOrderManagement: React.FC = () => {
   const { toast } = useToast();
   const {
     cartItems, addToCart, removeFromCart, updateQuantity, updateCustomization, clearCart,
-    distributorStock, distributorName, loadingStock, refreshStock, checkout,
+    distributorStock, carStock, distributorName, loadingStock, refreshStock, checkout,
     productImages, categoryMap, vendorProfile: franchiseProfile, loadingProfile
   } = useB2BCart();
 
@@ -295,6 +297,16 @@ const B2BOrderManagement: React.FC = () => {
   // Rapid Replenishment state
   const [replenishQtys, setReplenishQtys] = useState<Record<string, number>>({});
   const [searchQuery, setSearchQuery] = useState('');
+  /* Shop by car: the franchise's customer's car, remembered on this device. */
+  const [shopCar, setShopCarState] = useState<ShopCar | null>(() => {
+    try { const c = JSON.parse(localStorage.getItem('b2b_shop_car') || 'null'); return c?.make ? c : null; } catch { return null; }
+  });
+  const setShopCar = (c: ShopCar | null) => {
+    setShopCarState(c);
+    try { if (c) localStorage.setItem('b2b_shop_car', JSON.stringify(c)); else localStorage.removeItem('b2b_shop_car'); } catch { /* not kept */ }
+  };
+  const [carPickerOpen, setCarPickerOpen] = useState(false);
+  const [carDraft, setCarDraft] = useState<ShopCar>({ make: '', model: '', year: null });
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [mainCategories, setMainCategories] = useState<Category[]>([]);
@@ -517,7 +529,7 @@ const B2BOrderManagement: React.FC = () => {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [receivingOrderId, setReceivingOrderId] = useState<string | null>(null);
-  const [orderFilter, setOrderFilter] = useState<'all' | 'active' | 'onhold' | 'completed' | 'declined'>('all');
+  const [orderFilter, setOrderFilter] = useState<'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined'>('all');
   const [orderSearch, setOrderSearch] = useState('');
   const [orderDateFrom, setOrderDateFrom] = useState('');
   const [orderDateTo, setOrderDateTo] = useState('');
@@ -528,7 +540,7 @@ const B2BOrderManagement: React.FC = () => {
   const [loadingIncomingOrders, setLoadingIncomingOrders] = useState(false);
   const [confirmingIncomingId, setConfirmingIncomingId] = useState<string | null>(null);
   const [cancellingIncomingId, setCancellingIncomingId] = useState<string | null>(null);
-  const [incomingFilter, setIncomingFilter] = useState<'all' | 'active' | 'onhold' | 'completed' | 'declined'>('all');
+  const [incomingFilter, setIncomingFilter] = useState<'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined'>('all');
   const [incomingSearch, setIncomingSearch] = useState('');
   const [incomingDateFrom, setIncomingDateFrom] = useState('');
   const [incomingDateTo, setIncomingDateTo] = useState('');
@@ -557,6 +569,8 @@ const B2BOrderManagement: React.FC = () => {
 
   // Distributor's own inventory (self-service stock management)
   const [ownInventory, setOwnInventory] = useState<any[]>([]);
+  // The product whose cars and photos the distributor is editing.
+  const [listingProductId, setListingProductId] = useState<string | null>(null);
   const [loadingOwnInventory, setLoadingOwnInventory] = useState(false);
   const [stockDrafts, setStockDrafts] = useState<Record<string, string>>({});
   const [savingStockKey, setSavingStockKey] = useState<string | null>(null);
@@ -574,6 +588,14 @@ const B2BOrderManagement: React.FC = () => {
   const [invBrandDropdownOpen, setInvBrandDropdownOpen] = useState(false);
   const invBrandDropdownRef = useRef<HTMLDivElement>(null);
   const [invShowLowStock, setInvShowLowStock] = useState(false);
+  // Car filter: "make::model", "make::" for any model of a make, '__none' for products with no car added yet.
+  const [invCar, setInvCar] = useState('');
+  // Inventory as a table or as product cards (remembered on this device), and stock low→high / high→low.
+  const [invView, setInvView] = useState<'table' | 'cards'>(() => {
+    try { return localStorage.getItem('b2b_inventory_view') === 'cards' ? 'cards' : 'table'; } catch { return 'table'; }
+  });
+  const pickInvView = (v: 'table' | 'cards') => { setInvView(v); try { localStorage.setItem('b2b_inventory_view', v); } catch { /* not kept */ } };
+  const [invSort, setInvSort] = useState<'' | 'asc' | 'desc'>('');
   const [invCatDropdownOpen, setInvCatDropdownOpen] = useState(false);
   const [invCatExpandedParents, setInvCatExpandedParents] = useState<Set<string>>(new Set());
   const invCatDropdownRef = useRef<HTMLDivElement>(null);
@@ -703,7 +725,8 @@ const B2BOrderManagement: React.FC = () => {
 
   const filteredIncomingOrders = baseFilteredIncoming
     .filter(order => {
-      if (incomingFilter === 'active') return order.status === 'processing' || order.status === 'shipped';
+      if (incomingFilter === 'active') return order.status === 'processing';
+      if (incomingFilter === 'shipped') return order.status === 'shipped';
       if (incomingFilter === 'onhold') return order.status === 'pending';
       if (incomingFilter === 'completed') return order.status === 'delivered' || order.status === 'received';
       if (incomingFilter === 'declined') return order.status === 'cancelled';
@@ -721,13 +744,15 @@ const B2BOrderManagement: React.FC = () => {
       if (res.data.success) {
         setDocketIdInput('');
         setDocketDialogOpen(false);
+        const shipped = res.data.status === 'shipped';
         toast({
-          title: 'Docket Shared',
-          description: `Docket ID ${res.data.docketId} has been linked and shared.`,
+          title: shipped ? 'Order shipped' : 'Docket Shared',
+          description: shipped ? `Docket ${res.data.docketId} shared. The franchise has been told.` : `Docket ID ${res.data.docketId} has been linked and shared.`,
         });
-        // Update local order lists docket_id so it reflects immediately in spec sheet and list card
-        setOrders(prev => prev.map(o => o.id === selectedOrderId ? { ...o, docket_id: res.data.docketId } : o));
-        setIncomingOrders(prev => prev.map(o => o.id === selectedOrderId ? { ...o, docket_id: res.data.docketId } : o));
+        // The docket and (when it shipped the order) the status, at once in the spec sheet and the list.
+        const patch = (o: any) => o.id === selectedOrderId ? { ...o, docket_id: res.data.docketId, ...(res.data.status ? { status: res.data.status } : {}) } : o;
+        setOrders(prev => prev.map(patch));
+        setIncomingOrders(prev => prev.map(patch));
       }
     } catch (err: any) {
       toast({
@@ -780,7 +805,9 @@ const B2BOrderManagement: React.FC = () => {
     setLoadingOwnInventory(true);
     try {
       const res = await api.get('/orders/distributor/inventory');
-      if (res.data.success) setOwnInventory(res.data.inventory || []);
+      // A product held per car counts its cars' stock together, for low stock, sorting and the totals.
+      if (res.data.success) setOwnInventory((res.data.inventory || []).map((i: any) =>
+        i.stock_mode === 'car' ? { ...i, stock_quantity: Number(i.car_stock_total) || 0 } : i));
     } catch (err) {
       console.error('Failed to fetch own inventory', err);
     } finally {
@@ -904,11 +931,39 @@ const B2BOrderManagement: React.FC = () => {
     if (invShowLowStock && !isItemLowStock(item)) return false;
     if (invBrand && (item.product_brand || 'AF') !== invBrand) return false;
     if (invCategoryId && item.category_id !== invCategoryId) return false;
+    if (invCar === '__none' ? (item.fitment?.length ?? 0) > 0 : invCar && !fitsCar(item.fitment, invCar)) return false;
     if (invSearch) {
       const q = invSearch.toLowerCase();
-      if (!item.product_name?.toLowerCase().includes(q) && !item.variation_name?.toLowerCase().includes(q) && !item.sku?.toLowerCase().includes(q)) return false;
+      const byCar = ((item.fitment ?? []) as Fitment[]).some(f => fitmentText(f).toLowerCase().includes(q));
+      if (!item.product_name?.toLowerCase().includes(q) && !item.variation_name?.toLowerCase().includes(q) && !item.sku?.toLowerCase().includes(q) && !byCar) return false;
     }
     return true;
+  });
+  /* The cars the distributor's products fit, by make, for the car filter. */
+  const invCars = (() => {
+    const byMake = new Map<string, Set<string>>();
+    for (const item of ownInventory) for (const f of (item.fitment ?? []) as Fitment[]) {
+      if (!byMake.has(f.make)) byMake.set(f.make, new Set());
+      if (f.model) byMake.get(f.make)!.add(f.model);
+    }
+    return [...byMake.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([make, models]) => ({ make, models: [...models].sort((a, b) => a.localeCompare(b)) }));
+  })();
+  /* Sorted by stock when asked (a product's options stay together on its card). */
+  const sortedInventory = invSort
+    ? [...filteredInventory].sort((a: any, b: any) => (Number(a.stock_quantity) - Number(b.stock_quantity)) * (invSort === 'asc' ? 1 : -1))
+    : filteredInventory;
+  const inventoryCards = (() => {
+    const byProduct = new Map<string, any[]>();
+    for (const item of filteredInventory) byProduct.set(item.product_id, [...(byProduct.get(item.product_id) ?? []), item]);
+    const cards = [...byProduct.values()].map(items => ({ first: items[0], items, total: items.reduce((n, x) => n + (Number(x.stock_quantity) || 0), 0) }));
+    return invSort ? cards.sort((a, b) => (a.total - b.total) * (invSort === 'asc' ? 1 : -1)) : cards;
+  })();
+  const shareInventoryItem = (item: any) => shareProductOnWhatsApp({
+    name: item.product_name,
+    category: item.category_name,
+    options: ownInventory.filter((x: any) => x.product_id === item.product_id).map((x: any) => x.variation_name).filter((n: string) => hasMeaningfulOrderText(n)),
+    fitment: item.fitment,
+    photo: item.main_image,
   });
 
   const invCategoryLabel = (() => {
@@ -987,10 +1042,11 @@ const B2BOrderManagement: React.FC = () => {
     downloadCSV(exportData, `inventory${brandSuffix}_${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
-  const handleExportOrders = (scope: 'orders' | 'incoming', statusFilter: 'all' | 'active' | 'onhold' | 'completed' | 'declined') => {
+  const handleExportOrders = (scope: 'orders' | 'incoming', statusFilter: 'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined') => {
     const statusMap: Record<string, string[]> = {
       all: [],
-      active: ['processing', 'shipped'],
+      active: ['processing'],
+      shipped: ['shipped'],
       onhold: ['pending'],
       completed: ['delivered', 'received'],
       declined: ['cancelled'],
@@ -1017,7 +1073,6 @@ const B2BOrderManagement: React.FC = () => {
         'City': o.shipping_city || '',
         'State': o.shipping_state || '',
         'Pincode': o.shipping_pincode || '',
-        'Total Amount': o.total_amount || '',
         'Notes / Remarks': o.additional_remarks || '',
         'Decline Reason': o.decline_reason || '',
         'Declined By': o.declined_by_role || '',
@@ -1025,7 +1080,7 @@ const B2BOrderManagement: React.FC = () => {
       };
       const items: any[] = o.items || [];
       if (items.length === 0) {
-        flat.push({ ...baseRow, 'Product': '', 'Variation': '', 'SKU': '', 'Qty': '', 'Unit Price': '', 'Line Total': '' });
+        flat.push({ ...baseRow, 'Product': '', 'Variation': '', 'SKU': '', 'Qty': '' });
       } else {
         items.forEach((item: any, idx: number) => {
           flat.push({
@@ -1034,8 +1089,6 @@ const B2BOrderManagement: React.FC = () => {
             'Variation': item.variation_name || '',
             'SKU': item.sku || '',
             'Qty': item.quantity || '',
-            'Unit Price': item.unit_price || '',
-            'Line Total': item.total_price || '',
           });
         });
       }
@@ -1394,10 +1447,10 @@ const B2BOrderManagement: React.FC = () => {
   /* The product steppers change the cart directly — no separate "Add to cart"
      step, and nothing is lost on leaving the page (the cart is saved). */
   const cartQtyOf = (productId: string, variationId: string | null) =>
-    cartItems.find(i => i.productId === productId && i.variationId === (variationId ?? null))?.quantity ?? 0;
+    cartItems.filter(i => i.productId === productId && i.variationId === (variationId ?? null)).reduce((n, i) => n + i.quantity, 0);
   const setCartQty = (v: any, qty: number) => {
     const variationId = v.variation_id ?? null;
-    if (cartItems.some(i => i.productId === v.product_id && i.variationId === variationId)) {
+    if (cartItems.some(i => i.productId === v.product_id && i.variationId === variationId && !i.carStockId)) {
       updateQuantity(v.product_id, variationId, qty, true);
       return;
     }
@@ -1416,9 +1469,105 @@ const B2BOrderManagement: React.FC = () => {
       distributorName: v.distributor_name,
     }, qty, true);
   };
+  /* ─── Products held per car ─────────────────────────────────────────────
+     The distributor holds the stock of each option per car; the franchise
+     orders an option for one car, and that car's row gives the stock. */
+  const [carChooserId, setCarChooserId] = useState<string | null>(null);
+  /* In the car chooser, the option shown; in the car picker, the step and the make search. */
+  const [chooserOption, setChooserOption] = useState<string | null>(null);
+  useEffect(() => { setChooserOption(null); }, [carChooserId]);
+  const [carStep, setCarStep] = useState<'make' | 'model' | 'year'>('make');
+  const [carSearch, setCarSearch] = useState('');
+  useEffect(() => { if (carPickerOpen) { setCarStep('make'); setCarSearch(''); } }, [carPickerOpen]);
+  const isCarProduct = (p: any) => p?.variations?.[0]?.stock_mode === 'car';
+  const carRowFit = (r: any): Fitment => ({ make: r.make, model: r.model ?? '', from: r.from ?? null, to: r.to ?? null });
+  const carRowsOf = (productId: string) => carStock.filter((r: any) => r.distributor_id === focusedDistId && r.product_id === productId);
+  /* The rows for the chosen car (all of them with no car chosen). */
+  const carRowsForCar = (productId: string) => carRowsOf(productId).filter((r: any) => !shopCar || fitsVehicle([carRowFit(r)], shopCar));
+  const carQtyOf = (rowId: string) => cartItems.find(i => i.carStockId === rowId)?.quantity ?? 0;
+  const setCarQty = (product: any, row: any, qty: number) => {
+    const v = product.variations.find((x: any) => (x.variation_id ?? null) === (row.variation_id ?? null)) ?? product.variations[0];
+    if (cartItems.some(i => i.carStockId === row.id)) { updateQuantity(product.product_id, v.variation_id ?? null, qty, true, row.id); return; }
+    if (qty <= 0) return;
+    addToCart({
+      productId: product.product_id, variationId: v.variation_id ?? null, productName: v.product_name, variationName: v.variation_name,
+      price: v.price || 0, stockQuantity: row.stock_quantity, sku: v.sku, needsCustomization: false, customizationRemarks: '',
+      distributorId: v.distributor_id, distributorName: v.distributor_name, carStockId: row.id, carLabel: fitmentText(carRowFit(row)),
+    }, qty, true);
+  };
+  /* A product's stock: per car, the chosen car's rows (or all); else its options'. */
+  const stockOfProduct = (p: any) => isCarProduct(p)
+    ? carRowsForCar(p.product_id).reduce((n: number, r: any) => n + (Number(r.stock_quantity) || 0), 0)
+    : p.variations.reduce((n: number, v: any) => n + Math.max(0, Number(v.stock_quantity) || 0), 0);
+  /* With a car chosen, the photos of that car's row come first. */
+  const carPhotosFirst = (p: any, photos: string[]) => {
+    if (!isCarProduct(p) || !shopCar) return photos;
+    const own = carRowsForCar(p.product_id).flatMap((r: any) => r.images ?? []);
+    return own.length ? [...new Set([...own, ...photos])] : photos;
+  };
+  /* One option for one car: its name, stock and Add → − n +. */
+  const renderCarLine = (product: any, row: any) => {
+    const v = product.variations.find((x: any) => (x.variation_id ?? null) === (row.variation_id ?? null));
+    const option = v && hasMeaningfulOrderText(v.variation_name) && String(v.variation_name).toLowerCase() !== 'default' ? v.variation_name : null;
+    const qty = carQtyOf(row.id);
+    const stock = Number(row.stock_quantity) || 0;
+    return (
+      <div key={row.id} className={cn('flex items-center justify-between gap-2 rounded-2xl pl-3 pr-1.5 py-1.5', qty > 0 ? 'bg-orange-50' : 'bg-slate-50')}>
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-slate-800 truncate">{[option, fitmentText(carRowFit(row))].filter(Boolean).join(' · ')}</p>
+          <p className={cn('text-[10px] font-semibold', stock > 0 ? 'text-emerald-600' : 'text-slate-400')}>{stock > 0 ? `${stock} in stock` : 'Out of stock'}</p>
+        </div>
+        {!isUserFranchise ? (
+          <span className="shrink-0 text-[11px] font-semibold text-slate-400 px-2">View only</span>
+        ) : qty > 0 ? (
+          <QuantityStepper value={qty} max={Math.max(stock, qty)} onChange={val => setCarQty(product, row, Math.min(val, Math.max(stock, qty)))} />
+        ) : stock > 0 ? (
+          <button type="button" onClick={() => setCarQty(product, row, 1)}
+            className="shrink-0 h-8 px-4 rounded-xl border border-orange-300 bg-white text-xs font-black text-orange-600 hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-colors flex items-center gap-1">
+            <Plus className="w-3.5 h-3.5" /> Add
+          </button>
+        ) : (
+          <span className="shrink-0 text-[11px] font-semibold text-slate-400 px-2">Unavailable</span>
+        )}
+      </div>
+    );
+  };
+  /* The card's lines for a per-car product: the chosen car's, or a summary and "Choose car". */
+  const renderCarLines = (product: any, limit: number) => {
+    const all = carRowsOf(product.product_id);
+    const rows = carRowsForCar(product.product_id);
+    if (!shopCar) {
+      const total = all.reduce((n: number, r: any) => n + (Number(r.stock_quantity) || 0), 0);
+      const cars = new Set(all.map((r: any) => fitmentText(carRowFit(r)))).size;
+      return (
+        <div className="mt-auto space-y-1.5">
+          <p className="text-xs font-semibold text-slate-600">Fits {cars} car{cars === 1 ? '' : 's'} · {total} in stock</p>
+          <button type="button" onClick={() => setCarChooserId(product.product_id)}
+            className="w-full min-h-[44px] rounded-xl border border-orange-300 bg-white text-sm font-black text-orange-600 hover:bg-orange-50 flex items-center justify-center gap-1.5">
+            <Car className="w-4 h-4" /> Choose car
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-auto space-y-1.5">
+        {rows.length ? rows.slice(0, limit).map((r: any) => renderCarLine(product, r)) : (
+          <p className="rounded-2xl bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">Not in stock for your car</p>
+        )}
+        {(rows.length > limit || rows.length < all.length) && (
+          <button type="button" onClick={() => setCarChooserId(product.product_id)}
+            className="w-full text-center text-xs font-bold text-orange-600 hover:text-orange-700 py-1.5">
+            {rows.length > limit ? `+${rows.length - limit} more for your car` : `See all ${all.length} cars`}
+          </button>
+        )}
+      </div>
+    );
+  };
+
   /* Live stock for a cart line, from the distributor it was picked from (the
      saved cart's own stock figure is a placeholder). */
   const liveStockOf = (item: CartItem): number | undefined =>
+    item.carStockId ? carStock.find((r: any) => r.id === item.carStockId)?.stock_quantity :
     distributorStock.find((s: any) => s.product_id === item.productId && (s.variation_id ?? null) === item.variationId
       && (!item.distributorId || s.distributor_id === item.distributorId))?.stock_quantity;
 
@@ -1439,7 +1588,19 @@ const B2BOrderManagement: React.FC = () => {
     return seatCoverIds.has(categoryId);
   };
 
+  /* The cars this distributor's products are listed for, by make: only those can be picked. */
+  const carMakes = useMemo(() => {
+    const byMake = new Map<string, Set<string>>();
+    for (const item of visibleStock) for (const f of (item.fitment ?? []) as Fitment[]) {
+      if (!byMake.has(f.make)) byMake.set(f.make, new Set());
+      if (f.model) byMake.get(f.make)!.add(f.model);
+    }
+    return new Map([...byMake.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, ms]) => [m, [...ms].sort((a, b) => a.localeCompare(b))]));
+  }, [visibleStock]);
+  const carYears = Array.from({ length: new Date().getFullYear() + 2 - 1995 }, (_, i) => new Date().getFullYear() + 1 - i);
+
   const filteredStock = visibleStock.filter((item: any) => {
+    if (shopCar && (item.fitment?.length ?? 0) > 0 && !fitsVehicle(item.fitment, shopCar)) return false;
     if (selectedCategory) {
       const allowedCategories = getCategoryDescendants(selectedCategory, allCategories);
       if (!allowedCategories.includes(item.category_id)) {
@@ -1451,7 +1612,8 @@ const B2BOrderManagement: React.FC = () => {
     return (
       item.product_name?.toLowerCase().includes(q) ||
       item.variation_name?.toLowerCase().includes(q) ||
-      item.sku?.toLowerCase().includes(q)
+      item.sku?.toLowerCase().includes(q) ||
+      ((item.fitment ?? []) as Fitment[]).some(f => fitmentText(f).toLowerCase().includes(q))
     );
   });
 
@@ -1464,14 +1626,32 @@ const B2BOrderManagement: React.FC = () => {
         product_description: item.product_description,
         additional_info: item.additional_info,
         category_id: item.category_id,
+        dist_images: item.dist_images ?? null,
+        fitment: item.fitment ?? [],
         variations: []
       };
     }
     acc[item.product_id].variations.push(item);
     return acc;
-  }, {} as Record<string, { product_id: string; product_name: string; product_description?: string; additional_info?: string[]; category_id?: string; variations: any[] }>);
+  }, {} as Record<string, { product_id: string; product_name: string; product_description?: string; additional_info?: string[]; category_id?: string; dist_images: string[] | null; fitment: Fitment[]; variations: any[] }>);
+  /* The distributor's own photos when it uses them, else Autoform's. */
+  const photosOf = (p: { product_id: string; dist_images?: string[] | null }) => (p.dist_images?.length ? p.dist_images : productImages[p.product_id] || []);
+  /*
+   * A product as a WhatsApp message: its name, category, options, the cars it
+   * fits and its photo (WhatsApp previews the link). No price — it is the
+   * dealer's, and the message may go on to a customer — and no Maruti Suzuki
+   * names, as in all customer-facing text.
+   */
+  const shareOnWhatsApp = (p: any) => shareProductOnWhatsApp({
+    name: p.product_name,
+    category: p.category_id ? categoryMap[p.category_id] : null,
+    options: (p.variations as any[]).map(v => v.variation_name).filter((n: string) => hasMeaningfulOrderText(n)),
+    fitment: p.fitment,
+    photo: photosOf(p)[0] ?? null,
+  });
   /* Products with something in stock first; out-of-stock ones at the end. */
   const groupedEntries = Object.entries(grouped).sort(([, a]: [string, any], [, b]: [string, any]) =>
+    (shopCar ? Number(b.fitment.length > 0) - Number(a.fitment.length > 0) : 0) ||
     Number(b.variations.some((v: any) => v.stock_quantity > 0)) - Number(a.variations.some((v: any) => v.stock_quantity > 0)));
 
   const addReplenishToCart = () => {
@@ -1582,7 +1762,8 @@ const B2BOrderManagement: React.FC = () => {
       editingCartItem.productId,
       editingCartItem.variationId,
       cartCustomizationEnabled,
-      cartCustomizationDraft.trim()
+      cartCustomizationDraft.trim(),
+      editingCartItem.carStockId ?? null
     );
 
     toast({
@@ -1786,7 +1967,8 @@ const B2BOrderManagement: React.FC = () => {
 
   const filteredOrders = baseFilteredOrders
     .filter(order => {
-      if (orderFilter === 'active') return order.status === 'processing' || order.status === 'shipped';
+      if (orderFilter === 'active') return order.status === 'processing';
+      if (orderFilter === 'shipped') return order.status === 'shipped';
       if (orderFilter === 'onhold') return order.status === 'pending';
       if (orderFilter === 'completed') return order.status === 'delivered' || order.status === 'received';
       if (orderFilter === 'declined') return order.status === 'cancelled';
@@ -2590,7 +2772,7 @@ const B2BOrderManagement: React.FC = () => {
 
             <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5 mb-4 text-blue-700 text-xs font-medium">
               <Info className="w-4 h-4 shrink-0" />
-              You can only stock products from categories your admin has assigned to you. New products are added by the admin; you manage quantity only.
+              You can only stock products from categories your admin has assigned to you. New products are added by the admin; you update the stock, and can add the cars a product fits and your own photos.
             </div>
 
             {/* Search + category filters */}
@@ -2601,7 +2783,7 @@ const B2BOrderManagement: React.FC = () => {
                   <Input
                     value={invSearch}
                     onChange={e => setInvSearch(e.target.value)}
-                    placeholder="Search products, variations, SKU..."
+                    placeholder="Search products, variations, SKU, car..."
                     className="pl-9 rounded-xl border-slate-200 focus-visible:ring-orange-500 h-9 text-sm"
                   />
                 </div>
@@ -2711,9 +2893,36 @@ const B2BOrderManagement: React.FC = () => {
                     </div>
                   )}
                 </div>
-                {(invSearch || invCategoryId || invShowLowStock) && (
+                <select value={invCar} onChange={e => setInvCar(e.target.value)} aria-label="Car"
+                  className={`h-9 rounded-xl border bg-white px-3 text-sm font-medium sm:min-w-[170px] ${invCar ? 'border-orange-400 text-orange-600' : 'border-slate-200 text-slate-700'}`}>
+                  <option value="">All cars</option>
+                  <option value="__none">No cars added yet</option>
+                  {invCars.map(({ make, models }) => (
+                    <optgroup key={make} label={make}>
+                      <option value={`${make}::`}>{make} — any model</option>
+                      {models.map(m => <option key={m} value={`${make}::${m}`}>{make} {m}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+                <div className="flex shrink-0 gap-1" role="group" aria-label="Sort by stock">
+                  {([['asc', ArrowUpNarrowWide, 'Stock: low to high'], ['desc', ArrowDownWideNarrow, 'Stock: high to low']] as const).map(([v, Icon, label]) => (
+                    <button key={v} type="button" onClick={() => setInvSort(invSort === v ? '' : v)} aria-pressed={invSort === v} aria-label={label} title={label}
+                      className={cn('h-9 w-9 flex items-center justify-center rounded-xl border', invSort === v ? 'border-orange-400 bg-orange-50 text-orange-600' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
+                      <Icon className="w-4 h-4" />
+                    </button>
+                  ))}
+                </div>
+                <div className="flex shrink-0 gap-1" role="group" aria-label="View">
+                  {([['table', LayoutList, 'Table'], ['cards', LayoutGrid, 'Cards']] as const).map(([v, Icon, label]) => (
+                    <button key={v} type="button" onClick={() => pickInvView(v)} aria-pressed={invView === v} aria-label={`${label} view`} title={`${label} view`}
+                      className={cn('h-9 w-9 flex items-center justify-center rounded-xl border', invView === v ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
+                      <Icon className="w-4 h-4" />
+                    </button>
+                  ))}
+                </div>
+                {(invSearch || invCategoryId || invShowLowStock || invCar) && (
                   <button
-                    onClick={() => { setInvSearch(''); setInvCategoryId(''); setInvShowLowStock(false); }}
+                    onClick={() => { setInvSearch(''); setInvCategoryId(''); setInvShowLowStock(false); setInvCar(''); }}
                     className="h-9 px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-500 hover:bg-slate-50 whitespace-nowrap"
                   >
                     Clear filters
@@ -2736,7 +2945,70 @@ const B2BOrderManagement: React.FC = () => {
               <div className="flex flex-col items-center justify-center py-16 text-slate-400 bg-white border border-slate-100 rounded-2xl shadow-sm">
                 <Search className="w-12 h-12 mb-3 opacity-30" />
                 <p className="font-bold text-base text-slate-600">No products match your filters</p>
-                <button onClick={() => { setInvSearch(''); setInvCategoryId(''); setInvShowLowStock(false); }} className="mt-3 text-xs text-orange-500 font-bold hover:underline">Clear filters</button>
+                <button onClick={() => { setInvSearch(''); setInvCategoryId(''); setInvShowLowStock(false); setInvCar(''); }} className="mt-3 text-xs text-orange-500 font-bold hover:underline">Clear filters</button>
+              </div>
+            ) : invView === 'cards' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                {inventoryCards.map(({ first, items, total }) => (
+                  <div key={first.product_id} className="flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                    <div className="relative flex aspect-[4/3] items-center justify-center bg-gradient-to-b from-slate-50 to-white p-4">
+                      {first.main_image ? <img src={first.main_image} alt={first.product_name} loading="lazy" className="max-h-full max-w-full object-contain" /> : <Package className="h-12 w-12 text-slate-200" />}
+                      <span className="absolute left-3 top-3 max-w-[60%] truncate rounded-full border border-slate-100 bg-white/90 px-2.5 py-1 text-[10px] font-bold text-slate-600">{first.category_name}</span>
+                      {showInvBrandFilter && <span className="absolute right-3 top-3 rounded-full border border-slate-100 bg-white/90 px-2 py-0.5 text-[10px] font-black text-slate-700">{first.product_brand || 'AF'}</span>}
+                    </div>
+                    <div className="flex flex-1 flex-col gap-3 p-4">
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="font-bold leading-snug text-slate-900">{first.product_name}</h3>
+                          {(first.fitment?.length ?? 0) > 0 && (
+                            <p className="mt-1 text-xs text-slate-600 line-clamp-2">Fits {(first.fitment as Fitment[]).map(fitmentText).join(', ')}</p>
+                          )}
+                          <p className="mt-1 text-xs text-slate-500">{total} in stock in all</p>
+                        </div>
+                        <button type="button" onClick={() => shareInventoryItem(first)} aria-label={`Share ${first.product_name} on WhatsApp`} title="Share on WhatsApp"
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+                          <Share2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+                        {items.map((item: any) => {
+                          const key = stockKey(item.product_id, item.variation_id);
+                          const draft = stockDrafts[key];
+                          const low = Number(item.stock_quantity) <= getProductThreshold(item);
+                          return (
+                            <div key={key} className="flex items-center gap-2 px-3 py-2">
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold text-slate-700">{item.variation_name}</span>
+                                <span className={cn('text-xs font-bold', low ? 'text-rose-600' : 'text-slate-500')}>{item.stock_quantity} in stock{item.stock_mode === 'car' ? ` · per car (${item.car_count})` : ''}{low ? ' · Low' : ''}</span>
+                              </span>
+                              {item.stock_mode === 'car' ? (
+                                <Button size="sm" variant="outline" onClick={() => setListingProductId(item.product_id)} className="h-10 rounded-xl px-3 text-xs font-black">
+                                  <Car className="w-3.5 h-3.5 mr-1.5" />Set per car
+                                </Button>
+                              ) : (<>
+                              <Input type="number" min={0} value={draft !== undefined ? draft : ''} placeholder={String(item.stock_quantity)}
+                                onChange={e => setStockDrafts(prev => ({ ...prev, [key]: e.target.value }))}
+                                aria-label={`New stock for ${item.product_name} ${item.variation_name}`} className="h-10 w-20 rounded-xl border-slate-200 text-right" />
+                              <Button size="sm" disabled={savingStockKey === key || draft === undefined} onClick={() => handleSaveStock(item.product_id, item.variation_id)}
+                                className="h-10 rounded-xl bg-orange-500 px-3 text-xs font-black text-white hover:bg-orange-600">
+                                {savingStockKey === key ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Save'}
+                              </Button>
+                              </>)}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <button type="button" onClick={() => setListingProductId(first.product_id)}
+                        className="mt-auto flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 hover:border-orange-300 hover:text-orange-700">
+                        <Pencil className="w-4 h-4" />
+                        {[
+                          (first.fitment?.length ?? 0) > 0 && `${first.fitment.length} car${first.fitment.length === 1 ? '' : 's'}`,
+                          first.own_images ? `My photos (${first.own_image_count ?? 0})` : null,
+                        ].filter(Boolean).join(' · ') || 'Add cars & photos'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-x-auto">
@@ -2747,12 +3019,14 @@ const B2BOrderManagement: React.FC = () => {
                       {showInvBrandFilter && <th className="px-5 py-3">Brand</th>}
                       <th className="px-5 py-3">Variation</th>
                       <th className="px-5 py-3">Category</th>
+                      <th className="px-5 py-3">Cars &amp; photos</th>
+                      <th className="px-2 py-3"><span className="sr-only">Share</span></th>
                       <th className="px-5 py-3 text-center">Current Stock</th>
                       <th className="px-5 py-3 text-right">Update Stock</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredInventory.map((item: any) => {
+                    {sortedInventory.map((item: any) => {
                       const key = stockKey(item.product_id, item.variation_id);
                       const draft = stockDrafts[key];
                       const isSaving = savingStockKey === key;
@@ -2760,7 +3034,21 @@ const B2BOrderManagement: React.FC = () => {
                       const isLowStock = Number(item.stock_quantity) <= threshold;
                       return (
                         <tr key={key} className="hover:bg-slate-50/50">
-                          <td className="px-5 py-3 font-bold text-slate-800">{item.product_name}</td>
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-3">
+                              <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-100 bg-white">
+                                {item.main_image ? <img src={item.main_image} alt="" loading="lazy" className="h-full w-full object-contain p-0.5" /> : <Package className="h-5 w-5 text-slate-200" />}
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block font-bold text-slate-800">{item.product_name}</span>
+                                {(item.fitment?.length ?? 0) > 0 && (
+                                  <span className="block max-w-[260px] truncate text-xs text-slate-500">
+                                    Fits {(item.fitment as Fitment[]).slice(0, 2).map(fitmentText).join(', ')}{item.fitment.length > 2 ? ` +${item.fitment.length - 2}` : ''}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          </td>
                           {showInvBrandFilter && (
                             <td className="px-5 py-3">
                               <Badge className={cn(
@@ -2777,10 +3065,27 @@ const B2BOrderManagement: React.FC = () => {
                           <td className="px-5 py-3">
                             <Badge className="bg-slate-100 text-slate-600 hover:bg-slate-100 border-slate-200">{item.category_name}</Badge>
                           </td>
+                          <td className="px-5 py-3">
+                            <button type="button" onClick={() => setListingProductId(item.product_id)}
+                              className="flex min-h-[36px] items-center gap-1.5 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700 hover:border-orange-300 hover:text-orange-700">
+                              <Pencil className="w-3.5 h-3.5" />
+                              {[
+                                item.stock_mode === 'car' ? 'Stock per car' : (item.fitment?.length ?? 0) > 0 && `${item.fitment.length} car${item.fitment.length === 1 ? '' : 's'}`,
+                                item.own_images ? `My photos (${item.own_image_count ?? 0})` : null,
+                              ].filter(Boolean).join(' · ') || 'Add'}
+                            </button>
+                          </td>
+                          <td className="px-2 py-3">
+                            <button type="button" onClick={() => shareInventoryItem(item)} aria-label={`Share ${item.product_name} on WhatsApp`} title="Share on WhatsApp"
+                              className="flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+                              <Share2 className="w-4 h-4" />
+                            </button>
+                          </td>
                           <td className="px-5 py-3 text-center">
                             <span className={cn('font-bold', isLowStock ? 'text-rose-600' : 'text-slate-800')}>
                               {item.stock_quantity}
                             </span>
+                            {item.stock_mode === 'car' && <span className="block text-[10px] font-semibold text-slate-500">per car · {item.car_count}</span>}
                             {isLowStock && (
                               <Badge className="ml-2 bg-rose-50 text-rose-600 hover:bg-rose-50 border-rose-100 text-[9px] px-1.5 py-0">
                                 Low
@@ -2788,6 +3093,11 @@ const B2BOrderManagement: React.FC = () => {
                             )}
                           </td>
                           <td className="px-5 py-3 text-right">
+                            {item.stock_mode === 'car' ? (
+                              <Button size="sm" variant="outline" onClick={() => setListingProductId(item.product_id)} className="h-9 rounded-xl px-3 text-xs font-black">
+                                <Car className="w-3.5 h-3.5 mr-1.5" />Set per car
+                              </Button>
+                            ) : (
                             <div className="flex items-center justify-end gap-2">
                               <Input
                                 type="number"
@@ -2806,6 +3116,7 @@ const B2BOrderManagement: React.FC = () => {
                                 {isSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Save'}
                               </Button>
                             </div>
+                            )}
                           </td>
                         </tr>
                       );
@@ -2833,6 +3144,26 @@ const B2BOrderManagement: React.FC = () => {
                   className="pl-9 rounded-xl border-slate-200 focus-visible:ring-orange-500"
                 />
               </div>
+              {(carMakes.size > 0 || shopCar) && (
+                <div className="hidden sm:flex shrink-0">
+                  {shopCar ? (
+                    <span className="flex h-10 items-center rounded-xl bg-slate-900 text-white">
+                      <button type="button" onClick={() => { setCarDraft(shopCar); setCarPickerOpen(true); }} aria-label={`Change the car: ${carLabel(shopCar)}`}
+                        className="flex h-10 max-w-[260px] items-center gap-2 pl-3.5 pr-1 text-sm font-bold">
+                        <Car className="w-4 h-4 shrink-0" /><span className="truncate">{carLabel(shopCar)}</span>
+                        <span className="shrink-0 text-xs font-semibold text-white/60">· {groupedEntries.filter(([, p]: [string, any]) => p.fitment.length > 0).length} fit</span>
+                      </button>
+                      <button type="button" onClick={() => setShopCar(null)} aria-label="Clear the car"
+                        className="mr-1 flex h-8 w-8 items-center justify-center rounded-lg hover:bg-white/15"><XCircle className="w-4 h-4" /></button>
+                    </span>
+                  ) : (
+                    <button type="button" onClick={() => { setCarDraft({ make: '', model: '', year: null }); setCarPickerOpen(true); }}
+                      className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 hover:border-orange-400 hover:text-orange-700">
+                      <Car className="w-4 h-4" />Choose your car
+                    </button>
+                  )}
+                </div>
+              )}
               {isUserFranchise && (
                 <div className="flex items-center shrink-0">
                   <Button
@@ -2847,6 +3178,32 @@ const B2BOrderManagement: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* Shop by car: only when this distributor has listed products for cars. On a phone its own row; on a wider screen it sits in the search row. */}
+            {(carMakes.size > 0 || shopCar) && (
+              <div className="mb-4 flex flex-wrap items-center gap-2 sm:hidden">
+                {shopCar ? (
+                  <>
+                    <span className="flex items-center rounded-full bg-slate-900 text-white">
+                      <button type="button" onClick={() => { setCarDraft(shopCar); setCarPickerOpen(true); }} aria-label={`Change the car: ${carLabel(shopCar)}`}
+                        className="flex min-h-[44px] items-center gap-2 pl-4 pr-1 text-sm font-bold">
+                        <Car className="w-4 h-4" />{carLabel(shopCar)}
+                      </button>
+                      <button type="button" onClick={() => setShopCar(null)} aria-label="Clear the car"
+                        className="m-1 flex h-9 w-9 items-center justify-center rounded-full bg-white/15 hover:bg-white/25"><XCircle className="w-4 h-4" /></button>
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {groupedEntries.filter(([, p]: [string, any]) => p.fitment.length > 0).length} fit your car · {groupedEntries.filter(([, p]: [string, any]) => !p.fitment.length).length} not listed for a car
+                    </span>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => { setCarDraft({ make: '', model: '', year: null }); setCarPickerOpen(true); }}
+                    className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 hover:border-orange-400">
+                    <Car className="w-4 h-4" />Choose your car
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Category selector */}
             {mainCategories.length > 0 && (
@@ -2881,7 +3238,7 @@ const B2BOrderManagement: React.FC = () => {
                   ))}
                 </div>
                 {/* Desktop — existing hover nav dropdowns */}
-                <div className={`hidden sm:flex relative bg-white border border-slate-100 rounded-3xl p-4 mb-6 shadow-sm items-center gap-x-6 gap-y-4 overflow-visible no-scrollbar ${customizationOpen || detailProductId ? 'z-0' : 'z-[100]'}`}>
+                <div className={`hidden sm:flex relative bg-white border border-slate-100 rounded-3xl p-4 mb-6 shadow-sm items-center gap-x-6 gap-y-4 overflow-visible no-scrollbar ${customizationOpen || detailProductId || carPickerOpen || carChooserId ? 'z-0' : 'z-[100]'}`}>
                   <div className="flex items-center gap-x-6 lg:gap-x-8 flex-wrap">
                     {mainCategories.map(cat => (
                       <NavDropdown
@@ -2967,12 +3324,12 @@ const B2BOrderManagement: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5">
                 {groupedEntries.map(([productId, product]: [string, any]) => {
-                  const images = productImages[productId] || [];
+                  const images = carPhotosFirst(product, photosOf(product));
                   const mainImage = images[0];
                   const categoryName = product.category_id ? categoryMap[product.category_id] : null;
                   const variations: any[] = product.variations;
                   const inCart = variations.reduce((n: number, v: any) => n + cartQtyOf(v.product_id, v.variation_id), 0);
-                  const totalStock = variations.reduce((n: number, v: any) => n + Math.max(0, Number(v.stock_quantity) || 0), 0);
+                  const totalStock = stockOfProduct(product);
                   /* One option with no real name ("Default") shows as just the product. */
                   const single = variations.length === 1 && (!hasMeaningfulOrderText(variations[0]?.variation_name) || String(variations[0]?.variation_name).trim().toLowerCase() === 'default');
                   /* Long option lists (a few products have up to 12) show three; the rest are in the details. */
@@ -3026,6 +3383,11 @@ const B2BOrderManagement: React.FC = () => {
                             </span>
                           ) : null
                         )}
+                        {shopCar && product.fitment.length > 0 && (
+                          <span className="absolute bottom-2.5 left-3 flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-black text-white shadow">
+                            <CheckCircle2 className="w-3 h-3" /> Fits your car
+                          </span>
+                        )}
                         {images.length > 1 && (
                           <span className="absolute bottom-2.5 right-3 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-500 border border-slate-100">
                             {images.length} photos
@@ -3034,16 +3396,28 @@ const B2BOrderManagement: React.FC = () => {
                       </button>
 
                       <div className="flex-1 flex flex-col px-4 pt-3.5 pb-4 gap-3">
-                        <button type="button" onClick={openDetails} className="text-left">
+                        <div className="flex items-start gap-2">
+                        <button type="button" onClick={openDetails} className="min-w-0 flex-1 text-left">
                           <h3 className="font-bold text-[15px] text-slate-900 leading-snug line-clamp-2 group-hover:text-orange-700 transition-colors">
                             {product.product_name}
                           </h3>
+                          {product.fitment.length > 0 && (
+                            <p className="mt-1 text-xs text-slate-600 line-clamp-1">
+                              Fits {product.fitment.slice(0, 2).map(fitmentText).join(', ')}{product.fitment.length > 2 ? ` +${product.fitment.length - 2}` : ''}
+                            </p>
+                          )}
                           {product.product_description && (
                             <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">{product.product_description}</p>
                           )}
                         </button>
+                        <button type="button" onClick={() => shareOnWhatsApp(product)} aria-label={`Share ${product.product_name} on WhatsApp`} title="Share on WhatsApp"
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+                          <Share2 className="w-4 h-4" />
+                        </button>
+                        </div>
 
-                        {/* One line per option: name, stock, and Add → − n + */}
+                        {/* One line per option: name, stock, and Add → − n + (per car: one per car) */}
+                        {isCarProduct(product) ? renderCarLines(product, 3) : (
                         <div className="mt-auto space-y-1.5">
                           {shown.map((v: any) => {
                             const key = replenishKey(v.product_id, v.variation_id);
@@ -3095,6 +3469,7 @@ const B2BOrderManagement: React.FC = () => {
                             </button>
                           )}
                         </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -3164,7 +3539,7 @@ const B2BOrderManagement: React.FC = () => {
                     const overStock = stock !== undefined && item.quantity > stock;
 
                     return (
-                      <div key={`${item.productId}-${item.variationId}`} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300">
+                      <div key={`${item.productId}-${item.variationId}-${item.carStockId ?? ''}`} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300">
                         <div className="flex gap-4">
                           {/* Product Image */}
                           <div className="w-16 h-16 bg-slate-50 border border-slate-100 rounded-xl overflow-hidden shrink-0 flex items-center justify-center">
@@ -3190,6 +3565,9 @@ const B2BOrderManagement: React.FC = () => {
                                     <span className="text-[10px] text-slate-500 font-bold bg-slate-100 px-1.5 py-0.5 rounded">
                                       {item.variationName}
                                     </span>
+                                  )}
+                                  {item.carLabel && (
+                                    <span className="text-[10px] text-slate-700 font-bold bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1"><Car className="w-3 h-3" />{item.carLabel}</span>
                                   )}
                                   {item.sku && (
                                     <span className="text-[10px] text-slate-400 font-mono">SKU: {item.sku}</span>
@@ -3217,7 +3595,7 @@ const B2BOrderManagement: React.FC = () => {
                                 )}
                               </div>
                               <button
-                                onClick={() => removeFromCart(item.productId, item.variationId)}
+                                onClick={() => removeFromCart(item.productId, item.variationId, false, item.carStockId ?? null)}
                                 className="text-slate-300 hover:text-rose-500 transition-colors shrink-0"
                               >
                                 <XCircle className="w-5 h-5" />
@@ -3231,7 +3609,7 @@ const B2BOrderManagement: React.FC = () => {
                               <QuantityStepper
                                 value={item.quantity}
                                 max={stock !== undefined ? Math.max(stock, item.quantity) : undefined}
-                                onChange={(v) => updateQuantity(item.productId, item.variationId, stock !== undefined && v > item.quantity ? Math.min(v, stock) : v, true)}
+                                onChange={(v) => updateQuantity(item.productId, item.variationId, stock !== undefined && v > item.quantity ? Math.min(v, stock) : v, true, item.carStockId ?? null)}
                               />
                             </div>
                           </div>
@@ -3289,14 +3667,16 @@ const B2BOrderManagement: React.FC = () => {
           const base = isOrders ? baseFilteredOrders : baseFilteredIncoming;
           const counts = {
             all: base.length,
-            active: base.filter((o: any) => o.status === 'processing' || o.status === 'shipped').length,
+            active: base.filter((o: any) => o.status === 'processing').length,
+            shipped: base.filter((o: any) => o.status === 'shipped').length,
             onhold: base.filter((o: any) => o.status === 'pending').length,
             completed: base.filter((o: any) => o.status === 'delivered' || o.status === 'received').length,
             declined: base.filter((o: any) => o.status === 'cancelled').length,
           };
-          const options: { key: 'all' | 'active' | 'onhold' | 'completed' | 'declined'; label: string; color: string; dot: string }[] = [
+          const options: { key: 'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined'; label: string; color: string; dot: string }[] = [
             { key: 'all',       label: 'All Orders',       color: 'bg-orange-50 border-orange-200 hover:border-orange-400 text-orange-700', dot: 'bg-orange-400' },
             { key: 'active',    label: 'Active',           color: 'bg-blue-50 border-blue-200 hover:border-blue-400 text-blue-700',         dot: 'bg-blue-500' },
+            { key: 'shipped',   label: 'Shipped',          color: 'bg-indigo-50 border-indigo-200 hover:border-indigo-400 text-indigo-700', dot: 'bg-indigo-500' },
             { key: 'onhold',    label: 'On Hold',          color: 'bg-amber-50 border-amber-200 hover:border-amber-400 text-amber-700',     dot: 'bg-amber-400' },
             { key: 'completed', label: 'Completed',        color: 'bg-emerald-50 border-emerald-200 hover:border-emerald-400 text-emerald-700', dot: 'bg-emerald-500' },
             { key: 'declined',  label: 'Declined',         color: 'bg-rose-50 border-rose-200 hover:border-rose-400 text-rose-700',         dot: 'bg-rose-500' },
@@ -3339,7 +3719,7 @@ const B2BOrderManagement: React.FC = () => {
                       </button>
                     ))}
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-4 leading-relaxed">Includes order ID, docket number, status, items, quantities, prices, shipping address, notes, decline reason and more.</p>
+                  <p className="text-[10px] text-slate-400 mt-4 leading-relaxed">Includes order ID, docket number, status, items, quantities, shipping address, notes, decline reason and more.</p>
                 </div>
               </div>
             </div>
@@ -3381,7 +3761,8 @@ const B2BOrderManagement: React.FC = () => {
                 options={ORDER_FILTER_OPTIONS}
                 counts={{
                   all: baseFilteredOrders.length,
-                  active: baseFilteredOrders.filter(o => o.status === 'processing' || o.status === 'shipped').length,
+                  active: baseFilteredOrders.filter(o => o.status === 'processing').length,
+                  shipped: baseFilteredOrders.filter(o => o.status === 'shipped').length,
                   onhold: baseFilteredOrders.filter(o => o.status === 'pending').length,
                   completed: baseFilteredOrders.filter(o => o.status === 'delivered' || o.status === 'received').length,
                   declined: baseFilteredOrders.filter(o => o.status === 'cancelled').length,
@@ -3393,7 +3774,8 @@ const B2BOrderManagement: React.FC = () => {
               {/* Desktop pill strip */}
               <div className="hidden sm:flex items-center gap-1.5 mb-3 bg-slate-50 rounded-2xl p-1 border border-slate-100 overflow-x-auto no-scrollbar">
                 <button onClick={() => setOrderFilter('all')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'all' ? 'bg-orange-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>All ({baseFilteredOrders.length})</button>
-                <button onClick={() => setOrderFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredOrders.filter(o => o.status === 'processing' || o.status === 'shipped').length})</button>
+                <button onClick={() => setOrderFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredOrders.filter(o => o.status === 'processing').length})</button>
+                <button onClick={() => setOrderFilter('shipped')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'shipped' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Shipped ({baseFilteredOrders.filter(o => o.status === 'shipped').length})</button>
                 <button onClick={() => setOrderFilter('onhold')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'onhold' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>On Hold ({baseFilteredOrders.filter(o => o.status === 'pending').length})</button>
                 <button onClick={() => setOrderFilter('completed')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'completed' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Completed ({baseFilteredOrders.filter(o => o.status === 'delivered' || o.status === 'received').length})</button>
                 <button onClick={() => setOrderFilter('declined')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'declined' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Declined ({baseFilteredOrders.filter(o => o.status === 'cancelled').length})</button>
@@ -3481,7 +3863,7 @@ const B2BOrderManagement: React.FC = () => {
               ) : orderList.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400 bg-white border border-slate-100 rounded-2xl shadow-sm">
                   <ClipboardList className="w-16 h-16 mb-4 opacity-30" />
-                  <p className="font-bold text-lg text-slate-600">{orderFilter === 'active' ? 'No active orders' : orderFilter === 'onhold' ? 'No orders on hold' : orderFilter === 'completed' ? 'No completed orders' : orderFilter === 'declined' ? 'No declined orders' : 'No orders yet'}</p>
+                  <p className="font-bold text-lg text-slate-600">{orderFilter === 'active' ? 'No active orders' : orderFilter === 'shipped' ? 'No shipped orders' : orderFilter === 'onhold' ? 'No orders on hold' : orderFilter === 'completed' ? 'No completed orders' : orderFilter === 'declined' ? 'No declined orders' : 'No orders yet'}</p>
                   <p className="text-sm mt-1">{orderFilter === 'all' && 'Place your first order from the Products tab.'}</p>
                 </div>
               ) : (
@@ -3788,6 +4170,7 @@ const B2BOrderManagement: React.FC = () => {
                                        && (
                                         <p className="text-[10px] text-slate-400 font-bold mt-0.5">{item.variation_name}</p>
                                       )}
+                                      {item.car_label && <p className="text-[10px] text-slate-600 font-bold mt-0.5">{item.car_label}</p>}
                                       {Number(item.needs_customization) === 1 && (
   <p className="text-[10px] text-blue-600 font-bold mt-1">
     Need Customization
@@ -3877,7 +4260,8 @@ const B2BOrderManagement: React.FC = () => {
                 options={ORDER_FILTER_OPTIONS}
                 counts={{
                   all: baseFilteredIncoming.length,
-                  active: baseFilteredIncoming.filter((o: any) => o.status === 'processing' || o.status === 'shipped').length,
+                  active: baseFilteredIncoming.filter((o: any) => o.status === 'processing').length,
+                  shipped: baseFilteredIncoming.filter((o: any) => o.status === 'shipped').length,
                   onhold: baseFilteredIncoming.filter((o: any) => o.status === 'pending').length,
                   completed: baseFilteredIncoming.filter((o: any) => o.status === 'delivered' || o.status === 'received').length,
                   declined: baseFilteredIncoming.filter((o: any) => o.status === 'cancelled').length,
@@ -3889,7 +4273,8 @@ const B2BOrderManagement: React.FC = () => {
               {/* Desktop pill strip */}
               <div className="hidden sm:flex items-center gap-1.5 mb-3 bg-slate-50 rounded-2xl p-1 border border-slate-100 overflow-x-auto no-scrollbar">
                 <button onClick={() => setIncomingFilter('all')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'all' ? 'bg-orange-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>All ({baseFilteredIncoming.length})</button>
-                <button onClick={() => setIncomingFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredIncoming.filter((o: any) => o.status === 'processing' || o.status === 'shipped').length})</button>
+                <button onClick={() => setIncomingFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredIncoming.filter((o: any) => o.status === 'processing').length})</button>
+                <button onClick={() => setIncomingFilter('shipped')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'shipped' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Shipped ({baseFilteredIncoming.filter((o: any) => o.status === 'shipped').length})</button>
                 <button onClick={() => setIncomingFilter('onhold')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'onhold' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>On Hold ({baseFilteredIncoming.filter((o: any) => o.status === 'pending').length})</button>
                 <button onClick={() => setIncomingFilter('completed')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'completed' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Completed ({baseFilteredIncoming.filter((o: any) => o.status === 'delivered' || o.status === 'received').length})</button>
                 <button onClick={() => setIncomingFilter('declined')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'declined' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Declined ({baseFilteredIncoming.filter((o: any) => o.status === 'cancelled').length})</button>
@@ -4099,7 +4484,7 @@ const B2BOrderManagement: React.FC = () => {
               ) : filteredIncoming.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400 bg-white border border-slate-100 rounded-2xl shadow-sm px-6">
                   <ClipboardList className="w-16 h-16 mb-4 opacity-30" />
-                  <p className="font-bold text-lg text-slate-600 text-center">{incomingFilter === 'active' ? 'No active orders' : incomingFilter === 'onhold' ? 'No orders on hold' : incomingFilter === 'completed' ? 'No completed orders' : incomingFilter === 'declined' ? 'No declined orders' : 'No incoming orders yet'}</p>
+                  <p className="font-bold text-lg text-slate-600 text-center">{incomingFilter === 'active' ? 'No active orders' : incomingFilter === 'shipped' ? 'No shipped orders' : incomingFilter === 'onhold' ? 'No orders on hold' : incomingFilter === 'completed' ? 'No completed orders' : incomingFilter === 'declined' ? 'No declined orders' : 'No incoming orders yet'}</p>
                   <p className="text-sm mt-1 text-center max-w-[220px]">Orders submitted by franchise stores will appear here.</p>
                 </div>
               ) : (
@@ -4402,6 +4787,7 @@ const B2BOrderManagement: React.FC = () => {
                                       {hasMeaningfulOrderText(item.variation_name) && (
                                         <p className="text-[10px] text-slate-400 font-bold mt-0.5">{item.variation_name}</p>
                                       )}
+                                      {item.car_label && <p className="text-[10px] text-slate-600 font-bold mt-0.5">{item.car_label}</p>}
                                       {Number(item.needs_customization) === 1 && (
   <p className="text-[10px] text-blue-600 font-bold mt-1">
     Need Customization
@@ -4483,6 +4869,7 @@ const B2BOrderManagement: React.FC = () => {
                           {item.variationName && (
                             <p className="text-xs text-slate-500 mt-0.5">{item.variationName}</p>
                           )}
+                          {item.carLabel && <p className="text-xs font-semibold text-slate-700 mt-0.5">{item.carLabel}</p>}
                         </div>
                         <p className="text-xs text-slate-600 font-bold">Qty: {item.quantity}</p>
                       </div>
@@ -4646,6 +5033,158 @@ const B2BOrderManagement: React.FC = () => {
 
       {/* Product Detail Dialog: photos, every option with its own Add / − n +,
           and what this product adds to the cart. */}
+      <Dialog open={!!carChooserId} onOpenChange={o => { if (!o) setCarChooserId(null); }}>
+        <DialogContent className="flex h-[100dvh] max-h-[100dvh] w-full max-w-lg flex-col gap-0 overflow-hidden p-0 z-[9999] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl">
+          {(() => {
+            const product = carChooserId ? grouped[carChooserId] : null;
+            if (!product) return <DialogTitle className="sr-only">Choose car</DialogTitle>;
+            const options = product.variations.filter((v: any) => hasMeaningfulOrderText(v.variation_name) && String(v.variation_name).toLowerCase() !== 'default');
+            const optionId = chooserOption ?? (product.variations[0]?.variation_id ?? null);
+            const mine = (r: any) => Boolean(shopCar && fitsVehicle([carRowFit(r)], shopCar));
+            const rows = carRowsOf(product.product_id)
+              .filter((r: any) => options.length < 2 || (r.variation_id ?? null) === optionId)
+              .sort((a: any, b: any) => Number(mine(b)) - Number(mine(a)) || Number(b.stock_quantity > 0) - Number(a.stock_quantity > 0));
+            const inCart = carRowsOf(product.product_id).reduce((n: number, r: any) => n + carQtyOf(r.id), 0);
+            const cover = photosOf(product)[0];
+            return (
+              <>
+                <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-slate-100 px-5 py-4 pr-12 text-left">
+                  <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
+                    {cover ? <img src={cover} alt="" className="h-full w-full object-contain p-1" /> : <Package className="h-6 w-6 text-slate-300" />}
+                  </span>
+                  <div className="min-w-0">
+                    <DialogTitle className="truncate text-lg font-black">{product.product_name}</DialogTitle>
+                    <DialogDescription className="text-xs">{shopCar ? `Your ${carLabel(shopCar)} first` : 'Pick the car, then how many'}</DialogDescription>
+                  </div>
+                </DialogHeader>
+                <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+                  {options.length > 1 && (
+                    <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1" role="tablist" aria-label="Options">
+                      {options.map((v: any) => {
+                        const on = (v.variation_id ?? null) === optionId;
+                        return (
+                          <button key={v.variation_id} type="button" role="tab" aria-selected={on} onClick={() => setChooserOption(v.variation_id ?? null)}
+                            className={cn('min-h-[40px] shrink-0 rounded-full border px-4 text-sm font-bold', on ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 text-slate-700')}>
+                            {v.variation_name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!rows.length && <p className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No car listed{options.length > 1 ? ' for this option' : ''}.</p>}
+                  {rows.map((r: any) => {
+                    const qty = carQtyOf(r.id);
+                    const stock = Number(r.stock_quantity) || 0;
+                    const photo = r.images?.[0] ?? cover;
+                    return (
+                      <div key={r.id} className={cn('flex items-center gap-3 rounded-2xl border p-3', qty > 0 ? 'border-orange-300 bg-orange-50/60' : mine(r) ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-white', stock <= 0 && !qty && 'opacity-60')}>
+                        <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white">
+                          {photo ? <img src={photo} alt="" className="h-full w-full object-contain p-0.5" /> : <Car className="h-5 w-5 text-slate-300" />}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-bold text-slate-900">{r.make} {r.model || '· All models'}</p>
+                          <p className="text-xs text-slate-500">{r.from && r.to ? (r.from === r.to ? r.from : `${r.from}–${r.to}`) : r.from ? `${r.from} onwards` : r.to ? `Up to ${r.to}` : 'Any year'}</p>
+                          <p className={cn('mt-0.5 text-xs font-bold', stock > 0 ? 'text-emerald-700' : 'text-slate-400')}>
+                            {stock > 0 ? `${stock} in stock` : 'Out of stock'}{mine(r) ? ' · Your car' : ''}
+                          </p>
+                        </div>
+                        {qty > 0 ? (
+                          <QuantityStepper value={qty} max={Math.max(stock, qty)} onChange={val => setCarQty(product, r, Math.min(val, Math.max(stock, qty)))} />
+                        ) : stock > 0 ? (
+                          <Button type="button" onClick={() => setCarQty(product, r, 1)} className="h-11 shrink-0 rounded-xl bg-orange-500 px-5 font-black text-white hover:bg-orange-600">
+                            <Plus className="mr-1 h-4 w-4" />Add
+                          </Button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+                <DialogFooter className="border-t border-slate-100 px-4 py-3">
+                  <Button className="h-12 w-full rounded-xl bg-slate-900 font-bold text-white hover:bg-slate-800" onClick={() => setCarChooserId(null)}>
+                    {inCart > 0 ? `Done · ${inCart} in cart` : 'Done'}
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={carPickerOpen} onOpenChange={setCarPickerOpen}>
+        <DialogContent className="flex h-[100dvh] max-h-[100dvh] w-full max-w-md flex-col gap-0 overflow-hidden p-0 z-[9999] sm:h-auto sm:max-h-[85vh] sm:rounded-2xl">
+          {(() => {
+            const makes = [...carMakes.keys()];
+            const models = carMakes.get(carDraft.make) ?? [];
+            const q = carSearch.trim().toLowerCase();
+            const apply = (c: ShopCar) => { setShopCar(c); setCarPickerOpen(false); };
+            const tile = 'min-h-[52px] rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 hover:border-orange-400 hover:bg-orange-50';
+            const steps = ['make', 'model', 'year'] as const;
+            return (
+              <>
+                <DialogHeader className="space-y-2 border-b border-slate-100 px-5 py-4 pr-12 text-left">
+                  <div className="flex items-center gap-2">
+                    {carStep !== 'make' && (
+                      <button type="button" aria-label="Back" onClick={() => setCarStep(carStep === 'year' && models.length ? 'model' : 'make')}
+                        className="-ml-2 flex h-10 w-10 items-center justify-center rounded-full hover:bg-slate-100"><ArrowLeft className="h-5 w-5" /></button>
+                    )}
+                    <DialogTitle className="flex items-center gap-2 text-lg font-black">
+                      {carStep === 'make' ? <><Car className="h-5 w-5" /> Which car?</> : [carDraft.make, carStep === 'year' ? carDraft.model : ''].filter(Boolean).join(' ')}
+                    </DialogTitle>
+                  </div>
+                  <DialogDescription className="text-xs">{carStep === 'make' ? 'Pick the make' : carStep === 'model' ? 'Pick the model' : 'Pick the year'}</DialogDescription>
+                  <div className="flex gap-1.5" aria-hidden>
+                    {steps.map(s => <span key={s} className={cn('h-1.5 flex-1 rounded-full', steps.indexOf(s) <= steps.indexOf(carStep) ? 'bg-orange-500' : 'bg-slate-200')} />)}
+                  </div>
+                </DialogHeader>
+                <div className="flex-1 space-y-3 overflow-y-auto p-4">
+                  {carStep === 'make' && <>
+                    {makes.length > 8 && (
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <Input value={carSearch} onChange={e => setCarSearch(e.target.value)} placeholder="Search make" aria-label="Search make" className="h-12 rounded-xl pl-9 text-base" />
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      {makes.filter(m => !q || m.toLowerCase().includes(q)).map(m => (
+                        <button key={m} type="button" onClick={() => { setCarDraft({ make: m, model: '', year: null }); setCarSearch(''); setCarStep((carMakes.get(m) ?? []).length ? 'model' : 'year'); }}
+                          className={cn(tile, carDraft.make === m && 'border-orange-500 bg-orange-50')}>{m}</button>
+                      ))}
+                    </div>
+                  </>}
+                  {carStep === 'model' && <>
+                    <button type="button" onClick={() => { setCarDraft({ ...carDraft, model: '' }); setCarStep('year'); }} className={cn(tile, 'w-full')}>Any {carDraft.make}</button>
+                    <div className="grid grid-cols-2 gap-2">
+                      {models.map(m => (
+                        <button key={m} type="button" onClick={() => { setCarDraft({ ...carDraft, model: m }); setCarStep('year'); }}
+                          className={cn(tile, carDraft.model === m && 'border-orange-500 bg-orange-50')}>{m}</button>
+                      ))}
+                    </div>
+                  </>}
+                  {carStep === 'year' && <>
+                    <button type="button" onClick={() => apply({ ...carDraft, year: null })} className={cn(tile, 'w-full')}>Any year</button>
+                    <div className="grid grid-cols-3 gap-2">
+                      {carYears.map(y => (
+                        <button key={y} type="button" onClick={() => apply({ ...carDraft, year: y })}
+                          className={cn(tile, 'tabular-nums', carDraft.year === y && 'border-orange-500 bg-orange-50')}>{y}</button>
+                      ))}
+                    </div>
+                  </>}
+                </div>
+                {shopCar && (
+                  <DialogFooter className="border-t border-slate-100 px-4 py-3">
+                    <Button variant="outline" className="h-12 w-full rounded-xl" onClick={() => { setShopCar(null); setCarPickerOpen(false); }}>
+                      Clear {carLabel(shopCar)}
+                    </Button>
+                  </DialogFooter>
+                )}
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      <DistributorProductDialog productId={listingProductId} onClose={() => setListingProductId(null)} onSaved={fetchOwnInventory} />
+
       <Dialog open={!!detailProductId} onOpenChange={(open) => { if (!open) setDetailProductId(null); }}>
         <DialogContent
           className="max-w-5xl w-[96vw] max-h-[92vh] p-0 sm:p-0 gap-0 rounded-[28px] overflow-hidden border-none shadow-2xl z-[9999]"
@@ -4656,14 +5195,14 @@ const B2BOrderManagement: React.FC = () => {
             const product = detailProductId ? grouped[detailProductId] : null;
             if (!product) return null;
 
-            const images: string[] = productImages[product.product_id] || [];
+            const images: string[] = carPhotosFirst(product, photosOf(product));
             const imageAt = images.length ? ((detailImageIndex % images.length) + images.length) % images.length : 0;
             const activeImage = images[imageAt];
             const categoryName = product.category_id ? categoryMap[product.category_id] : null;
             const variations: any[] = product.variations;
             const single = variations.length === 1 && (!hasMeaningfulOrderText(variations[0]?.variation_name) || String(variations[0]?.variation_name).trim().toLowerCase() === 'default');
             const inCartUnits = variations.reduce((n: number, v: any) => n + cartQtyOf(v.product_id, v.variation_id), 0);
-            const totalStock = variations.reduce((n: number, v: any) => n + Math.max(0, Number(v.stock_quantity) || 0), 0);
+            const totalStock = stockOfProduct(product);
             const skus = variations.map((v: any) => v.sku).filter(Boolean);
             /* The option the bottom bar adds: the one tapped, else the first. */
             const picked = variations.find((v: any) => v.variation_id === detailVariationId) || variations[0];
@@ -4736,8 +5275,43 @@ const B2BOrderManagement: React.FC = () => {
                       {skus.length === 1 && <p className="text-[11px] text-slate-400 font-mono">SKU: {skus[0]}</p>}
                     </DialogHeader>
 
+                    <Button type="button" variant="outline" onClick={() => shareOnWhatsApp(product)}
+                      className="h-11 rounded-xl border-emerald-300 bg-emerald-50 font-bold text-emerald-800 hover:bg-emerald-100">
+                      <Share2 className="w-4 h-4 mr-2" />Share on WhatsApp
+                    </Button>
+
+                    {shopCar && product.fitment.length > 0 && (
+                      <p className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                        <CheckCircle2 className="w-4 h-4" /> Fits your {carLabel(shopCar)}
+                      </p>
+                    )}
+
+                    {product.fitment.length > 0 && (
+                      <section>
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2">Fits</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {product.fitment.map((f: Fitment, i: number) => (
+                            <span key={i} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{fitmentText(f)}</span>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    {/* Per car: every car, the chosen car's first, each with its own stock. */}
+                    {isCarProduct(product) && (
+                      <section>
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2.5">
+                          {shopCar ? `For your ${carLabel(shopCar)}` : 'Choose the car'}
+                        </h4>
+                        <div className="space-y-1.5">
+                          {[...carRowsForCar(product.product_id), ...(shopCar ? carRowsOf(product.product_id).filter((r: any) => !carRowsForCar(product.product_id).includes(r)) : [])]
+                            .map((r: any) => renderCarLine(product, r))}
+                        </div>
+                      </section>
+                    )}
+
                     {/* Options: tap one to choose it; the bar below adds it. */}
-                    {!single && (
+                    {!single && !isCarProduct(product) && (
                       <section>
                         <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2.5">
                           Choose option ({variations.length})
@@ -4796,8 +5370,8 @@ const B2BOrderManagement: React.FC = () => {
                     )}
                   </div>
 
-                  {/* The chosen option: its stock, Add → − n +, and the cart */}
-                  {isUserFranchise && picked && (
+                  {/* The chosen option: its stock, Add → − n +, and the cart (per car: the lines above) */}
+                  {isUserFranchise && picked && !isCarProduct(product) && (
                     <div className="sticky bottom-0 border-t border-slate-100 bg-white/95 backdrop-blur px-5 sm:px-8 py-4 flex items-center justify-between gap-3 shrink-0">
                       <div className="min-w-0">
                         <p className={cn('text-sm font-black flex items-center gap-1.5', pickedStock > 0 ? 'text-emerald-600' : 'text-rose-500')}>

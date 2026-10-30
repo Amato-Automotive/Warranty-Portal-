@@ -421,6 +421,39 @@ async function runMigrations() {
     // achievement per period, with every change kept.
     await addColumn('schemes', 'settings', 'settings JSON NULL');
     await addColumn('scheme_participants', 'terms', 'terms JSON NULL');
+    /* What a distributor adds to a product it sells: the cars it fits, and its own photos. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS distributor_product_info (
+         distributor_id VARCHAR(36) NOT NULL,
+         product_id VARCHAR(36) NOT NULL,
+         fitment JSON NULL,
+         images JSON NULL,
+         own_images TINYINT(1) NOT NULL DEFAULT 0,
+         updated_by VARCHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         PRIMARY KEY (distributor_id, product_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* 'car': the distributor holds this product's stock per car (distributor_car_stock), not per option alone. */
+    const [dpiMode]: any = await pool.query("SHOW COLUMNS FROM distributor_product_info LIKE 'stock_mode'");
+    if (!dpiMode.length) await pool.query("ALTER TABLE distributor_product_info ADD COLUMN stock_mode ENUM('product','car') NOT NULL DEFAULT 'product'");
+    /* A distributor's stock of one product option for one car (a blank model = every model), with its own photos. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS distributor_car_stock (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         distributor_id VARCHAR(36) NOT NULL,
+         product_id VARCHAR(36) NOT NULL,
+         variation_id VARCHAR(36) NULL,
+         make VARCHAR(60) NOT NULL,
+         model VARCHAR(60) NOT NULL DEFAULT '',
+         year_from SMALLINT NULL,
+         year_to SMALLINT NULL,
+         stock_quantity INT NOT NULL DEFAULT 0,
+         images JSON NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         KEY idx_dcs_product (distributor_id, product_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* An order line for a car: which car row its stock came from, and the car in words. */
+    const [oiCar]: any = await pool.query("SHOW COLUMNS FROM store_order_items LIKE 'car_stock_id'");
+    if (!oiCar.length) await pool.query('ALTER TABLE store_order_items ADD COLUMN car_stock_id CHAR(36) NULL, ADD COLUMN car_label VARCHAR(160) NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_targets (
          scheme_id CHAR(36) NOT NULL,
          store_id VARCHAR(36) NOT NULL,

@@ -19,17 +19,26 @@ export interface CartItem {
   // server has to guess and may route to one that has no stock.
   distributorId?: string;
   distributorName?: string;
+  // For a product its distributor holds per car: the car row the stock comes from, and the car in words.
+  carStockId?: string | null;
+  carLabel?: string | null;
 }
+
+/** The same cart line: product, option and (for a per-car product) car. */
+const sameLine = (i: CartItem, productId: string, variationId: string | null, carStockId?: string | null) =>
+  i.productId === productId && i.variationId === variationId && (i.carStockId ?? null) === (carStockId ?? null);
 
 interface B2BCartContextType {
   cartItems: CartItem[];
   /* silent: no toast — for the order page's steppers, which change the cart on every tap. */
   addToCart: (item: Omit<CartItem, 'quantity'>, quantity?: number, silent?: boolean) => void;
-  removeFromCart: (productId: string, variationId: string | null, silent?: boolean) => void;
-  updateQuantity: (productId: string, variationId: string | null, quantity: number, silent?: boolean) => void;
-  updateCustomization: (productId: string, variationId: string | null, needsCustomization: boolean, customizationRemarks: string) => void;
+  removeFromCart: (productId: string, variationId: string | null, silent?: boolean, carStockId?: string | null) => void;
+  updateQuantity: (productId: string, variationId: string | null, quantity: number, silent?: boolean, carStockId?: string | null) => void;
+  updateCustomization: (productId: string, variationId: string | null, needsCustomization: boolean, customizationRemarks: string, carStockId?: string | null) => void;
   clearCart: () => void;
   distributorStock: any[];
+  /* Stock held per car: one row per distributor, product, option and car. */
+  carStock: any[];
   distributorName: string;
   loadingStock: boolean;
   refreshStock: () => Promise<void>;
@@ -54,6 +63,7 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const { toast } = useToast();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [distributorStock, setDistributorStock] = useState<any[]>([]);
+  const [carStock, setCarStock] = useState<any[]>([]);
   const [distributorName, setDistributorName] = useState<string>('');
   const [loadingStock, setLoadingStock] = useState<boolean>(false);
   const [productImages, setProductImages] = useState<Record<string, string[]>>({});
@@ -96,6 +106,7 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } else {
       setCartItems([]);
       setDistributorStock([]);
+      setCarStock([]);
       setDistributorName('');
       setProductImages({});
       setCategoryMap({});
@@ -124,6 +135,7 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (response.data.success) {
         const inventory = response.data.inventory || [];
         setDistributorStock(inventory);
+        setCarStock(response.data.carStock || []);
 
         // Carts persist in localStorage, so items added before the distributor
         // was tracked have no distributorId. Backfill from the catalogue, else
@@ -159,7 +171,7 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const addToCart = (item: Omit<CartItem, 'quantity'>, quantity = 1, silent = false) => {
     setCartItems((prevItems) => {
       const existingItemIndex = prevItems.findIndex(
-        (i) => i.productId === item.productId && i.variationId === item.variationId
+        (i) => sameLine(i, item.productId, item.variationId, item.carStockId)
       );
 
       if (existingItemIndex > -1) {
@@ -183,23 +195,23 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
   };
 
-  const removeFromCart = (productId: string, variationId: string | null, silent = false) => {
-    setCartItems((prev) => prev.filter((i) => !(i.productId === productId && i.variationId === variationId)));
+  const removeFromCart = (productId: string, variationId: string | null, silent = false, carStockId: string | null = null) => {
+    setCartItems((prev) => prev.filter((i) => !sameLine(i, productId, variationId, carStockId)));
     if (!silent) toast({
       title: 'Item Removed',
       description: 'Item removed from your order cart.',
     });
   };
 
-  const updateQuantity = (productId: string, variationId: string | null, quantity: number, silent = false) => {
+  const updateQuantity = (productId: string, variationId: string | null, quantity: number, silent = false, carStockId: string | null = null) => {
     if (quantity <= 0) {
-      removeFromCart(productId, variationId, silent);
+      removeFromCart(productId, variationId, silent, carStockId);
       return;
     }
 
     setCartItems((prev) =>
       prev.map((item) => {
-        if (item.productId === productId && item.variationId === variationId) {
+        if (sameLine(item, productId, variationId, carStockId)) {
           return { ...item, quantity };
         }
         return item;
@@ -211,11 +223,12 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
     productId: string,
     variationId: string | null,
     needsCustomization: boolean,
-    customizationRemarks: string
+    customizationRemarks: string,
+    carStockId: string | null = null
   ) => {
     setCartItems((prev) =>
       prev.map((item) => {
-        if (item.productId === productId && item.variationId === variationId) {
+        if (sameLine(item, productId, variationId, carStockId)) {
           return {
             ...item,
             needsCustomization,
@@ -256,6 +269,7 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Pin the distributor the item was browsed from so the server doesn't
         // re-derive it and land on a different one.
         distributorId: item.distributorId,
+        carStockId: item.carStockId ?? undefined,
       }));
 
       const response = await api.post('/orders', {
@@ -294,6 +308,7 @@ export const B2BCartProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateCustomization,
         clearCart,
         distributorStock,
+        carStock,
         distributorName,
         loadingStock,
         refreshStock,

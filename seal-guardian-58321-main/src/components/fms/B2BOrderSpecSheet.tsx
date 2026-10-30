@@ -154,6 +154,7 @@ export const B2BOrderSpecSheet = ({
                                             {hasMeaningfulOrderText(item.variation_name) && (
                                                 <p className="text-xs text-slate-400 truncate">{item.variation_name}</p>
                                             )}
+                                            {item.car_label && <p className="text-xs font-semibold text-slate-600 truncate">{item.car_label}</p>}
                                             {item.needs_customization && (
                                                 <p className="text-[10px] text-blue-600 font-black mt-0.5">✨ Custom Logo / Personalization</p>
                                             )}
