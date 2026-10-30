@@ -97,10 +97,17 @@ export type WarrantyCount = "approved" | "registered";
 export type WarrantyDate = "registered" | "purchase";
 export interface TargetStep { pct: number; amount?: number; reward?: string }
 export interface TargetVisibility { target: boolean; achieved: boolean; percent: boolean; steps: boolean; to_next: boolean }
+/** Counting in points (same as the server): each warranty is worth its series' points, times the store type's multiplier. */
+export type Measure = "warranties" | "points";
+export interface PointSeries { id: string; name: string; points: number; products: string[] }
+export interface StoreTier { id: string; name: string; times: number }
+export interface PointsRule { series: PointSeries[]; tiers: StoreTier[] }
 export interface SchemeSettings {
+    measure?: Measure; points?: PointsRule;
     run: RunMode; source: TargetSource; baseline_months: number; count: WarrantyCount; date_by: WarrantyDate; unit: string; period: TargetPeriod; benefit: BenefitKind; steps: TargetStep[]; show: TargetVisibility;
 }
 export const DEFAULT_SETTINGS: SchemeSettings = {
+    measure: "warranties", points: { series: [], tiers: [] },
     run: "entries", source: "manual", baseline_months: 3, count: "approved", date_by: "registered", unit: "sets", period: "month", benefit: "per_unit", steps: [],
     show: { target: true, achieved: true, percent: true, steps: true, to_next: false },
 };
@@ -128,6 +135,8 @@ export interface TargetStore {
     growth_pct: number | null; reward: string | null; stats: WarrantyStats | null;
     /* The average the growth was put on, and its value then. */
     basis: AverageBasis | null; basis_average: number | null;
+    /* Counted in points: its store type, that type's multiplier, and the target typed for every period. */
+    tier?: string | null; times?: number; target_points?: number | null;
     figures: Record<string, TargetFigures>;
 }
 export interface Period { key: string; label: string; months: string[]; from?: string; to?: string; days?: number }

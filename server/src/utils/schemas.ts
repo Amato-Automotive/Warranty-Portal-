@@ -57,6 +57,8 @@ export const registerSchema = z.object({
      * franchise had in fact typed correctly.
      */
     gstNumber: z.string().optional(),
+    /* The same trap: undeclared, the franchise's brand never reached the controller, which then refused it. */
+    brand: z.string().optional(),
     manpower: z.array(manpowerSchema).optional(),
 }).refine(
     data => {

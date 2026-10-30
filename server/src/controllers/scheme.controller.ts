@@ -12,7 +12,7 @@ import {
 import { correctEntry, type EntryEdit } from '../services/schemeCorrection.js';
 import {
     readSettings, settingsProblems, stepProblems, readSteps, periodsOf, targetResult, planTargetImport,
-    stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth,
+    stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth, pointsByProduct, roundPoints, tierOf,
     type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
 
@@ -338,13 +338,43 @@ const dateCol = (scheme: Scheme) => (scheme.settings.date_by === 'purchase' ? 'p
 
 type DayCount = { approved: number; pending: number; rejected: number };
 
+/** A warranty's product name, as the forms save it (seat covers: productName; others: product). */
+const PRODUCT_NAME = `LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(product_details, '$.productName')), JSON_UNQUOTE(JSON_EXTRACT(product_details, '$.product')), '')))`;
+
 /**
  * Warranties by store and day ("YYYY-MM-DD"): approved, waiting and rejected.
- * `null` means every store (for the list of franchises to add).
+ * On a scheme counted in points, each warranty adds its series' points
+ * instead of 1 (the store type's multiplier comes later). `null` means every
+ * store (for the list of franchises to add).
  */
-async function warrantyDaily(storeIds: string[] | null, col: 'created_at' | 'purchase_date') {
+async function warrantyDaily(storeIds: string[] | null, scheme: Scheme) {
+    const col = dateCol(scheme);
     const out = new Map<string, Record<string, DayCount>>();
     if (storeIds && !storeIds.length) return out;
+    if (scheme.settings.measure === 'points') {
+        const worth = pointsByProduct(scheme.settings.points);
+        const [rows]: any = await db.execute(
+            `SELECT vendor_details_id AS store_id, DATE_FORMAT(${col}, '%Y-%m-%d') AS d, ${PRODUCT_NAME} AS pn,
+                    SUM(status = 'validated') AS approved, SUM(status = 'rejected') AS rejected,
+                    SUM(status NOT IN ('validated', 'rejected')) AS pending
+               FROM warranty_registrations
+              WHERE vendor_details_id IS NOT NULL ${storeIds ? `AND vendor_details_id IN (${storeIds.map(() => '?').join(',')})` : ''}
+              GROUP BY vendor_details_id, d, pn`,
+            storeIds ?? []
+        );
+        for (const r of rows) {
+            const pts = worth.get(String(r.pn ?? '')) ?? 0;
+            if (!pts) continue;
+            const m = out.get(String(r.store_id)) ?? {};
+            const c = m[r.d] ?? { approved: 0, pending: 0, rejected: 0 };
+            c.approved = roundPoints(c.approved + pts * (Number(r.approved) || 0));
+            c.pending = roundPoints(c.pending + pts * (Number(r.pending) || 0));
+            c.rejected = roundPoints(c.rejected + pts * (Number(r.rejected) || 0));
+            m[r.d] = c;
+            out.set(String(r.store_id), m);
+        }
+        return out;
+    }
     const [rows]: any = await db.execute(
         `SELECT vendor_details_id AS store_id, DATE_FORMAT(${col}, '%Y-%m-%d') AS d,
                 SUM(status = 'validated') AS approved, SUM(status = 'rejected') AS rejected,
@@ -367,7 +397,7 @@ const countOf = (scheme: Scheme, c: DayCount) => c.approved + (scheme.settings.c
 
 /** A scheme's periods: its windows on a target scheme counted from warranties, else months/quarters/whole. */
 function periodsFor(scheme: Scheme): (Period & { from?: string; to?: string })[] {
-    return scheme.settings.period === 'window' ? windowPeriods(scheme.windows) : periodsFor(scheme);
+    return scheme.settings.period === 'window' ? windowPeriods(scheme.windows) : periodsOf(scheme.starts_on, scheme.ends_on, scheme.settings.period);
 }
 const inPeriod = (p: Period & { from?: string; to?: string }, d: string) => (p.from && p.to ? d >= p.from && d <= p.to : p.months.includes(d.slice(0, 7)));
 
@@ -426,7 +456,8 @@ async function schemeTargets(scheme: Scheme, custom: AverageBasis | null = null)
     const ids = members.map((m: any) => String(m.store_id));
     const stores = await storesById(ids);
     const fromWarranties = scheme.settings.source === 'warranties';
-    const daily = fromWarranties ? await warrantyDaily(ids, dateCol(scheme)) : new Map<string, Record<string, DayCount>>();
+    const inPoints = scheme.settings.measure === 'points';
+    const daily = fromWarranties ? await warrantyDaily(ids, scheme) : new Map<string, Record<string, DayCount>>();
     const registered = scheme.settings.count === 'registered';
     const byStore = new Map<string, any[]>();
     for (const r of rows) byStore.set(String(r.store_id), [...(byStore.get(String(r.store_id)) ?? []), r]);
@@ -437,6 +468,9 @@ async function schemeTargets(scheme: Scheme, custom: AverageBasis | null = null)
             const terms = json<StoreTerms>(m.terms, {});
             const { steps, benefit } = stepsFor(terms, scheme.settings);
             const days = daily.get(id) ?? {};
+            /* In points, the store's type multiplies everything it earns. */
+            const tier = inPoints ? tierOf(scheme.settings.points, terms.tier) : null;
+            const times = tier?.times ?? 1;
             const saved = new Map((byStore.get(id) ?? []).map((r: any) => [r.period, r]));
             const figures: Record<string, unknown> = {};
             for (const p of periods) {
@@ -445,10 +479,11 @@ async function schemeTargets(scheme: Scheme, custom: AverageBasis | null = null)
                 /* With warranties, achieved is counted live: those dated in the period (a window's days). */
                 let approved = 0, pending = 0;
                 for (const [d, c] of Object.entries(days)) if (inPeriod(p, d)) { approved += c.approved; pending += c.pending; }
-                const target = dec(r?.target);
-                const achieved = fromWarranties ? approved + (registered ? pending : 0) : dec(r?.achieved);
+                /* A points target typed once holds for every period, those added later too. */
+                const target = dec(r?.target) ?? (inPoints ? terms.target ?? null : null);
+                const achieved = fromWarranties ? roundPoints((approved + (registered ? pending : 0)) * times) : dec(r?.achieved);
                 figures[p.key] = {
-                    target, achieved, pending: fromWarranties && !registered ? pending : null,
+                    target, achieved, pending: fromWarranties && !registered ? roundPoints(pending * times) : null,
                     paid_at: r?.paid_at ?? null, updated_at: r?.updated_at ?? null,
                     history: json<TargetHistory[]>(r?.history, []),
                     result: targetResult(target, achieved, steps, benefit),
@@ -460,6 +495,7 @@ async function schemeTargets(scheme: Scheme, custom: AverageBasis | null = null)
                 own_steps: terms.steps?.length ? terms.steps : null, note: terms.note ?? null,
                 growth_pct: terms.growth_pct ?? null, reward: terms.reward ?? null,
                 basis: terms.basis ?? null, basis_average: terms.average ?? null,
+                tier: tier?.id ?? null, times, target_points: terms.target ?? null,
                 stats: fromWarranties ? warrantyStats(scheme, days, custom) : null,
                 joined_at: m.joined_at, figures,
             };
@@ -474,6 +510,39 @@ function currentPeriod(scheme: Scheme, periods: (Period & { from?: string; to?: 
     const today = istNow().slice(0, 10);
     const hit = [...periods].reverse().find(p => (p.from ? p.from <= today : (p.key.startsWith('Q') ? p.key.slice(1) : p.key) <= today.slice(0, 7)));
     return (hit ?? periods[0]).key;
+}
+
+/**
+ * A store's points: what each series is worth to it (its type's multiplier
+ * included), and for every period how many of each it registered and the
+ * points they made.
+ */
+async function storePoints(scheme: Scheme, storeId: string, periods: (Period & { from?: string; to?: string })[], times: number, tierId: string | undefined) {
+    const rule = scheme.settings.points;
+    const seriesOf = new Map<string, string>();
+    for (const x of rule.series) for (const prod of x.products) if (!seriesOf.has(prod.toLowerCase())) seriesOf.set(prod.toLowerCase(), x.id);
+    const [rows]: any = await db.execute(
+        `SELECT DATE_FORMAT(${dateCol(scheme)}, '%Y-%m-%d') AS d, ${PRODUCT_NAME} AS pn,
+                SUM(status = 'validated') AS approved, SUM(status NOT IN ('validated', 'rejected')) AS pending
+           FROM warranty_registrations WHERE vendor_details_id = ? GROUP BY d, pn`,
+        [storeId]
+    );
+    const registered = scheme.settings.count === 'registered';
+    const breakdown: Record<string, { name: string; count: number; points: number }[]> = {};
+    for (const p of periods) {
+        const n = new Map<string, number>();
+        for (const r of rows) {
+            const sid = seriesOf.get(String(r.pn ?? ''));
+            if (!sid || !r.d || !inPeriod(p, r.d)) continue;
+            n.set(sid, (n.get(sid) ?? 0) + (Number(r.approved) || 0) + (registered ? Number(r.pending) || 0 : 0));
+        }
+        breakdown[p.key] = rule.series.map(x => ({ name: x.name, count: n.get(x.id) ?? 0, points: roundPoints((n.get(x.id) ?? 0) * x.points * times) }));
+    }
+    return {
+        tier: tierOf(rule, tierId)?.name ?? null, times,
+        series: rule.series.map(x => ({ name: x.name, points: roundPoints(x.points * times) })),
+        breakdown,
+    };
 }
 
 /** One store's own targets on a target scheme, showing only what the scheme lets it see. */
@@ -502,6 +571,7 @@ async function storeTargets(scheme: Scheme, storeId: string) {
     });
     const nowKey = currentPeriod(scheme, all.periods);
     return {
+        points: scheme.settings.measure === 'points' ? await storePoints(scheme, storeId, all.periods, me?.times ?? 1, me?.tier ?? undefined) : null,
         unit: scheme.settings.unit, benefit, show,
         steps: show.steps ? steps : [],
         periods,
@@ -613,7 +683,7 @@ export class SchemeController {
             const t = await schemeTargets(scheme, custom);
             const on = new Set(t.stores.map((x: any) => x.store_id));
             const free = (await allFranchises()).filter((f: any) => !on.has(f.id));
-            const daily = scheme.settings.source === 'warranties' ? await warrantyDaily(null, dateCol(scheme)) : new Map<string, Record<string, DayCount>>();
+            const daily = scheme.settings.source === 'warranties' ? await warrantyDaily(null, scheme) : new Map<string, Record<string, DayCount>>();
             res.json({
                 success: true, ...t, settings: scheme.settings, current: currentPeriod(scheme, t.periods),
                 franchises: free.map((f: any) => {
@@ -653,7 +723,7 @@ export class SchemeController {
             let typed: Record<string, unknown> = req.body?.targets ?? {};
             if (growth !== null && scheme.settings.source === 'warranties') {
                 const basis = readBasis(req.body?.basis);
-                const average = averageFor(scheme, (await warrantyDaily([storeId], dateCol(scheme))).get(storeId) ?? {}, basis);
+                const average = averageFor(scheme, (await warrantyDaily([storeId], scheme)).get(storeId) ?? {}, basis);
                 Object.assign(terms, { basis, average });
                 typed = growthTargets(periodsFor(scheme), average, growth);
             }
@@ -683,7 +753,7 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || scheme.settings.run !== 'targets') return res.status(404).json({ error: 'Target scheme not found' });
             const storeId = String(req.query.store_id ?? '');
-            const daily = (await warrantyDaily([storeId], dateCol(scheme))).get(storeId) ?? {};
+            const daily = (await warrantyDaily([storeId], scheme)).get(storeId) ?? {};
             const custom = req.query.avg_from ? readBasis({ mode: 'custom', from: req.query.avg_from, to: req.query.avg_to }) : null;
             res.json({ success: true, stats: warrantyStats(scheme, daily, custom), periods: periodsFor(scheme) });
         } catch (error: any) {
@@ -707,7 +777,7 @@ export class SchemeController {
             const termsOf = new Map(members.map((m: any) => [String(m.store_id), json<StoreTerms>(m.terms, {})]));
             const periods = periodsFor(scheme);
             const basis = readBasis(req.body?.basis);
-            const daily = await warrantyDaily([...on], dateCol(scheme));
+            const daily = await warrantyDaily([...on], scheme);
             const changes: TargetChange[] = [];
             const updates: [string, StoreTerms][] = [];
             for (const x of list) {
@@ -725,6 +795,19 @@ export class SchemeController {
                             t.basis = basis; t.average = avg;
                             for (const [period, target] of Object.entries(growthTargets(periods, avg, g))) changes.push({ store_id: id, period, target });
                         }
+                    }
+                }
+                if ('tier' in (x ?? {})) {
+                    const tier = String(x.tier ?? '');
+                    if (scheme.settings.points.tiers.some(z => z.id === tier)) t.tier = tier; else delete t.tier;
+                }
+                if ('target' in (x ?? {}) && scheme.settings.measure === 'points') {
+                    if (x.target === '' || x.target === null) delete t.target;
+                    else {
+                        const n = Number(x.target);
+                        if (!Number.isFinite(n) || n <= 0 || n > 10_000_000) return res.status(400).json({ error: 'A target must be a number of points above 0' });
+                        t.target = roundPoints(n);
+                        for (const p of periods) changes.push({ store_id: id, period: p.key, target: t.target });
                     }
                 }
                 if ('reward' in (x ?? {})) {
@@ -1230,13 +1313,13 @@ export class SchemeController {
      */
     static async adminProducts(_req: Request, res: Response) {
         try {
-            const [warranty]: any = await db.execute('SELECT id, name, type FROM products ORDER BY name');
+            const [warranty]: any = await db.execute('SELECT id, name, type, brand FROM products ORDER BY name');
             const [catalogue]: any = await db.execute(
                 'SELECT id, name, brand, product_code FROM store_products WHERE is_active = 1 ORDER BY name'
             );
             res.json({
                 success: true,
-                warranty: warranty.map((p: any) => ({ id: `w:${p.id}`, name: String(p.name).trim(), group: p.type ? String(p.type).replace(/_/g, ' ') : null })),
+                warranty: warranty.map((p: any) => ({ id: `w:${p.id}`, name: String(p.name).trim(), group: p.type ? String(p.type).replace(/_/g, ' ') : null, brand: p.brand ?? null })),
                 catalogue: catalogue.map((p: any) => ({ id: `c:${p.id}`, name: String(p.name).trim(), group: p.brand || null, code: p.product_code || null })),
             });
         } catch (error: any) {

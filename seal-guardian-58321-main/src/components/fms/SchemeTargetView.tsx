@@ -19,7 +19,13 @@ export interface StorePeriod {
     /* The reward it is working towards; counted from warranties, those not yet approved. */
     reward?: string | null; pending?: number | null;
 }
-export interface StoreTargets { unit: string; benefit: BenefitKind; show: TargetVisibility; steps: TargetStep[]; periods: StorePeriod[]; now: StorePeriod | null }
+/** Counted in points: what each series is worth to this store, and per period what each earned. */
+export interface StorePoints {
+    tier: string | null; times: number;
+    series: { name: string; points: number }[];
+    breakdown: Record<string, { name: string; count: number; points: number }[]>;
+}
+export interface StoreTargets { points?: StorePoints | null; unit: string; benefit: BenefitKind; show: TargetVisibility; steps: TargetStep[]; periods: StorePeriod[]; now: StorePeriod | null }
 
 const num = (n: number | null | undefined) => (n === null || n === undefined ? "—" : n.toLocaleString("en-IN"));
 const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
@@ -135,6 +141,40 @@ export function SchemeTargetView({ scheme, targets, onBack, onRefresh }: {
                 </div>
             ) : (
                 <p className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">{t("Your target for this period isn't set yet. It shows here as soon as Autoform sets it.")}</p>
+            )}
+
+            {targets.points && p && (
+                <section className="space-y-3 rounded-3xl border border-slate-200 bg-white p-5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <h2 className="text-base font-extrabold text-slate-900">{t("Points")} · {p.label}</h2>
+                        {targets.points.tier && <span className="text-xs font-semibold text-slate-500">{targets.points.tier}{targets.points.times !== 1 ? ` ×${targets.points.times}` : ""}</span>}
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full min-w-[320px] text-sm">
+                            <thead>
+                                <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                                    <th className="py-2 font-bold">{t("Series")}</th>
+                                    <th className="py-2 text-right font-bold">{t("Points each")}</th>
+                                    <th className="py-2 text-right font-bold">{t("Warranties")}</th>
+                                    <th className="py-2 text-right font-bold">{t("Points")}</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {targets.points.series.map((x, i) => {
+                                    const got = targets.points!.breakdown[p.key]?.[i];
+                                    return (
+                                        <tr key={x.name}>
+                                            <td className="py-2.5 font-semibold text-slate-900">{x.name}</td>
+                                            <td className="py-2.5 text-right tabular-nums text-slate-700">{num(x.points)}</td>
+                                            <td className="py-2.5 text-right tabular-nums text-slate-700">{num(got?.count ?? 0)}</td>
+                                            <td className="py-2.5 text-right font-bold tabular-nums text-slate-900">{num(got?.points ?? 0)}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
             )}
 
             {targets.periods.length > 1 && (

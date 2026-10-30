@@ -12,6 +12,7 @@ import {
     BASIS_LABEL, averageOn, formatMonth, growthTarget,
     type AverageBasis, type Averages, type Period, type Scheme, type SchemeSettings, type TargetFigures, type TargetStore,
 } from "@/lib/schemes";
+import { MonthTargets, hasMonthlyTargets } from "./MonthTargets";
 
 /**
  * A target scheme ("More You Sell, Less It Costs") for the admin, as plain
@@ -107,6 +108,8 @@ export function TargetsTab({ scheme, refreshKey, onEditDetails, onChanged }: {
     const [basis, setBasis] = useState<AverageBasis>({ mode: "m3" });
     const [months, setMonths] = useState<TargetStore | null>(null);
     const [removing, setRemoving] = useState<TargetStore | null>(null);
+    /* Step 3: one target for every month, or a target for each month. Unset = as the saved targets are. */
+    const [monthly, setMonthly] = useState<boolean | null>(null);
     const chosen = useRef(false);
 
     const load = useCallback(() => api.get(`/schemes/admin/${scheme.id}/targets`, {
@@ -125,13 +128,29 @@ export function TargetsTab({ scheme, refreshKey, onEditDetails, onChanged }: {
     const has = data.stores.length > 0;
     const at = view === "pick" ? 2 : view === "targets" ? 3 : 4;
     const go = (n: 1 | 2 | 3 | 4) => (n === 1 ? onEditDetails?.() : setView(n === 2 ? "pick" : n === 3 ? "targets" : "results"));
+    const byMonth = data.periods.length > 1 && (monthly ?? hasMonthlyTargets(data));
+    const saved = async (started: boolean) => { await load(); onChanged?.(); if (started) setView("results"); };
 
     return (
         <div className="space-y-5">
             <Stepper at={at} onGo={go} canGo={[1, 2, ...(has ? [3] : []), ...(has && scheme.status !== "draft" ? [4] : [])]} />
             {view === "pick" && <PickView scheme={scheme} data={data} basis={basis} setBasis={setBasis} onBack={() => onEditDetails?.()}
                 onDone={async () => { await load(); setView("targets"); }} />}
-            {view === "targets" && <TargetsView scheme={scheme} data={data} basis={basis} setBasis={setBasis} onMonths={setMonths} onRemove={setRemoving}
+            {view === "targets" && data.periods.length > 1 && (
+                <div className="inline-flex rounded-xl border border-slate-300 bg-white p-1" role="group" aria-label="Targets">
+                    {([[false, "Same every month"], [true, "Month by month"]] as const).map(([on, label]) => (
+                        <button key={label} type="button" aria-pressed={byMonth === on} onClick={() => setMonthly(on)}
+                            className={cn("h-10 rounded-lg px-4 text-sm font-semibold", byMonth === on ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100")}>
+                            {label}
+                        </button>
+                    ))}
+                </div>
+            )}
+            {view === "targets" && byMonth && <MonthTargets scheme={scheme} data={data} basis={basis} onMonths={setMonths} onRemove={setRemoving}
+                onBack={() => setView("pick")} onSaved={saved} />}
+            {view === "targets" && !byMonth && data.settings.measure === "points" && <PointsTargetsView scheme={scheme} data={data} basis={basis} setBasis={setBasis} onMonths={setMonths} onRemove={setRemoving}
+                onBack={() => setView("pick")} onSaved={async started => { await load(); onChanged?.(); if (started) setView("results"); }} />}
+            {view === "targets" && !byMonth && data.settings.measure !== "points" && <TargetsView scheme={scheme} data={data} basis={basis} setBasis={setBasis} onMonths={setMonths} onRemove={setRemoving}
                 onBack={() => setView("pick")} onSaved={async started => { await load(); onChanged?.(); if (started) setView("results"); }} />}
             {view === "results" && <ResultsView scheme={scheme} data={data} onMonths={setMonths} onReload={load}
                 onEdit={() => setView("targets")} onAdd={() => setView("pick")} />}
@@ -179,7 +198,7 @@ function PickView({ scheme, data, basis, setBasis, onBack, onDone }: {
         <div className="space-y-4">
             <div>
                 <h2 className="text-2xl font-extrabold text-slate-900">Which franchises are in it?</h2>
-                <p className="mt-1 text-sm text-slate-600">Tick the stores. The number next to each is how many warranties it does in a month, so you can decide.
+                <p className="mt-1 text-sm text-slate-600">Tick the stores. The number next to each is how many {data.settings.measure === "points" ? "points (×1)" : "warranties"} it does in a month, so you can decide.
                     {data.stores.length > 0 && <> <b>{data.stores.length}</b> already in this scheme.</>}</p>
             </div>
             <div className="flex flex-wrap items-end gap-2">
@@ -360,6 +379,128 @@ function TargetsView({ scheme, data, basis, setBasis, onMonths, onRemove, onBack
     );
 }
 
+/* ─── Step 3, counted in points: store type, target and reward ───────────── */
+
+type PointTerms = { tier?: string; target?: string; reward?: string };
+
+function PointsTargetsView({ scheme, data, basis, setBasis, onMonths, onRemove, onBack, onSaved }: {
+    scheme: Scheme; data: Data; basis: AverageBasis; setBasis: (b: AverageBasis) => void;
+    onMonths: (s: TargetStore) => void; onRemove: (s: TargetStore) => void; onBack: () => void; onSaved: (started: boolean) => Promise<void>;
+}) {
+    const { toast } = useToast();
+    const tiers = data.settings.points?.tiers ?? [];
+    const [terms, setTerms] = useState<Record<string, PointTerms>>({});
+    const [all, setAll] = useState<PointTerms>({ tier: "", target: "", reward: "" });
+    const [reason, setReason] = useState("");
+    const [busy, setBusy] = useState<"save" | "start" | null>(null);
+    const draft = scheme.status === "draft";
+    const first = data.periods[0];
+
+    const savedOf = (s: TargetStore, k: keyof PointTerms) => String((k === "target" ? s.target_points : k === "tier" ? s.tier : s.reward) ?? "");
+    const value = (s: TargetStore, k: keyof PointTerms) => terms[s.store_id]?.[k] ?? savedOf(s, k);
+    const set = (s: TargetStore, k: keyof PointTerms, v: string) => setTerms(prev => {
+        const next = { ...prev, [s.store_id]: { ...prev[s.store_id], [k]: v } };
+        if (v.trim() === savedOf(s, k)) delete next[s.store_id]![k];
+        if (!Object.keys(next[s.store_id]!).length) delete next[s.store_id];
+        return next;
+    });
+    const timesOf = (s: TargetStore) => tiers.find(t => t.id === value(s, "tier"))?.times ?? tiers[0]?.times ?? 1;
+    const total = data.stores.reduce((n, s) => n + (Number(value(s, "target")) || 0), 0);
+    const missing = data.stores.filter(s => !(Number(value(s, "target")) > 0) || !value(s, "reward").trim());
+    const needsReason = Object.entries(terms).some(([id, t]) => t.target !== undefined && data.stores.find(x => x.store_id === id)?.target_points != null);
+
+    const save = async (start: boolean) => {
+        if (start && missing.length) return toast({ title: `${missing.length} ${missing.length === 1 ? "franchise needs" : "franchises need"} a target and a reward`, variant: "destructive" });
+        setBusy(start ? "start" : "save");
+        try {
+            const changed = Object.entries(terms);
+            if (changed.length) await api.put(`/schemes/admin/${scheme.id}/targets/terms`, { stores: changed.map(([store_id, t]) => ({ store_id, ...t })), reason: reason.trim() || undefined });
+            if (start && draft) await api.post(`/schemes/admin/${scheme.id}/publish`);
+            toast({ title: start && draft ? "Scheme started" : "Saved", description: start && draft ? "The franchises can see their targets now." : undefined });
+            setTerms({}); setReason("");
+            await onSaved(start);
+        } catch (e) {
+            toast({ title: "Not saved", description: getErrorMessage(e, "Try again"), variant: "destructive" });
+        } finally { setBusy(null); }
+    };
+
+    return (
+        <div className="space-y-4">
+            <div>
+                <h2 className="text-2xl font-extrabold text-slate-900">Each franchise's type, target and reward</h2>
+                <p className="mt-1 text-sm text-slate-600">The target is in points, the same for every {first?.from ? "period" : "month"}.</p>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+                <BasisPicker basis={basis} onChange={setBasis} />
+                <span className="hidden h-11 w-px bg-slate-200 md:block" aria-hidden />
+                <span className="self-center text-sm font-bold text-slate-800">Same for everyone:</span>
+                <label className="space-y-1"><span className="block text-xs text-slate-500">Store type</span>
+                    <select value={all.tier} onChange={e => setAll(a => ({ ...a, tier: e.target.value }))} className="h-11 rounded-md border border-slate-300 bg-white px-2 text-sm">
+                        <option value="">—</option>{tiers.map(t => <option key={t.id} value={t.id}>{t.name} ×{t.times}</option>)}
+                    </select></label>
+                <label className="space-y-1"><span className="block text-xs text-slate-500">Target points</span>
+                    <Input type="number" inputMode="decimal" value={all.target} onChange={e => setAll(a => ({ ...a, target: e.target.value }))} className="h-11 w-28" /></label>
+                <label className="space-y-1"><span className="block text-xs text-slate-500">Reward</span>
+                    <Input value={all.reward} onChange={e => setAll(a => ({ ...a, reward: e.target.value }))} className="h-11 w-48" /></label>
+                <Button className="h-11 bg-slate-900 font-bold" disabled={!all.tier && !all.target && !all.reward?.trim()}
+                    onClick={() => { for (const s of data.stores) { if (all.tier) set(s, "tier", all.tier); if (all.target) set(s, "target", all.target); if (all.reward?.trim()) set(s, "reward", all.reward); } }}>
+                    Apply to all
+                </Button>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="hidden md:grid grid-cols-[2.2fr_1fr_1.3fr_1fr_1.6fr_44px] gap-3 bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    <span>Franchise</span><span>Avg points / month</span><span>Store type</span><span>Target points</span><span>Reward on reaching it</span><span />
+                </div>
+                <div className="divide-y divide-slate-100">
+                    {data.stores.map(s => {
+                        const avg = Math.round(averageOn(s.stats?.averages, basis) * timesOf(s) * 10) / 10;
+                        const edited = (k: keyof PointTerms) => terms[s.store_id]?.[k] !== undefined && "border-orange-500 bg-orange-50";
+                        return (
+                            <div key={s.store_id} className={cn("grid grid-cols-2 items-center gap-3 px-4 py-3.5 md:grid-cols-[2.2fr_1fr_1.3fr_1fr_1.6fr_44px]", terms[s.store_id] && "bg-orange-50/50")}>
+                                <span className="col-span-2 min-w-0 md:col-span-1"><b className="block truncate text-slate-900">{s.store_name}</b><span className="text-xs text-slate-500">{s.city}</span></span>
+                                <button type="button" onClick={() => onMonths(s)} className="text-left" title="See its months">
+                                    <span className="text-xs text-slate-500 md:hidden">Avg points / month </span>
+                                    <b className="text-base tabular-nums underline decoration-dotted underline-offset-4">{fmt(avg)}</b>
+                                </button>
+                                <select value={value(s, "tier") || tiers[0]?.id || ""} onChange={e => set(s, "tier", e.target.value)} aria-label={`Store type for ${s.store_name}`}
+                                    className={cn("h-11 rounded-md border border-slate-300 bg-white px-2 text-sm", edited("tier"))}>
+                                    {tiers.map(t => <option key={t.id} value={t.id}>{t.name} ×{t.times}</option>)}
+                                </select>
+                                <Input type="number" inputMode="decimal" value={value(s, "target")} onChange={e => set(s, "target", e.target.value)} placeholder="0"
+                                    aria-label={`Target points for ${s.store_name}`} className={cn("h-11 w-28", edited("target"))} />
+                                <Input value={value(s, "reward")} onChange={e => set(s, "reward", e.target.value)} maxLength={160}
+                                    aria-label={`Reward for ${s.store_name}`} className={cn("col-span-2 h-11 md:col-span-1", edited("reward"))} />
+                                <Button size="icon" variant="ghost" className="h-10 w-10 text-rose-600" onClick={() => onRemove(s)} aria-label={`Remove ${s.store_name}`}><Trash2 className="h-4 w-4" /></Button>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="sticky bottom-0 z-20 space-y-2 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-sm"><b>{data.stores.length} franchises</b> · target <b>{fmt(total)}</b> points {first?.from ? "per period" : "a month"} in all</span>
+                    <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto">
+                        <Button variant="outline" className="h-12" onClick={onBack}>← Back</Button>
+                        <Button variant="outline" className="h-12" disabled={busy !== null || (needsReason && reason.trim().length < 3)} onClick={() => save(false)}>
+                            {busy === "save" ? <Loader2 className="h-4 w-4 animate-spin" /> : draft ? "Save as draft" : "Save changes"}
+                        </Button>
+                        {draft && (
+                            <Button className="h-12 bg-orange-600 px-6 font-bold hover:bg-orange-700" disabled={busy !== null || (needsReason && reason.trim().length < 3)} onClick={() => save(true)}>
+                                {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start the scheme"}
+                            </Button>
+                        )}
+                    </div>
+                </div>
+                {needsReason && <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Why the target changed (needed — it changes targets already set)" maxLength={300} className="h-11" aria-label="Reason" />}
+                {draft && missing.length > 0 && <p className="text-xs text-slate-500">{missing.length} still need a target and a reward before you can start.</p>}
+            </div>
+        </div>
+    );
+}
+
 /* ─── Results: while it runs, and after ───────────────────────────────────── */
 
 function ResultsView({ scheme, data, onMonths, onReload, onEdit, onAdd }: {
@@ -482,7 +623,7 @@ function ResultsView({ scheme, data, onMonths, onReload, onEdit, onAdd }: {
                 <p className="rounded-2xl border border-slate-200 bg-white p-4"><b className="text-blue-700">On track</b> — keeping the period's pace (e.g. 12 of 30 days gone → at least 40% of the target).</p>
                 <p className="rounded-2xl border border-slate-200 bg-white p-4"><b className="text-amber-700">Behind</b> — below that pace. When the period ends, anyone not reached shows <b>Missed</b>; the next one starts fresh.</p>
             </div>
-            <p className="text-xs text-slate-500">Counts {counted} warranties, by {data.settings.date_by === "purchase" ? "purchase" : "registration"} date.</p>
+            <p className="text-xs text-slate-500">Counts {counted} warranties{data.settings.measure === "points" ? " in points" : ""}, by {data.settings.date_by === "purchase" ? "purchase" : "registration"} date.</p>
         </div>
     );
 }

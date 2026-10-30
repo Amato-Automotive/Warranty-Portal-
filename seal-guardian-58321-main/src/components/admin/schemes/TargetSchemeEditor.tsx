@@ -7,8 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Check, Loader2, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DEFAULT_SETTINGS, type Scheme, type SchemeSettings, type WarrantyCount, type WarrantyDate } from "@/lib/schemes";
+import { DEFAULT_SETTINGS, type Measure, type PointsRule, type Scheme, type SchemeSettings, type WarrantyCount, type WarrantyDate } from "@/lib/schemes";
 import { Stepper } from "./TargetsTab";
+import { PointsRuleEditor, startingPoints, useWarrantyProducts } from "./PointsRuleEditor";
 
 /**
  * Step 1 of a target scheme ("More You Sell, Less It Costs"): its name, the
@@ -59,6 +60,14 @@ export function TargetSchemeEditor({ open, scheme, onClose, onSaved }: {
     const [dateBy, setDateBy] = useState<WarrantyDate>("registered");
     const [terms, setTerms] = useState("");
     const [saving, setSaving] = useState(false);
+    /* Counted in warranties (1 each), or in points by series. */
+    const [measure, setMeasure] = useState<Measure>("warranties");
+    const [rule, setRule] = useState<PointsRule>({ series: [], tiers: [] });
+    const products = useWarrantyProducts();
+    const pickMeasure = (m: Measure) => {
+        setMeasure(m);
+        if (m === "points" && !rule.series.length && products) setRule(startingPoints(products.map(p => p.name)));
+    };
 
     useEffect(() => {
         if (!open) return;
@@ -74,6 +83,8 @@ export function TargetSchemeEditor({ open, scheme, onClose, onSaved }: {
         setCount(s?.settings?.count ?? "approved");
         setDateBy(s?.settings?.date_by ?? "registered");
         setTerms(s?.terms ?? "");
+        setMeasure(s?.settings?.measure ?? "warranties");
+        setRule(s?.settings?.points ?? { series: [], tiers: [] });
     }, [open, scheme]);
 
     const months = useMemo(() => {
@@ -94,7 +105,10 @@ export function TargetSchemeEditor({ open, scheme, onClose, onSaved }: {
                 ...(scheme ?? {}),
                 title, summary, terms, category: scheme?.category ?? "sales",
                 windows: ws.map(w => ({ start: `${w.from}T00:00`, end: `${w.to}T23:59` })),
-                settings: { ...DEFAULT_SETTINGS, ...(scheme?.settings ?? {}), ...TARGET_SETTINGS, count, date_by: dateBy },
+                settings: {
+                    ...DEFAULT_SETTINGS, ...(scheme?.settings ?? {}), ...TARGET_SETTINGS, count, date_by: dateBy,
+                    measure, points: rule, unit: measure === "points" ? "points" : "warranties",
+                },
             };
             const r = scheme ? await api.put(`/schemes/admin/${scheme.id}`, body) : await api.post("/schemes/admin", body);
             toast({ title: scheme ? "Saved" : "Scheme created", description: scheme ? undefined : "Now choose the franchises." });
@@ -106,7 +120,7 @@ export function TargetSchemeEditor({ open, scheme, onClose, onSaved }: {
 
     return (
         <Dialog open={open} onOpenChange={o => { if (!o && !saving) onClose(); }}>
-            <DialogContent className="max-w-3xl max-h-[94vh] overflow-y-auto">
+            <DialogContent className={cn("max-h-[94vh] overflow-y-auto", measure === "points" ? "max-w-5xl" : "max-w-3xl")}>
                 <DialogHeader className="space-y-3">
                     <Stepper at={1} />
                     <DialogTitle className="text-2xl">{scheme ? "Scheme details" : "New target scheme"}</DialogTitle>
@@ -160,6 +174,11 @@ export function TargetSchemeEditor({ open, scheme, onClose, onSaved }: {
 
                     <section className="space-y-5">
                         <div className="space-y-2">
+                            <p className="text-sm font-bold text-slate-900">Count in</p>
+                            <Option on={measure === "warranties"} onPick={() => pickMeasure("warranties")} title="Warranties" note="Every warranty counts as 1." />
+                            <Option on={measure === "points"} onPick={() => pickMeasure("points")} title="Points" note="Each warranty earns its series' points, times the store type." />
+                        </div>
+                        <div className="space-y-2">
                             <p className="text-sm font-bold text-slate-900">Which warranties count?</p>
                             <Option on={count === "approved"} onPick={() => setCount("approved")} title="Approved only" note="Safer. A warranty counts once Autoform approves it." />
                             <Option on={count === "registered"} onPick={() => setCount("registered")} title="Every registered one" note="Counts straight away, unless it is rejected." />
@@ -178,6 +197,13 @@ export function TargetSchemeEditor({ open, scheme, onClose, onSaved }: {
                         </details>
                     </section>
                 </div>
+
+                {measure === "points" && (
+                    <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                        {products === null ? <p className="text-sm text-slate-500"><Loader2 className="mr-1.5 inline h-4 w-4 animate-spin" />Loading products…</p>
+                            : <PointsRuleEditor rule={rule} onChange={setRule} products={products} />}
+                    </section>
+                )}
 
                 <DialogFooter className="gap-2">
                     <Button variant="outline" className="h-12" onClick={onClose} disabled={saving}>Cancel</Button>
