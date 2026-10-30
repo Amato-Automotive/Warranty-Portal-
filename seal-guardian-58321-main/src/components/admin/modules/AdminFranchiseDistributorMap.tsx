@@ -31,7 +31,30 @@ interface LimitCategory {
     brand: "AF" | "AC";
     productCount: number;
     allowed: boolean;
+    /* Its ancestors from the top, e.g. Mats for PU/PVC. */
+    path?: { id: string; name: string }[];
 }
+
+/** A category above the ones a distributor sells ("Mats"), with what sits under it. */
+interface LimitGroup { id: string; name: string; groups: LimitGroup[]; items: LimitCategory[] }
+
+/** The distributor's categories as a tree, by their paths; ones without a path sit at the top. */
+function limitTree(cats: LimitCategory[]): LimitGroup {
+    const root: LimitGroup = { id: "", name: "", groups: [], items: [] };
+    for (const cat of cats) {
+        let at = root;
+        for (const step of cat.path ?? []) {
+            let next = at.groups.find(g => g.id === step.id);
+            if (!next) { next = { id: step.id, name: step.name, groups: [], items: [] }; at.groups.push(next); }
+            at = next;
+        }
+        at.items.push(cat);
+    }
+    const sort = (g: LimitGroup) => { g.groups.sort((a, b) => a.name.localeCompare(b.name)); g.items.sort((a, b) => a.name.localeCompare(b.name)); g.groups.forEach(sort); };
+    sort(root);
+    return root;
+}
+const leavesIn = (g: LimitGroup): LimitCategory[] => [...g.items, ...g.groups.flatMap(leavesIn)];
 
 interface FranchiseRow {
     franchise_user_id: string;
@@ -45,6 +68,54 @@ interface FranchiseRow {
 }
 
 type Filter = "all" | "multi" | "mapped" | "unmapped";
+
+/** One level of the limit tree: its sub-groups (each with a tick for all under it), then its categories. */
+function LimitBranch({ group, level, onSet }: { group: LimitGroup; level: number; onSet: (ids: Set<string>, allowed: boolean) => void }) {
+    const brandTag = (brand: "AF" | "AC") => (
+        // AF and AC trees reuse the same names — show the brand so identical-looking rows are distinguishable.
+        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded shrink-0 ${brand === "AC" ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700"}`}>{brand}</span>
+    );
+    return (
+        <>
+            {group.groups.map(g => {
+                const leaves = leavesIn(g);
+                const on = leaves.filter(c => c.allowed).length;
+                return (
+                    <div key={g.id} className="space-y-1">
+                        <label className="flex cursor-pointer items-center gap-3 rounded-xl p-2 hover:bg-slate-50" style={{ paddingLeft: `${8 + level * 20}px` }}>
+                            <Checkbox checked={on === leaves.length ? true : on > 0 ? "indeterminate" : false}
+                                onCheckedChange={() => onSet(new Set(leaves.map(c => c.id)), on < leaves.length)} />
+                            <span className="flex min-w-0 flex-1 items-center gap-2">
+                                <span className="truncate text-sm font-bold text-slate-800">{g.name}</span>
+                                {level === 0 && leaves[0] && brandTag(leaves[0].brand)}
+                            </span>
+                            <span className="shrink-0 text-[10px] tabular-nums text-slate-400">{on} of {leaves.length}</span>
+                        </label>
+                        <LimitBranch group={g} level={level + 1} onSet={onSet} />
+                    </div>
+                );
+            })}
+            {group.items.map(cat => (
+                <label
+                    key={cat.id}
+                    style={{ marginLeft: `${level * 20}px` }}
+                    className={`flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-colors ${
+                        cat.allowed ? "border-orange-200 bg-orange-50/50" : "border-slate-100 hover:bg-slate-50"
+                    }`}
+                >
+                    <Checkbox checked={cat.allowed} onCheckedChange={v => onSet(new Set([cat.id]), Boolean(v))} />
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-700 truncate">{cat.name}</span>
+                        {level === 0 && brandTag(cat.brand)}
+                    </span>
+                    <span className="text-[10px] text-slate-400 tabular-nums shrink-0">
+                        {cat.productCount} product{cat.productCount === 1 ? "" : "s"}
+                    </span>
+                </label>
+            ))}
+        </>
+    );
+}
 
 export const AdminFranchiseDistributorMap = () => {
     const { toast } = useToast();
@@ -394,7 +465,7 @@ export const AdminFranchiseDistributorMap = () => {
 
             {/* Per-mapping category limit editor */}
             <Dialog open={!!editTarget} onOpenChange={open => { if (!open) setEditTarget(null); }}>
-                <DialogContent className="sm:max-w-[540px]">
+                <DialogContent className="sm:max-w-[600px]">
                     <DialogHeader>
                         <DialogTitle className="text-base">What can this store buy here?</DialogTitle>
                         <DialogDescription className="text-xs">
@@ -439,43 +510,11 @@ export const AdminFranchiseDistributorMap = () => {
                                 </div>
                             </div>
 
-                            <div className="max-h-[320px] overflow-y-auto space-y-1 pr-1">
-                                {limitCats.map(cat => (
-                                    <label
-                                        key={cat.id}
-                                        className={`flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-colors ${
-                                            cat.allowed ? "border-orange-200 bg-orange-50/50" : "border-slate-100 hover:bg-slate-50"
-                                        }`}
-                                    >
-                                        <Checkbox
-                                            checked={cat.allowed}
-                                            onCheckedChange={v => setLimitCats(cs =>
-                                                cs.map(c => c.id === cat.id ? { ...c, allowed: Boolean(v) } : c))}
-                                        />
-                                        <span className="flex-1 min-w-0">
-                                            <span className="flex items-center gap-2">
-                                                <span className="text-sm font-semibold text-slate-700 truncate">{cat.name}</span>
-                                                {/* AF and AC trees reuse the same names — show the brand
-                                                    so identical-looking rows are distinguishable. */}
-                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded shrink-0 ${
-                                                    cat.brand === "AC"
-                                                        ? "bg-violet-100 text-violet-700"
-                                                        : "bg-sky-100 text-sky-700"
-                                                }`}>
-                                                    {cat.brand}
-                                                </span>
-                                            </span>
-                                            {cat.parentName && (
-                                                <span className="block text-[10px] text-slate-400 truncate">
-                                                    in {cat.parentName}
-                                                </span>
-                                            )}
-                                        </span>
-                                        <span className="text-[10px] text-slate-400 tabular-nums shrink-0">
-                                            {cat.productCount} product{cat.productCount === 1 ? "" : "s"}
-                                        </span>
-                                    </label>
-                                ))}
+                            {/* As a tree: a parent (Mats) ticks or clears everything under it,
+                                and each category under it (PU/PVC, TPE) can be ticked on its own. */}
+                            <div className="max-h-[420px] overflow-y-auto space-y-1 pr-1">
+                                <LimitBranch group={limitTree(limitCats)} level={0}
+                                    onSet={(ids, allowed) => setLimitCats(cs => cs.map(c => (ids.has(c.id) ? { ...c, allowed } : c)))} />
                             </div>
 
                             {limitCats.every(c => c.allowed) && (

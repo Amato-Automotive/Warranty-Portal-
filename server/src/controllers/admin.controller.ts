@@ -80,6 +80,38 @@ const REPLACEABLE_PHOTO_FIELDS = new Set([
     'lhs', 'rhs', 'frontReg', 'backReg', 'warranty',
 ]);
 
+/**
+ * The catalogue's category tree. Products sit on the deepest categories, and a
+ * product is sold only when its own category is on a distributor's list, so a
+ * parent on a list ("Mats") must stand for every category under it ("PU/PVC",
+ * "TPE"); and a screen showing a list needs each category's path to draw it as
+ * a tree.
+ */
+async function categoryTree(conn: { execute: (sql: string) => Promise<any> } = db) {
+    const [rows]: any = await conn.execute('SELECT id, name, parent_id FROM store_categories');
+    const byId = new Map<string, { id: string; name: string; parent_id: string | null }>(rows.map((r: any) => [String(r.id), { id: String(r.id), name: r.name, parent_id: r.parent_id ? String(r.parent_id) : null }]));
+    const kids = new Map<string, string[]>();
+    for (const c of byId.values()) if (c.parent_id) kids.set(c.parent_id, [...(kids.get(c.parent_id) ?? []), c.id]);
+    /** These categories as the deepest ones under them (a deepest one is itself); unknown ids drop out. */
+    const leavesOf = (ids: string[]) => {
+        const out = new Set<string>();
+        const walk = (id: string, depth: number) => {
+            const k = kids.get(id);
+            if (!k?.length || depth > 20) out.add(id); else for (const c of k) walk(c, depth + 1);
+        };
+        for (const id of ids) if (byId.has(id)) walk(id, 0);
+        return [...out];
+    };
+    /** A category's ancestors, from the top down. */
+    const pathOf = (id: string) => {
+        const out: { id: string; name: string }[] = [];
+        let at = byId.get(id)?.parent_id ?? null;
+        while (at && out.length < 20) { const c = byId.get(at); if (!c) break; out.unshift({ id: c.id, name: c.name }); at = c.parent_id; }
+        return out;
+    };
+    return { leavesOf, pathOf };
+}
+
 export class AdminController {
     /**
      * Sidebar badge counts — grievances still `submitted`, POSM requests still
@@ -4730,11 +4762,14 @@ export class AdminController {
                 return res.status(404).json({ error: 'Distributor not found' });
             }
 
+            /* A parent ticked means everything under it: only the deepest categories hold products. */
+            const leaves = (await categoryTree(connection)).leavesOf(categoryIds.map(String));
+
             await connection.beginTransaction();
 
             await connection.execute('DELETE FROM distributor_allowed_categories WHERE distributor_id = ?', [id]);
 
-            for (const categoryId of categoryIds) {
+            for (const categoryId of leaves) {
                 await connection.execute(
                     `INSERT INTO distributor_allowed_categories (id, distributor_id, category_id) VALUES (?, ?, ?)`,
                     [uuidv4(), id, categoryId]
@@ -4752,7 +4787,7 @@ export class AdminController {
                 targetType: 'DISTRIBUTOR',
                 targetId: id,
                 targetName: dists[0].name,
-                details: { category_count: categoryIds.length },
+                details: { category_count: leaves.length },
                 ipAddress: req.ip || req.socket?.remoteAddress
             });
 
@@ -5789,6 +5824,7 @@ export class AdminController {
                 [vendorId, distributorId]
             );
             const inherits = (scopeRows[0]?.category_scope ?? 'all') === 'all';
+            const tree = await categoryTree();
 
             res.json({
                 success: true,
@@ -5798,6 +5834,8 @@ export class AdminController {
                     name: c.name,
                     parent_id: c.parent_id,
                     parentName: c.parent_name || null,
+                    /* Its ancestors from the top ("Mats" for "PU/PVC"), to show the list as a tree. */
+                    path: tree.pathOf(String(c.id)),
                     brand: c.brand,
                     productCount: Number(c.product_count || 0),
                     // While inheriting, everything is effectively allowed.

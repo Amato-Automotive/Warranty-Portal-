@@ -49,12 +49,15 @@ export class OrderController {
     // IDs are AFI<yyyymmdd><7-digit seq>, so lexicographic order matches
     // creation order — ORDER BY id uses the primary key index directly
     // instead of filesorting every AFI row by created_at.
+    // FOR UPDATE: a second order placed at the same moment waits for this one
+    // to commit, instead of reading the same latest id and failing on a duplicate.
     const [rows]: any = await connection.execute(
         `SELECT id
          FROM store_orders
          WHERE id LIKE 'AFI%'
          ORDER BY id DESC
-         LIMIT 1`
+         LIMIT 1
+         FOR UPDATE`
     );
 
     let nextSequence = 1;
@@ -578,10 +581,12 @@ export class OrderController {
             const groupsByDistributor = new Map<string, { distributor: any; items: any[] }>();
 
             for (const item of items) {
-                if (!item.productId || !item.quantity || item.quantity < 1) {
+                const quantity = Number(item?.quantity);
+                if (!item?.productId || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000) {
                     await connection.rollback();
-                    return res.status(400).json({ error: 'Each item requires productId and quantity >= 1' });
+                    return res.status(400).json({ error: 'Each item needs a product and a whole quantity of 1 or more' });
                 }
+                item.quantity = quantity;
 
                 const [prodRows]: any = await connection.execute(
                     'SELECT name, price, category_id, brand FROM store_products WHERE id = ?', [item.productId]
@@ -1038,8 +1043,9 @@ export class OrderController {
                 return res.status(400).json({ error: `Cannot cancel an order that is already ${order.status}` });
             }
 
-            // If order was confirmed (processing/shipped), restore stock
-            if (order.status === 'processing' || order.status === 'shipped') {
+            // Stock is taken at placement and stays taken while an order is on
+            // hold (pending), so any open order gives it back when declined.
+            if (order.status === 'processing' || order.status === 'shipped' || order.status === 'pending') {
                 const [itemRows]: any = await connection.execute(
                     'SELECT * FROM store_order_items WHERE order_id = ?', [id]
                 );
@@ -1399,22 +1405,12 @@ export class OrderController {
                 return res.status(400).json({ error: 'Vendor profile not found' });
             }
 
-            let distributorId = vendorRows[0].distributor_id;
+            const distributorId = vendorRows[0].distributor_id;
 
-            // Auto-assign the first distributor if none is assigned
+            // No fallback: assigning "the first distributor" here wrote a
+            // distributor onto the franchise that the admin never chose.
             if (!distributorId) {
-                const [dists]: any = await db.execute('SELECT id FROM distributors WHERE profile_id IS NOT NULL LIMIT 1');
-                if (dists.length > 0) {
-                    distributorId = dists[0].id;
-                    await db.execute(
-                        'UPDATE vendor_details SET distributor_id = ? WHERE user_id = ?',
-                        [distributorId, user.id]
-                    );
-                }
-            }
-
-            if (!distributorId) {
-                return res.status(400).json({ error: 'No distributor assigned to your franchise and no fallback distributor available.' });
+                return res.status(400).json({ error: 'No distributor assigned to your franchise.' });
             }
 
             // Get distributor name
@@ -1554,7 +1550,9 @@ export class OrderController {
         try {
             const user = (req as any).user;
 
-            let [rows]: any = await db.execute(
+            // Read only. This page used to assign "the first distributor" to any
+            // franchise without one, every time a franchise opened Orders.
+            const [rows]: any = await db.execute(
                 `SELECT d.* FROM distributors d
                  JOIN vendor_details vd ON vd.distributor_id = d.id
                  WHERE vd.user_id = ?`,
@@ -1562,34 +1560,7 @@ export class OrderController {
             );
 
             if (rows.length === 0) {
-                // Let's check if the vendor has vendor_details but distributor_id is null
-                const [vendorRows]: any = await db.execute(
-                    'SELECT distributor_id FROM vendor_details WHERE user_id = ?',
-                    [user.id]
-                );
-
-                if (vendorRows.length > 0 && !vendorRows[0].distributor_id) {
-                    // Try to auto-assign
-                    const [dists]: any = await db.execute('SELECT id FROM distributors WHERE profile_id IS NOT NULL LIMIT 1');
-                    if (dists.length > 0) {
-                        const newDistId = dists[0].id;
-                        await db.execute(
-                            'UPDATE vendor_details SET distributor_id = ? WHERE user_id = ?',
-                            [newDistId, user.id]
-                        );
-
-                        // Fetch details again
-                        const [newRows]: any = await db.execute(
-                            'SELECT * FROM distributors WHERE id = ?',
-                            [newDistId]
-                        );
-                        rows = newRows;
-                    }
-                }
-            }
-
-            if (rows.length === 0) {
-                return res.status(404).json({ error: 'No distributor assigned to your franchise and fallback distributor available.' });
+                return res.status(404).json({ error: 'No distributor assigned to your franchise.' });
             }
 
             res.json({ success: true, distributor: rows[0] });
@@ -1627,9 +1598,10 @@ export class OrderController {
                         vd.state,
                         vd.pincode,
                         p.phone_number
-                 FROM vendor_details vd
+                 FROM franchise_distributors fd
+                 JOIN vendor_details vd ON vd.user_id = fd.franchise_user_id
                  LEFT JOIN profiles p ON p.id = vd.user_id
-                 WHERE vd.distributor_id = ? AND vd.is_franchise = TRUE
+                 WHERE fd.distributor_id = ? AND vd.is_franchise = TRUE
                  ORDER BY vd.store_name ASC`,
                 [distributorId]
             );
@@ -1706,11 +1678,12 @@ export class OrderController {
     static async updateOwnStock(req: Request, res: Response) {
         try {
             const user = (req as any).user;
-            const { productId, stockQuantity } = req.body;
+            const { productId } = req.body;
+            const stockQuantity = Number(req.body.stockQuantity);
             const variationId = req.body.variationId || null;
 
-            if (!productId || stockQuantity === undefined || stockQuantity < 0) {
-                return res.status(400).json({ error: 'productId and a non-negative stockQuantity are required.' });
+            if (!productId || req.body.stockQuantity === undefined || req.body.stockQuantity === '' || !Number.isInteger(stockQuantity) || stockQuantity < 0) {
+                return res.status(400).json({ error: 'Stock must be a whole number, 0 or more.' });
             }
 
             const [distRows]: any = await db.execute(
@@ -2135,9 +2108,11 @@ export class OrderController {
             );
 
             if (holdReason) {
+                // store_order_messages is the chat both sides read; the older
+                // order_messages table is read by nothing, so the franchise never saw why.
                 await connection.execute(
-                    `INSERT INTO order_messages (id, order_id, sender_role, sender_id, message, created_at)
-                     VALUES (?, ?, 'distributor', ?, ?, NOW())`,
+                    `INSERT INTO store_order_messages (id, order_id, sender_id, sender_role, message_text, is_system)
+                     VALUES (?, ?, ?, 'distributor', ?, true)`,
                     [uuidv4(), id, user.id, `[On Hold] ${holdReason}`]
                 );
             }
@@ -2311,8 +2286,9 @@ export class OrderController {
                 return res.status(400).json({ error: `Cannot cancel an order that is already ${order.status}` });
             }
 
-            // 3. If order was confirmed (processing/shipped), restore stock
-            if (order.status === 'processing' || order.status === 'shipped') {
+            // 3. Stock is taken at placement and stays taken while on hold
+            //    (pending), so any open order gives it back when declined.
+            if (order.status === 'processing' || order.status === 'shipped' || order.status === 'pending') {
                 const [itemRows]: any = await connection.execute(
                     'SELECT * FROM store_order_items WHERE order_id = ?', [id]
                 );
@@ -2493,7 +2469,12 @@ export class OrderController {
 
             const senderRole = isClient ? 'vendor' : (isAssignedDistributor ? 'distributor' : user.role);
 
-            // 2. If a docket ID is shared, update the order
+            // 2. If a docket ID is shared, update the order. It is the distributor's
+            //    to give; the franchise could otherwise overwrite it from the chat.
+            if (docketId && !isAssignedDistributor && user.role !== 'admin') {
+                await connection.rollback();
+                return res.status(403).json({ error: 'Only the distributor can share the docket number' });
+            }
             if (docketId) {
                 await connection.execute(
                     'UPDATE store_orders SET docket_id = ? WHERE id = ?',

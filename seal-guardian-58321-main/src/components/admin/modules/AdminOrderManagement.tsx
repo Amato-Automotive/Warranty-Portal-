@@ -213,10 +213,23 @@ export const AdminOrderManagement = () => {
         }
     };
 
+    /* Products sit on the deepest categories and only those are matched, so a
+       parent ("Mats") stands for every category under it ("PU/PVC", "TPE"):
+       ticking it ticks them all, and only the deepest ones are saved. */
+    const leavesUnder = (categoryId: string): string[] => {
+        const kids = allCategories.filter(c => (c.parentId ?? null) === categoryId);
+        return kids.length ? kids.flatMap(k => leavesUnder(k.id)) : [categoryId];
+    };
+    const isLeaf = (categoryId: string) => !allCategories.some(c => (c.parentId ?? null) === categoryId);
+
     const handleToggleCategory = (categoryId: string) => {
-        setAllowedCategoryIds(prev =>
-            prev.includes(categoryId) ? prev.filter(id => id !== categoryId) : [...prev, categoryId]
-        );
+        const leaves = leavesUnder(categoryId);
+        setAllowedCategoryIds(prev => {
+            const allOn = leaves.every(id => prev.includes(id));
+            /* A parent saved on its own before sold nothing; it is dropped either way. */
+            const rest = prev.filter(id => !leaves.includes(id) && id !== categoryId);
+            return allOn ? rest : [...rest, ...leaves];
+        });
     };
 
     const toggleCategoryExpanded = (categoryId: string) => {
@@ -242,14 +255,10 @@ export const AdminOrderManagement = () => {
         const children = getChildCategories(cat.id);
         const hasChildren = children.length > 0;
         const isExpanded = expandedCategoryIds.has(cat.id);
-        const checked = allowedCategoryIds.includes(cat.id);
+        const leaves = hasChildren ? leavesUnder(cat.id) : [cat.id];
+        const checked = leaves.every(id => allowedCategoryIds.includes(id));
         // How many descendant categories (any depth) are selected — shown as a hint.
-        const countSelectedDescendants = (parentId: string): number =>
-            getChildCategories(parentId).reduce(
-                (acc, ch) => acc + (allowedCategoryIds.includes(ch.id) ? 1 : 0) + countSelectedDescendants(ch.id),
-                0
-            );
-        const selectedDesc = hasChildren ? countSelectedDescendants(cat.id) : 0;
+        const selectedDesc = hasChildren ? leaves.filter(id => allowedCategoryIds.includes(id)).length : 0;
 
         return (
             <div key={cat.id} className="rounded-lg">
@@ -282,7 +291,7 @@ export const AdminOrderManagement = () => {
                     </button>
                     {hasChildren && (
                         <span className="text-[10px] text-slate-400 font-medium">
-                            {selectedDesc > 0 ? `${selectedDesc} selected` : `${children.length} subcategor${children.length === 1 ? 'y' : 'ies'}`}
+                            {selectedDesc > 0 ? `${selectedDesc} of ${leaves.length} selected` : `${children.length} subcategor${children.length === 1 ? 'y' : 'ies'}`}
                         </span>
                     )}
                 </div>
@@ -300,7 +309,7 @@ export const AdminOrderManagement = () => {
         setSavingCategories(true);
         try {
             const res = await api.put(`/admin/distributors/${selectedDist.id}/categories`, {
-                categoryIds: allowedCategoryIds
+                categoryIds: allowedCategoryIds.filter(isLeaf)
             });
             if (res.data.success) {
                 toast({
