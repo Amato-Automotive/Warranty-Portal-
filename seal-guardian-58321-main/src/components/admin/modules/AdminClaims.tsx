@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn, formatToIST } from "@/lib/utils";
-import { decisionText, day, HOLD_REASONS, PROBLEMS, REJECT_REASONS, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
+import { decisionText, day, forgetClaimsLive, HOLD_REASONS, PROBLEMS, REJECT_REASONS, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
 import { ChangeRequestBox } from "@/components/claims/ClaimChange";
 import { CompareTable, StageDates } from "@/components/claims/ClaimView";
 import { ClaimStatusPill, ClaimSummary, ClaimTimeline, MediaGrid, ChoiceRow, ProblemPicker, VehicleFields, EMPTY_VEHICLE, vehicleValueOf, type VehicleValue } from "@/components/claims/ClaimParts";
@@ -295,6 +296,25 @@ export const AdminClaims = () => {
     const [to, setTo] = useState('');
     const [total, setTotal] = useState(0);
     const [refreshing, setRefreshing] = useState(false);
+    // Whether franchises and customers see claims (Live) or only the plant does (Off).
+    const [live, setLive] = useState<boolean | null>(null);
+    const [switching, setSwitching] = useState(false);
+    useEffect(() => {
+        api.get('/settings/public/claims_live').then(r => setLive(r.data?.value === 'true')).catch(() => setLive(false));
+    }, []);
+    const setClaimsLive = async (on: boolean) => {
+        setSwitching(true);
+        try {
+            await api.put('/settings/admin/claims_live', { value: on ? 'true' : 'false' });
+            setLive(on);
+            forgetClaimsLive();
+            toast({ title: on ? 'Claims are live: franchises and customers see them' : 'Claims are off: only the plant sees them' });
+        } catch (e) {
+            toast({ variant: "destructive", title: "Not changed", description: getErrorMessage(e, "Only someone with claims edit access can change this.") });
+        } finally {
+            setSwitching(false);
+        }
+    };
     const [loading, setLoading] = useState(true);
     const [open, setOpen] = useState<number | null>(null);
 
@@ -405,7 +425,15 @@ export const AdminClaims = () => {
                         {rights === null ? 'Loading…' : rights.length ? `Your part: ${rights.map(r => RIGHT_TEXT[r]).join(' · ')}` : 'View only: you see every claim and its activity'}
                     </p>
                 </div>
-                <div className="flex shrink-0 gap-2">
+                <div className="flex shrink-0 items-center gap-2">
+                    {/* Claims open to franchises and customers, or the plant's alone. */}
+                    {live !== null && (
+                        <label className={cn("flex h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 text-sm font-bold",
+                            live ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-gray-300 bg-white text-gray-700")}>
+                            <Switch checked={live} disabled={switching} onCheckedChange={setClaimsLive} aria-label="Claims live for franchises and customers" />
+                            {live ? 'Live' : 'Off'}
+                        </label>
+                    )}
                     <Button variant="outline" size="icon" onClick={() => load()} disabled={refreshing} title="Refresh" aria-label="Refresh" className="h-11 w-11 rounded-xl">
                         <RefreshCw className={cn("h-5 w-5", refreshing && "animate-spin")} />
                     </Button>

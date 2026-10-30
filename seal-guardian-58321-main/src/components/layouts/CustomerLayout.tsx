@@ -1,3 +1,4 @@
+import { useClaimsLive } from "@/lib/claims";
 import { useState, useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -51,9 +52,10 @@ const CustomerLayout = () => {
 
     const isActive = (path: string) => location.pathname === path;
 
+    const claimsLive = useClaimsLive();
     const navItems = [
         { path: "/dashboard/customer", label: "Dashboard", icon: LayoutDashboard, badge: dashboardUpdates },
-        { path: "/dashboard/customer/claims", label: "My Claims", icon: ShieldCheck, badge: 0 },
+        ...(claimsLive ? [{ path: "/dashboard/customer/claims", label: "My Claims", icon: ShieldCheck, badge: 0 }] : []),
         { path: "/terms", label: "Terms", icon: FileText, badge: termsUpdates },
     ];
 

@@ -1,3 +1,5 @@
+import ClaimProcess from "@/pages/ClaimProcess";
+import { useClaimsLive } from "@/lib/claims";
 import { useState, useEffect, useRef } from "react";
 import { Navigate, useOutletContext } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -59,6 +61,7 @@ interface DashboardContext {
 
 const FranchiseDashboard = () => {
     const { user, logout, loading: authLoading } = useAuth();
+    const claimsLive = useClaimsLive();
     const { toast } = useToast();
     const { fullHistory } = useNotifications();
     const { tr } = useLanguage();
@@ -772,6 +775,8 @@ const FranchiseDashboard = () => {
                     </div>
                 );
             case 'claim-process':
+                // Until the plant opens claims, the page shows how claims work, as before.
+                if (!claimsLive) return <ClaimProcess />;
                 return (
                     <div className="-mt-8 md:-mt-14">
                         <FranchiseClaims />

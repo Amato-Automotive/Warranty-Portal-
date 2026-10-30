@@ -37,6 +37,9 @@ const SETTING_WRITERS: Record<string, express.RequestHandler> = {
     ecatalogue_download_url: requirePermission('ecatalogue', 'write'),
     ecatalogue_ac_flipbook_url: requirePermission('ecatalogue', 'write'),
     ecatalogue_ac_download_url: requirePermission('ecatalogue', 'write'),
+
+    // Claims open to franchises and customers ('true'), or the plant's alone.
+    claims_live: requirePermission('claims', 'write'),
 };
 
 const isPublicSettingKey = (key: string) =>

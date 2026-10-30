@@ -6,6 +6,9 @@
  * (confirms fitted). Distributors and the plant's viewers only watch.
  */
 
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
+
 export type ClaimStatus = 'verify' | 'review' | 'on_hold' | 'consent' | 'repair' | 'plan' | 'production' | 'ready' | 'dispatched' | 'closed' | 'rejected' | 'declined';
 export type ClaimAction = 'verify' | 'ask_more' | 'hold' | 'approve' | 'reject' | 'consent' | 'decline' | 'plan' | 'ready' | 'dispatch' | 'fitted'
     | 'change' | 'resend' | 'ask_change' | 'change_ok' | 'change_no' | 'redecide' | 'dispatch_info' | 'edit' | 'undo';
@@ -198,6 +201,21 @@ export function trackerSteps(c: Claim): { label: string; short: string; at?: str
     const current = done.indexOf(false);
     return steps.map((s, i) => ({ label: s.label, short: s.short, at: s.at, edd: s.edd, done: done[i], current: i === current, detail: s.detail }));
 }
+
+/** Whether claims are open to franchises and customers; read once a page. Off until it is known. */
+let liveOnce: Promise<boolean> | null = null;
+export function useClaimsLive(): boolean {
+    const [live, setLive] = useState(false);
+    useEffect(() => {
+        liveOnce ??= api.get('/settings/public/claims_live').then(r => r.data?.value === 'true').catch(() => false);
+        let alive = true;
+        liveOnce.then(v => alive && setLive(v));
+        return () => { alive = false; };
+    }, []);
+    return live;
+}
+/** After the plant switches it, the next read asks again. */
+export const forgetClaimsLive = () => { liveOnce = null; };
 
 export const isPhoto = (url: string) => /\.(jpe?g|png|webp|heic|heif)(\?|$)/i.test(url);
 export const isVideo = (url: string) => /\.(mp4|mov|webm|3gp|m4v)(\?|$)/i.test(url);

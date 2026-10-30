@@ -203,6 +203,13 @@ const SEARCH_TEXT = `CONCAT_WS(' ', c.claim_no, c.warranty_uid, vd.store_name, c
     JSON_UNQUOTE(JSON_EXTRACT(c.decision, '$.item')), JSON_UNQUOTE(JSON_EXTRACT(c.plan_info, '$.alteration_no')),
     JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.docket')), JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.courier')))`;
 
+/** Whether claims are open to franchises and customers (Admin › Claims › Live); the plant always has them. */
+async function claimsLive(): Promise<boolean> {
+    const [r]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claims_live'");
+    return r[0]?.setting_value === 'true';
+}
+const NOT_LIVE = 'Warranty claims are not open yet';
+
 async function loadClaim(id: unknown) {
     const [rows]: any = await db.execute('SELECT * FROM warranty_claims WHERE id = ?', [Number(id) || 0]);
     return rows[0] ? fromRow(rows[0]) : null;
@@ -344,6 +351,7 @@ export default class ClaimsController {
     /** The customer's warranties (with what can be claimed) and their claims. */
     static async mine(req: AuthRequest, res: Response) {
         try {
+            if (!(await claimsLive())) return ok(res, { claims: [], warranties: [], distributor_claims: [], live: false });
             const [ws]: any = await db.execute(
                 `SELECT * FROM warranty_registrations WHERE user_id = ? AND status IN ('validated','pending','pending_vendor') ORDER BY created_at DESC LIMIT 50`,
                 [req.user!.id]);
@@ -358,6 +366,7 @@ export default class ClaimsController {
     /** A customer requests a claim on one of their own warranties. */
     static async raise(req: AuthRequest, res: Response) {
         try {
+            if (!(await claimsLive())) return bad(res, NOT_LIVE, 403);
             const b = req.body ?? {};
             const [ws]: any = await db.execute('SELECT * FROM warranty_registrations WHERE uid = ? AND user_id = ? LIMIT 1', [String(b.warranty_uid ?? ''), req.user!.id]);
             const w = ws[0];
@@ -390,6 +399,7 @@ export default class ClaimsController {
     /** The store's claims, and for a distributor its stores' claims to watch. */
     static async storeList(req: AuthRequest, res: Response) {
         try {
+            if (!(await claimsLive())) return ok(res, { claims: [], warranties: [], distributor_claims: [], live: false });
             const v = await storeOf(req.user!.id);
             // Rows from the production sheet are the plant's alone for now.
             const own: any[] = v ? (await db.execute("SELECT * FROM warranty_claims WHERE store_id = ? AND raised_via <> 'sheet' ORDER BY id DESC LIMIT 300", [v.id]) as any)[0] : [];
@@ -458,6 +468,7 @@ export default class ClaimsController {
      */
     static async storeRaise(req: AuthRequest, res: Response) {
         try {
+            if (!(await claimsLive())) return bad(res, NOT_LIVE, 403);
             const v = await storeOf(req.user!.id);
             if (!v) return bad(res, 'Store not found', 404);
             const b = req.body ?? {};
