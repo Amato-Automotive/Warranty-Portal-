@@ -40,8 +40,22 @@ export type WarrantyCount = 'approved' | 'registered';
 /** Which date places a warranty in a month and a window: when it was registered, or the purchase date on it. */
 export type WarrantyDate = 'registered' | 'purchase';
 
+/**
+ * Counting in points: each warranty is worth its series' points (Amaze 0.5,
+ * Signature 1.25…), times the store type's multiplier (Big Daddy ×2). The
+ * admin names the series, their points and products, and the store types.
+ */
+export type Measure = 'warranties' | 'points';
+/** A series: the warranty products (by name) in it and the points each is worth. */
+export interface PointSeries { id: string; name: string; points: number; products: string[] }
+/** A kind of store and what its points are multiplied by. */
+export interface StoreTier { id: string; name: string; times: number }
+export interface PointsRule { series: PointSeries[]; tiers: StoreTier[] }
+
 export interface SchemeSettings {
     run: RunMode;
+    measure: Measure;
+    points: PointsRule;
     source: TargetSource;
     /* Warranties: the store's monthly average is taken over this many full months before the scheme starts. */
     baseline_months: number;
@@ -56,6 +70,8 @@ export interface SchemeSettings {
 
 export const DEFAULT_SETTINGS: SchemeSettings = {
     run: 'entries',
+    measure: 'warranties',
+    points: { series: [], tiers: [] },
     source: 'manual',
     baseline_months: 3,
     count: 'approved',
@@ -76,6 +92,65 @@ export interface StoreTerms {
     steps?: TargetStep[]; note?: string; growth_pct?: number; reward?: string;
     /* The average the growth was put on, as the admin chose to see it, and its value then. */
     basis?: AverageBasis; average?: number;
+    /* Counting in points: the store's type (its multiplier) and the target typed for every period. */
+    tier?: string; target?: number;
+}
+
+/** What one store's points are multiplied by: its type's, else the first type's, else 1. */
+export function tierOf(rule: PointsRule, tierId: string | undefined): StoreTier | null {
+    return rule.tiers.find(t => t.id === tierId) ?? rule.tiers[0] ?? null;
+}
+
+/** Each product's points, by its name in lower case (a product in two series counts once, at the first). */
+export function pointsByProduct(rule: PointsRule): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const s of rule.series) for (const p of s.products) {
+        const k = p.trim().toLowerCase();
+        if (k && !out.has(k)) out.set(k, s.points);
+    }
+    return out;
+}
+
+/** Points to two decimals, so 0.5 + 0.25 adds up cleanly. */
+export const roundPoints = (n: number) => Math.round(n * 100) / 100;
+
+/** The points rule as typed, cleaned: names trimmed, numbers read, products listed once. */
+export function readPoints(raw: any): PointsRule {
+    const id = (v: unknown, prefix: string, i: number) => String(v ?? '').replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || `${prefix}${i + 1}`;
+    const series = (Array.isArray(raw?.series) ? raw.series : []).slice(0, 30).map((s: any, i: number) => ({
+        id: id(s?.id, 's', i),
+        name: String(s?.name ?? '').trim().slice(0, 40),
+        points: Number(s?.points),
+        products: [...new Set<string>((Array.isArray(s?.products) ? s.products : []).map((p: unknown) => String(p ?? '').trim().slice(0, 120)).filter(Boolean))].slice(0, 300),
+    }));
+    const tiers = (Array.isArray(raw?.tiers) ? raw.tiers : []).slice(0, 10).map((t: any, i: number) => ({
+        id: id(t?.id, 't', i),
+        name: String(t?.name ?? '').trim().slice(0, 40),
+        times: Number(t?.times),
+    }));
+    return { series, tiers };
+}
+
+/** Problems with a points rule, in words. */
+export function pointsProblems(rule: PointsRule): string[] {
+    const p: string[] = [];
+    if (!rule.series.length) p.push('Add at least one series with its points');
+    const owner = new Map<string, string>();
+    for (const s of rule.series) {
+        if (!s.name) p.push('Every series needs a name');
+        if (!Number.isFinite(s.points) || s.points <= 0 || s.points > 10000) p.push(`Give ${s.name || 'every series'} its points (more than 0)`);
+        for (const prod of s.products) {
+            const k = prod.toLowerCase();
+            if (owner.has(k) && owner.get(k) !== s.name) p.push(`${prod} is in both ${owner.get(k)} and ${s.name}`);
+            owner.set(k, s.name);
+        }
+    }
+    if (!rule.tiers.length) p.push('Add at least one store type, e.g. Regular ×1');
+    for (const t of rule.tiers) {
+        if (!t.name) p.push('Every store type needs a name');
+        if (!Number.isFinite(t.times) || t.times <= 0 || t.times > 100) p.push(`Give ${t.name || 'every store type'} a multiplier above 0`);
+    }
+    return p;
 }
 
 /** The steps and benefit kind one store is judged by: its reward, its own steps, or the scheme's. */
@@ -188,6 +263,8 @@ export function readSettings(raw: unknown): SchemeSettings {
     const d = DEFAULT_SETTINGS;
     return {
         run: s.run === 'targets' ? 'targets' : 'entries',
+        measure: s.measure === 'points' ? 'points' : 'warranties',
+        points: readPoints(s.points),
         source: s.source === 'warranties' ? 'warranties' : 'manual',
         baseline_months: [1, 3, 6, 12].includes(Number(s.baseline_months)) ? Number(s.baseline_months) : d.baseline_months,
         count: s.count === 'registered' ? 'registered' : 'approved',
@@ -223,6 +300,7 @@ export function stepProblems(steps: TargetStep[], benefit: BenefitKind): string[
 /** Problems with a target scheme's settings; none for a scheme run by entries. */
 export function settingsProblems(s: SchemeSettings): string[] {
     if (s.run !== 'targets') return [];
+    if (s.measure === 'points') return s.source === 'warranties' ? pointsProblems(s.points) : ['Points are counted from warranties'];
     /* Counted from warranties, each store gets its own reward; scheme steps are optional. */
     if (s.source === 'warranties' && !s.steps.length) return [];
     return stepProblems(s.steps, s.benefit);

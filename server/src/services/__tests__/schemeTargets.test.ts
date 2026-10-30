@@ -130,3 +130,34 @@ test('a store new to the portal is never stretched past its warranties', async (
     assert.equal(averagePerMonth({ '2026-10-26': 1 }, basisRange({ mode: 'overall' }, '2026-10-27', '2026-10-26')), 1);
     assert.equal(averagePerMonth({ '2026-10-20': 4 }, { from: '2026-10-20', to: '2026-10-22' }), 4);
 });
+
+test('a scheme saved before points counts warranties', () => {
+    const s = readSettings({ run: 'targets', source: 'warranties' });
+    assert.equal(s.measure, 'warranties');
+    assert.deepEqual(s.points, { series: [], tiers: [] });
+});
+
+test('points: each product is worth its series, a store type multiplies', async () => {
+    const { pointsByProduct, tierOf, pointsProblems, roundPoints } = await import('../schemeTargets.js');
+    const s = readSettings({
+        run: 'targets', source: 'warranties', measure: 'points',
+        points: {
+            series: [{ id: 'amaze', name: 'Amaze', points: '0.5', products: ['AMAZE', ' amaze+ ', 'AMAZE'] }, { id: 'sig', name: 'Signature', points: 1.25, products: ['D3 (Signature)'] }],
+            tiers: [{ id: 'reg', name: 'Regular', times: 1 }, { id: 'bd', name: 'Big Daddy', times: 2 }],
+        },
+    });
+    assert.deepEqual(settingsProblems(s), []);
+    assert.deepEqual(s.points.series[0].products, ['AMAZE', 'amaze+']);
+    const worth = pointsByProduct(s.points);
+    assert.equal(worth.get('amaze+'), 0.5);
+    assert.equal(worth.get('d3 (signature)'), 1.25);
+    assert.equal(tierOf(s.points, 'bd')?.times, 2);
+    assert.equal(tierOf(s.points, undefined)?.name, 'Regular');
+    assert.equal(roundPoints(0.1 + 0.2), 0.3);
+    assert.match(pointsProblems({ series: [{ id: 'a', name: 'A', points: 1, products: ['X'] }, { id: 'b', name: 'B', points: 2, products: ['x'] }], tiers: [{ id: 't', name: 'R', times: 1 }] })[0], /both A and B/);
+    assert.ok(pointsProblems({ series: [], tiers: [] }).length >= 2);
+});
+
+test('a monthly target scheme lists its months', () => {
+    assert.deepEqual(periodsOf('2026-11-01', '2027-01-31', 'month').map(p => p.key), ['2026-11', '2026-12', '2027-01']);
+});
