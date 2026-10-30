@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { BrandLockup } from "@/components/ui/BrandLockup";
+import { brandLook } from "@/lib/brand";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +40,8 @@ const Login = () => {
   const [identifierError, setIdentifierError] = useState("");
   const [otp, setOtp] = useState<string[]>(Array(6).fill(''));
   const [userId, setUserId] = useState<string>("");
+  // The franchise's brand, once its number is entered: the OTP step shows its own logo.
+  const [otpBrand, setOtpBrand] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [resendLoading, setResendLoading] = useState(false);
@@ -144,6 +148,7 @@ const Login = () => {
       const result = await login(identifier, selectedRole);
       if (result.requiresOTP && result.userId) {
         setUserId(result.userId);
+        setOtpBrand(result.brand ?? null);
         setStep('otp');
         setCountdown(30);
         setOtpMessage(result.message || "OTP Sent");
@@ -244,7 +249,10 @@ const Login = () => {
 
         {/* Logo + Portal Title */}
         <div className="flex flex-col items-center mb-8 text-center mx-auto">
-          <img src="/autoform-logo.png" alt="AutoForm" className="h-24 w-auto object-contain brightness-0 invert drop-shadow-lg" />
+          {/* Both brands until we know the store; its own brand from the OTP step. */}
+          {step === 'otp' && otpBrand
+            ? <img src={brandLook(otpBrand).logo} alt={brandLook(otpBrand).name} className="h-14 sm:h-20 w-auto max-w-[80%] object-contain brightness-0 invert drop-shadow-lg animate-in fade-in zoom-in duration-300" />
+            : <BrandLockup className="w-full" />}
           <p className="text-white/80 text-xs font-bold tracking-[0.3em] uppercase mt-2 drop-shadow-md">
             {portalTitle}
           </p>

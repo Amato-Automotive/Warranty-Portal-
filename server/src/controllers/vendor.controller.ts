@@ -1,3 +1,5 @@
+import { withEmailBrand } from '../services/emailBrand.js';
+import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
 import { Request, Response } from 'express';
 import db, { getISTTimestamp } from '../config/database.js';
 import { formatDateTimeIST } from '../utils/dateUtils.js';
@@ -173,10 +175,10 @@ export class VendorController {
       );
 
       // Send confirmation email to vendor with login link
-      await EmailService.sendVendorApprovalConfirmation(
+      await withEmailBrand(brandOfEmail(vendors[0].email), () => EmailService.sendVendorApprovalConfirmation(
         vendors[0].email,
         vendors[0].name
-      );
+      ));
 
       res.send(`
         <!DOCTYPE html>
@@ -1322,7 +1324,7 @@ export class VendorController {
         const productDetails = JSON.parse(w.product_details || '{}');
 
         // 1. Email Notification
-        await EmailService.sendWarrantyRejectionToCustomer(
+        await withEmailBrand(brandOfWarranty(w.uid), () => EmailService.sendWarrantyRejectionToCustomer(
           w.customer_email,
           w.customer_name,
           w.uid,
@@ -1336,7 +1338,7 @@ export class VendorController {
           w.installer_name,
           w.installer_address,
           w.installer_contact
-        );
+        ));
 
         // 2. Site Notification
         if (w.user_id) {

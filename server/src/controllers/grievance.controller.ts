@@ -1,3 +1,5 @@
+import { withEmailBrand } from '../services/emailBrand.js';
+import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
 import { Request, Response } from 'express';
 import db, { getISTTimestamp } from '../config/database.js';
 import { AuthRequest } from '../middleware/auth.js';
@@ -245,7 +247,7 @@ class GrievanceController {
                 }
 
                 // Send email asynchronously
-                EmailService.sendGrievanceConfirmationEmail(
+                withEmailBrand(brandOfStore(franchiseId), () => EmailService.sendGrievanceConfirmationEmail(
                     customerEmail,
                     customerName,
                     {
@@ -256,7 +258,7 @@ class GrievanceController {
                         store_name: storeName,
                         created_at: getISTTimestamp()
                     }
-                ).catch((err: any) => console.error('Failed to send grievance confirmation email:', err));
+                )).catch((err: any) => console.error('Failed to send grievance confirmation email:', err));
 
             } catch (emailError) {
                 console.error('Error preparing grievance email:', emailError);
@@ -550,7 +552,7 @@ class GrievanceController {
 
             // Send confirmation email to franchise
             try {
-                await EmailService.sendFranchiseGrievanceConfirmationEmail(
+                await withEmailBrand(brandOfEmail(vendor.email), () => EmailService.sendFranchiseGrievanceConfirmationEmail(
                     vendor.email,
                     vendor.store_name,
                     {
@@ -560,7 +562,7 @@ class GrievanceController {
                         department,
                         department_details: departmentDetails
                     }
-                );
+                ));
             } catch (emailError) {
                 console.error('Failed to send franchise grievance confirmation email:', emailError);
             }

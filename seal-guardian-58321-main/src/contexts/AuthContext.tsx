@@ -26,7 +26,7 @@ interface AuthContextType {
   loading: boolean;
   register: (data: RegisterData) => Promise<{ userId: string; requiresOTP: boolean; message: string }>;
   verifyOTP: (userId: string, otp: string) => Promise<{ user?: User }>;
-  login: (identifier: string, role: UserRole) => Promise<{ userId: string; requiresOTP: boolean; message: string }>;
+  login: (identifier: string, role: UserRole) => Promise<{ userId: string; requiresOTP: boolean; message: string; brand?: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   // RBAC helpers
@@ -96,7 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
-  const login = async (identifier: string, role: UserRole): Promise<{ userId: string; requiresOTP: boolean; message: string }> => {
+  const login = async (identifier: string, role: UserRole): Promise<{ userId: string; requiresOTP: boolean; message: string; brand?: string }> => {
     const response = await api.post("/auth/login", { identifier, role });
     if (!response.data.success) {
       throw new Error(getErrorMessage(response.data.error, "Login failed"));
@@ -104,7 +104,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return {
       userId: response.data.userId,
       requiresOTP: response.data.requiresOTP,
-      message: response.data.message
+      message: response.data.message,
+      brand: response.data.brand
     };
   };
 

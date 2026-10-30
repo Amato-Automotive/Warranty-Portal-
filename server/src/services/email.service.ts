@@ -1,6 +1,12 @@
-import { transporter } from '../config/email.js';
+import { transporter as mailer } from '../config/email.js';
+import { brandMail } from './emailBrand.js';
 import { formatDateIST, formatDateTimeIST, getISTYear } from '../utils/dateUtils.js';
 import dotenv from 'dotenv';
+
+/* Every email leaves through here, in the brand of the store it is about (see emailBrand.ts). */
+// The AutoCruze logo is served by the live website (public/autocruze-logo.png), a fixed address like the Autoform one.
+const AC_LOGO_URL = 'https://warranty2.autoformindia.co.in/autocruze-logo.png';
+const transporter = { sendMail: (mail: any) => mailer.sendMail(brandMail(mail, AC_LOGO_URL)) };
 
 dotenv.config();
 

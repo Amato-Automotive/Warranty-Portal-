@@ -9,6 +9,7 @@ import { useAuth, UserRole } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { User, Mail, Phone, AlertCircle, KeyRound, Store, Plus, Trash2, Users, Loader2, FileText } from "lucide-react";
 import { BRAND_CHOICES, type Brand } from "@/lib/brand";
+import { BrandLockup } from "@/components/ui/BrandLockup";
 import {
   validateIndianMobile,
   cleanPhoneNumber,
@@ -373,11 +374,7 @@ const Register = () => {
         {/* Logo */}
         <div className="flex flex-col items-center mb-8 text-center mx-auto">
           <Link to="/" className="flex flex-col items-center">
-            <img
-              src="/autoform-logo.png"
-              alt="AutoForm"
-              className="h-24 w-auto object-contain brightness-0 invert drop-shadow-lg"
-            />
+            <BrandLockup className="w-full" />
             <p className="text-white/80 text-xs font-bold tracking-[0.3em] uppercase mt-2 drop-shadow-md">
               Warranty Portal
             </p>

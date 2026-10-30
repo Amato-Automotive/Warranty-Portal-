@@ -1,3 +1,5 @@
+import { withEmailBrand } from '../services/emailBrand.js';
+import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import db, { getISTTimestamp } from '../config/database.js';
@@ -770,7 +772,7 @@ export class WarrantyController {
               { warrantyId: warrantyId, vendorEmail: warrantyData.installerContact },
               '7d'
             );
-            await EmailService.sendVendorConfirmationEmail(
+            await withEmailBrand(brandOfWarranty(warrantyId), () => EmailService.sendVendorConfirmationEmail(
               vendorEmail,
               warrantyData.installerName || 'Partner',
               warrantyData.customerName,
@@ -780,7 +782,7 @@ export class WarrantyController {
               warrantyData.registrationNumber,
               warrantyData.carMake,
               warrantyData.carModel
-            );
+            ));
           } catch (err) {
             console.error('[Email] Franchise verify fallback email failed:', err);
           }
@@ -812,7 +814,7 @@ export class WarrantyController {
       // Email fallback — send if WhatsApp didn't fire
       if (!customerWaSent && warrantyData.customerEmail && warrantyData.customerEmail.trim()) {
         try {
-          await EmailService.sendWarrantyConfirmation(
+          await withEmailBrand(brandOfWarranty(warrantyId), () => EmailService.sendWarrantyConfirmation(
             warrantyData.customerEmail,
             warrantyData.customerName,
             warrantyId,
@@ -821,7 +823,7 @@ export class WarrantyController {
             warrantyData.registrationNumber,
             warrantyData.carMake,
             warrantyData.carModel
-          );
+          ));
         } catch (err) {
           console.error('[Email] Customer submission fallback email failed:', err);
         }
@@ -1514,7 +1516,7 @@ export class WarrantyController {
 
         // Email Confirmation to Customer
         if (warrantyData.customerEmail && warrantyData.customerEmail.trim()) {
-          await EmailService.sendWarrantyResubmittedConfirmation(
+          await withEmailBrand(brandOfWarranty(warrantyUid), () => EmailService.sendWarrantyResubmittedConfirmation(
             warrantyData.customerEmail,
             warrantyData.customerName,
             warrantyUid,
@@ -1523,7 +1525,7 @@ export class WarrantyController {
             warrantyData.carMake,
             warrantyData.carModel,
             warrantyData.productDetails
-          );
+          ));
         }
       } catch (e) {
         console.error('Failed to notify customer of warranty update', e);
@@ -1578,14 +1580,14 @@ export class WarrantyController {
               [vendorUserId]
             );
             if (vendorEmailInfo.length > 0) {
-              await EmailService.sendVendorResubmissionNotification(
+              await withEmailBrand(brandOfUser(vendorUserId), () => EmailService.sendVendorResubmissionNotification(
                 vendorEmailInfo[0].store_email,
                 vendorEmailInfo[0].store_name,
                 warrantyData.customerName,
                 warrantyUid,
                 warrantyData.productType,
                 warrantyData.registrationNumber
-              );
+              ));
             }
           }
           console.log(`✓ Notified vendor ${storeName} about warranty update`);

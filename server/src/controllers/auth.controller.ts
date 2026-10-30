@@ -1,3 +1,5 @@
+import { withEmailBrand } from '../services/emailBrand.js';
+import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
 import { Request, Response, CookieOptions } from 'express';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
@@ -248,7 +250,7 @@ export class AuthController {
       }
 
       if (!otpSentViaWhatsApp) {
-        await EmailService.sendOTP(email, name, otp);
+        await withEmailBrand(role === 'vendor' ? brand : null, () => EmailService.sendOTP(email, name, otp));
       }
 
       res.status(201).json({
@@ -395,7 +397,7 @@ export class AuthController {
       }
 
       if (!otpSentViaWhatsApp) {
-        await EmailService.sendOTP(user.email, user.name, otp);
+        await withEmailBrand(brandOfUser(user.id), () => EmailService.sendOTP(user.email, user.name, otp));
       }
 
       res.json({
@@ -404,7 +406,9 @@ export class AuthController {
           ? 'OTP sent to your WhatsApp'
           : 'OTP sent to your email',
         userId: user.id,
-        requiresOTP: true
+        requiresOTP: true,
+        // A franchise's brand, so the OTP step can show its own logo.
+        ...(userRole === 'vendor' && { brand: await brandOf(user.id) })
       });
     } catch (error: any) {
       console.error('Login error:', error);
@@ -575,7 +579,7 @@ export class AuthController {
               }
             }
             if (!vendorWelcomeWaSent) {
-              await EmailService.sendVendorRegistrationConfirmation(pending.email, pending.name);
+              await withEmailBrand(pending.brand, () => EmailService.sendVendorRegistrationConfirmation(pending.email, pending.name));
             }
 
             // Vendor needs admin approval, don't provide token yet
@@ -816,7 +820,7 @@ export class AuthController {
       }
 
       if (!otpSentViaWhatsApp) {
-        await EmailService.sendOTP(userEmail, userName, otp);
+        await withEmailBrand(brandOfEmail(userEmail), () => EmailService.sendOTP(userEmail, userName, otp));
       }
 
       res.json({
