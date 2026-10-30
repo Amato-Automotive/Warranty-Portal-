@@ -114,10 +114,13 @@ describe('who a scheme is for', () => {
         assert.equal(isEligible({ mode: 'stores', store_ids: ['s1'] }, store), true);
         assert.equal(isEligible({ mode: 'stores', store_ids: ['s2'] }, store), false);
     });
-    test('brand: AF stores see AF schemes, AFAC stores see both', () => {
+    test('brand: AF only, AC only, or the stores with both; none is every store', () => {
         assert.equal(isEligible({ mode: 'all', brand: 'AC' }, store), false);
         assert.equal(isEligible({ mode: 'all', brand: 'AF' }, store), true);
-        assert.equal(isEligible({ mode: 'all', brand: 'AC' }, { ...store, allowed_brands: 'AFAC' }), true);
+        assert.equal(isEligible({ mode: 'all', brand: 'AF' }, { ...store, allowed_brands: 'AFAC' }), false);
+        assert.equal(isEligible({ mode: 'all', brand: 'AFAC' }, { ...store, allowed_brands: 'AFAC' }), true);
+        assert.equal(isEligible({ mode: 'all', brand: 'AFAC' }, store), false);
+        assert.equal(isEligible({ mode: 'all', brand: null }, { ...store, allowed_brands: 'AC' }), true);
     });
 });
 

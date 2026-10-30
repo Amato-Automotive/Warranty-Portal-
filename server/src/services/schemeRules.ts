@@ -74,7 +74,8 @@ export interface Eligibility {
     states?: string[];
     store_ids?: string[];
     /* AF, AC, or null for both. */
-    brand?: 'AF' | 'AC' | null;
+    /** Only the stores of this brand: Autoform only, Autocruze only, or the ones with both. None: every brand. */
+    brand?: 'AF' | 'AC' | 'AFAC' | null;
 }
 
 /**
@@ -325,10 +326,8 @@ export function isEligible(
     e: Eligibility,
     store: { id: string; state: string | null; allowed_brands: string | null },
 ): boolean {
-    if (e.brand) {
-        const b = String(store.allowed_brands ?? 'AF').toUpperCase();
-        if (b !== 'AFAC' && b !== e.brand) return false;
-    }
+    // A brand means stores of exactly that brand: AF only, AC only, or both (AFAC).
+    if (e.brand && String(store.allowed_brands ?? 'AF').toUpperCase() !== e.brand) return false;
     if (e.mode === 'stores') return (e.store_ids ?? []).map(String).includes(String(store.id));
     if (e.mode === 'states') {
         const mine = findState(String(store.state ?? ''))?.state;

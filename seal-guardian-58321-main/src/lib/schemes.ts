@@ -51,7 +51,8 @@ export interface Eligibility {
     mode: "all" | "states" | "stores";
     states?: string[];
     store_ids?: string[];
-    brand?: "AF" | "AC" | null;
+    /** Only stores of this brand: AF only, AC only, or those with both (AFAC); none is every store. */
+    brand?: "AF" | "AC" | "AFAC" | null;
 }
 
 export interface Scheme {

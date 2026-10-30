@@ -101,7 +101,7 @@ function schemeFromBody(b: any) {
             mode: ['all', 'states', 'stores'].includes(b.eligibility?.mode) ? b.eligibility.mode : 'all',
             states: (b.eligibility?.states ?? []).map(String),
             store_ids: (b.eligibility?.store_ids ?? []).map(String),
-            brand: ['AF', 'AC'].includes(b.eligibility?.brand) ? b.eligibility.brand : null,
+            brand: ['AF', 'AC', 'AFAC'].includes(b.eligibility?.brand) ? b.eligibility.brand : null,
         } as Eligibility,
         fields,
         entries_per_store: b.entries_per_store === 'one' ? 'one' : 'many',
@@ -512,7 +512,7 @@ async function storeTargets(scheme: Scheme, storeId: string) {
 /** The verified franchises an admin can add, with what an import matches them by. */
 async function allFranchises() {
     const [rows]: any = await db.execute(
-        `SELECT vd.id, vd.store_code, vd.store_name, vd.city, vd.state, p.email
+        `SELECT vd.id, vd.store_code, vd.store_name, vd.city, vd.state, COALESCE(vd.allowed_brands, 'AF') AS brand, p.email
            FROM vendor_details vd
            JOIN vendor_verification vv ON vv.user_id = vd.user_id AND vv.is_verified = 1
            LEFT JOIN profiles p ON p.id = vd.user_id
@@ -520,7 +520,7 @@ async function allFranchises() {
     );
     return rows.map((r: any) => ({
         id: String(r.id), code: r.store_code ?? null, name: String(r.store_name ?? '').trim(),
-        city: r.city ?? null, state: r.state ?? null, email: r.email ?? null,
+        city: r.city ?? null, state: r.state ?? null, brand: r.brand ?? 'AF', email: r.email ?? null,
     }));
 }
 

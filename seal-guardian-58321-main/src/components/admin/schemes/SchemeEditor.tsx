@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { storeBrand } from "@/lib/brand";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -89,7 +90,7 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
     const [saving, setSaving] = useState<"draft" | "publish" | null>(null);
     const [problems, setProblems] = useState<string[]>([]);
     const [uploading, setUploading] = useState(false);
-    const [stores, setStores] = useState<{ id: string; store_name: string; city: string | null; state: string | null }[]>([]);
+    const [stores, setStores] = useState<{ id: string; store_name: string; city: string | null; state: string | null; allowed_brands?: string | null }[]>([]);
     const [storeSearch, setStoreSearch] = useState("");
     /* "Add dates": a list of days, each a window at the same times. */
     const [datesOpen, setDatesOpen] = useState(false);
@@ -121,8 +122,11 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
 
     const shownStores = useMemo(() => {
         const q = storeSearch.trim().toLowerCase();
-        return stores.filter(s => !q || [s.store_name, s.city, s.state].some(v => String(v ?? "").toLowerCase().includes(q))).slice(0, 200);
-    }, [stores, storeSearch]);
+        // The scheme's brand narrows the list to that brand's stores.
+        const b = d.eligibility.brand;
+        return stores.filter(s => (!b || storeBrand(s.allowed_brands) === b)
+            && (!q || [s.store_name, s.city, s.state].some(v => String(v ?? "").toLowerCase().includes(q)))).slice(0, 200);
+    }, [stores, storeSearch, d.eligibility.brand]);
 
     const uploadBanner = async (file: File) => {
         setUploading(true);
@@ -309,12 +313,18 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
                             </div>
                             <div className="space-y-1">
                                 <Label className="text-xs font-semibold text-slate-700">Brand</Label>
-                                <Select value={d.eligibility.brand ?? "both"} onValueChange={v => set("eligibility", { ...d.eligibility, brand: v === "both" ? null : v as "AF" | "AC" })}>
+                                <Select value={d.eligibility.brand ?? "all"} onValueChange={v => {
+                                    const brand = v === "all" ? null : v as "AF" | "AC" | "AFAC";
+                                    // Picked stores of another brand drop out with the change.
+                                    const keep = (d.eligibility.store_ids ?? []).filter(id => !brand || storeBrand(stores.find(s => s.id === id)?.allowed_brands) === brand);
+                                    set("eligibility", { ...d.eligibility, brand, store_ids: keep });
+                                }}>
                                     <SelectTrigger><SelectValue /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="both">Both brands</SelectItem>
-                                        <SelectItem value="AF">Autoform (AF)</SelectItem>
-                                        <SelectItem value="AC">Autocruze (AC)</SelectItem>
+                                        <SelectItem value="all">All</SelectItem>
+                                        <SelectItem value="AF">AF only (Autoform)</SelectItem>
+                                        <SelectItem value="AC">AC only (Autocruze)</SelectItem>
+                                        <SelectItem value="AFAC">AFAC only (both brands)</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -350,6 +360,7 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
                                                     store_ids: on ? d.eligibility.store_ids!.filter(x => x !== s.id) : [...(d.eligibility.store_ids ?? []), s.id],
                                                 })} />
                                                 <span className="truncate text-slate-800">{s.store_name}</span>
+                                                <span className="shrink-0 rounded bg-slate-100 px-1.5 text-[10px] font-bold text-slate-600">{storeBrand(s.allowed_brands)}</span>
                                                 <span className="text-xs text-slate-400 truncate">{[s.city, s.state].filter(Boolean).join(", ")}</span>
                                             </label>
                                         );
@@ -434,7 +445,7 @@ export function SchemeEditor({ open, scheme, onClose, onSaved }: {
                         {d.score_rule.mode === "products" && (
                             <ProductPointsPicker
                                 products={d.score_rule.products}
-                                brand={d.eligibility.brand ?? null}
+                                brand={d.eligibility.brand === 'AFAC' ? null : d.eligibility.brand ?? null}
                                 onChange={products => set("score_rule", { mode: "products", products })}
                             />
                         )}

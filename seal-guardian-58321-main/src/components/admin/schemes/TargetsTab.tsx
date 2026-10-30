@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { STORE_BRAND_FILTER, storeBrand } from "@/lib/brand";
 import * as XLSX from "xlsx";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -21,7 +22,7 @@ import {
  */
 
 interface Franchise {
-    id: string; code: string | null; name: string; city: string | null; state: string | null;
+    id: string; code: string | null; name: string; city: string | null; state: string | null; brand?: string;
     averages: Averages | null; last_month: number | null; best_month: number | null;
 }
 interface Data { periods: Period[]; stores: TargetStore[]; settings: SchemeSettings; current: string | null; franchises: Franchise[] }
@@ -148,15 +149,16 @@ function PickView({ scheme, data, basis, setBasis, onBack, onDone }: {
     const { toast } = useToast();
     const [q, setQ] = useState("");
     const [state, setState] = useState("");
+    const [brand, setBrand] = useState("");
     const [picked, setPicked] = useState<Set<string>>(new Set());
     const [busy, setBusy] = useState(false);
     const states = useMemo(() => [...new Set(data.franchises.map(f => (f.state ?? "").trim()).filter(Boolean))].sort(), [data.franchises]);
     const list = useMemo(() => {
         const n = q.trim().toLowerCase();
         return data.franchises
-            .filter(f => (!state || (f.state ?? "").trim() === state) && (!n || [f.name, f.city, f.code].some(v => String(v ?? "").toLowerCase().includes(n))))
+            .filter(f => (!brand || storeBrand(f.brand) === brand) && (!state || (f.state ?? "").trim() === state) && (!n || [f.name, f.city, f.code].some(v => String(v ?? "").toLowerCase().includes(n))))
             .sort((a, b) => averageOn(b.averages, basis) - averageOn(a.averages, basis) || a.name.localeCompare(b.name));
-    }, [data.franchises, q, state, basis]);
+    }, [data.franchises, q, state, brand, basis]);
     const shown = list.slice(0, 200);
     const toggle = (id: string) => setPicked(p => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
@@ -188,6 +190,15 @@ function PickView({ scheme, data, basis, setBasis, onBack, onDone }: {
                 <select value={state} onChange={e => setState(e.target.value)} aria-label="State" className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm">
                     <option value="">All states</option>{states.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
+                {/* Brand: each on its own, with how many franchises it has. */}
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="Brand">
+                    {STORE_BRAND_FILTER.map(b => (
+                        <button key={b.value} type="button" onClick={() => setBrand(b.value)}
+                            className={`h-11 rounded-xl border px-3 text-sm font-semibold ${brand === b.value ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}>
+                            {b.label} <span className="opacity-70">{data.franchises.filter(f => !b.value || storeBrand(f.brand) === b.value).length}</span>
+                        </button>
+                    ))}
+                </div>
                 <div className="sm:ml-auto"><BasisPicker basis={basis} onChange={setBasis} /></div>
             </div>
 
@@ -202,7 +213,7 @@ function PickView({ scheme, data, basis, setBasis, onBack, onDone }: {
                     {shown.map(f => (
                         <label key={f.id} className={cn("grid cursor-pointer grid-cols-[32px_1fr_auto] items-center gap-2 px-4 py-3 md:grid-cols-[48px_2.4fr_1fr_1fr_1fr]", picked.has(f.id) && "bg-orange-50")}>
                             <input type="checkbox" checked={picked.has(f.id)} onChange={() => toggle(f.id)} className="h-4 w-4 accent-orange-600" />
-                            <span className="min-w-0"><span className="block truncate font-semibold text-slate-900">{f.name}</span><span className="block text-xs text-slate-500">{[f.city, f.state].filter(Boolean).join(", ")}</span></span>
+                            <span className="min-w-0"><span className="block truncate font-semibold text-slate-900">{f.name}</span><span className="block text-xs text-slate-500">{[f.city, f.state, storeBrand(f.brand)].filter(Boolean).join(", ")}</span></span>
                             <span className="text-right md:text-left"><b className="text-base tabular-nums">{fmt(averageOn(f.averages, basis))}</b><span className="ml-1 text-xs text-slate-500 md:hidden">/ month</span></span>
                             <span className="hidden tabular-nums md:block">{fmt(f.last_month)}</span>
                             <span className="hidden tabular-nums md:block">{fmt(f.best_month)}</span>
