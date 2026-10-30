@@ -146,6 +146,7 @@ export const AdminWarrantyList = ({
                                             <h4 className="text-sm font-extrabold text-slate-800 uppercase tracking-tight truncate max-w-[150px]">
                                                 {productName.replace(/-/g, ' ')}
                                             </h4>
+                                            {warranty.product_brand && <Badge variant="outline" className={`shrink-0 font-bold ${warranty.product_brand === "AC" ? "bg-slate-900 text-white border-slate-900" : "bg-orange-50 text-orange-700 border-orange-200"} text-[9px] px-1 py-0 h-4`}>{warranty.product_brand}</Badge>}
                                             <Badge variant="outline" className="bg-blue-50/50 text-blue-700 border-blue-200 text-[9px] px-1 py-0 h-4 shrink-0 font-bold">
                                                 {warranty.warranty_type || '1 Year'}
                                             </Badge>
@@ -206,6 +207,7 @@ export const AdminWarrantyList = ({
                                                 <h3 className="text-base md:text-lg font-bold uppercase tracking-wide">
                                                     {productName.replace(/-/g, ' ')}
                                                 </h3>
+                                                {warranty.product_brand && <Badge variant="outline" className={`shrink-0 font-bold ${warranty.product_brand === "AC" ? "bg-slate-900 text-white border-slate-900" : "bg-orange-50 text-orange-700 border-orange-200"} text-[10px] px-2 py-0.5 h-5`}>{warranty.product_brand}</Badge>}
                                                 <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-2 py-0.5 h-5 whitespace-nowrap">
                                                     {warranty.warranty_type || '1 Year'}
                                                 </Badge>

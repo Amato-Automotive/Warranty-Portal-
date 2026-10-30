@@ -1,3 +1,4 @@
+import { productsForBrand } from "@/lib/brand";
 import { useState, useEffect } from "react";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,8 @@ import {
 } from "@/lib/ppfRolls";
 
 interface ProductInfoProps {
+  /** The store's brand: only its products are listed. */
+  brand?: string | null;
   formData: EVFormData;
   updateFormData: (updates: Partial<EVFormData>) => void;
   onPrev: () => void;
@@ -186,7 +189,7 @@ const PhotoField = ({
   );
 };
 
-const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, existingPhotos }: ProductInfoProps) => {
+const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, existingPhotos, brand }: ProductInfoProps) => {
   const { toast } = useToast();
   const [products, setProducts] = useState<any[]>([]);
   const [termsModalOpen, setTermsModalOpen] = useState(false);
@@ -352,7 +355,7 @@ const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, exis
             Select Product <span className="text-destructive">*</span>
           </Label>
           <Combobox
-            options={products.map(product => ({ value: product.name, label: product.name }))}
+            options={productsForBrand(products, brand, formData.product).map(product => ({ value: product.name, label: product.name }))}
             value={formData.product}
             onChange={(value) => updateFormData({ product: value })}
             placeholder="Select Product"

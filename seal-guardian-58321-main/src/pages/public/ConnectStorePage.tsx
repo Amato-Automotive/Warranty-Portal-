@@ -181,6 +181,7 @@ const ConnectStorePage = () => {
 
                 <TabsContent value="ev" className="mt-6">
                     <EVProductsForm
+                        brand={brand}
                         isPublic={true}
                         storeDetails={storeDetails}
                         installers={installers}
@@ -189,6 +190,7 @@ const ConnectStorePage = () => {
 
                 <TabsContent value="seat-cover" className="mt-6">
                     <SeatCoverForm
+                        brand={brand}
                         isPublic={true}
                         storeDetails={storeDetails}
                         installers={installers}

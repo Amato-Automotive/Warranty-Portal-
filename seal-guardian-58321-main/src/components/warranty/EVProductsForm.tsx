@@ -82,6 +82,8 @@ export interface EVFormData {
 }
 
 interface EVProductsFormProps {
+  /** The store's brand, when the form already knows its store (the QR page). */
+  brand?: string | null;
   initialData?: any;
   warrantyId?: string;
   onSuccess?: (result?: any) => void;
@@ -112,7 +114,7 @@ interface EVProductsFormProps {
   installers?: any[];
 }
 
-const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEditing, isPublic, vendorDirect, embedded, storeDetails, installers }: EVProductsFormProps) => {
+const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEditing, isPublic, vendorDirect, embedded, storeDetails, installers, brand }: EVProductsFormProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -726,6 +728,7 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
             {currentStep === 4 && (
               <div className="space-y-6">
                 <ProductInfo
+                  brand={brand ?? (user?.role === 'vendor' ? user.brand : null)}
                   formData={formData}
                   updateFormData={updateFormData}
                   onPrev={handlePrev}

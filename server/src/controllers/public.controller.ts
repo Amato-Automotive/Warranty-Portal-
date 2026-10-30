@@ -1,3 +1,5 @@
+import { withEmailBrand } from '../services/emailBrand.js';
+import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
 import { Request, Response } from 'express';
 import db, { getISTTimestamp } from '../config/database.js';
 import { verifyActionToken, signActionToken } from '../utils/actionToken.js';
@@ -27,6 +29,7 @@ export class PublicController {
           vd.state,
           vd.pincode,
           vd.store_email,
+          COALESCE(vd.allowed_brands, 'AF') as brand,
           p.phone_number as phone,
           p.name as owner_name
         FROM vendor_details vd
@@ -428,7 +431,7 @@ export class PublicController {
                 const productDetails = JSON.parse(w.product_details || '{}');
 
                 // Send rejection email to customer
-                await EmailService.sendWarrantyRejectionToCustomer(
+                await withEmailBrand(brandOfWarranty(w.uid), () => EmailService.sendWarrantyRejectionToCustomer(
                     w.customer_email,
                     w.customer_name,
                     w.uid,
@@ -442,7 +445,7 @@ export class PublicController {
                     w.installer_name,
                     w.installer_address, // These might be in w.installer_contact or need fetching from vendor_details if linked
                     w.installer_contact
-                );
+                ));
             }
 
             res.send(`
@@ -1016,7 +1019,7 @@ export class PublicController {
                             { warrantyId: warrantyId, vendorEmail: warrantyData.installerContact },
                             '7d'
                         );
-                        await EmailService.sendVendorConfirmationEmail(
+                        await withEmailBrand(brandOfWarranty(warrantyId), () => EmailService.sendVendorConfirmationEmail(
                             vendorEmail,
                             warrantyData.installerName || 'Partner',
                             customerName,
@@ -1026,7 +1029,7 @@ export class PublicController {
                             warrantyData.registrationNumber,
                             warrantyData.carMake,
                             warrantyData.carModel
-                        );
+                        ));
                     } catch (err) {
                         console.error('[Email] Franchise verify fallback email failed:', err);
                     }
@@ -1058,7 +1061,7 @@ export class PublicController {
             // Email fallback for confirmation
             if (!customerWaSent && customerEmail && customerEmail.trim()) {
                 try {
-                    await EmailService.sendWarrantyConfirmation(
+                    await withEmailBrand(brandOfWarranty(warrantyId), () => EmailService.sendWarrantyConfirmation(
                         customerEmail,
                         customerName,
                         warrantyId,
@@ -1067,7 +1070,7 @@ export class PublicController {
                         warrantyData.registrationNumber,
                         warrantyData.carMake,
                         warrantyData.carModel
-                    );
+                    ));
                 } catch (err) {
                     console.error('[Email] Customer submission fallback email failed:', err);
                 }
@@ -1076,11 +1079,11 @@ export class PublicController {
             // Step 6: Send welcome email for completely new users
             if (isNewUser && customerEmail && customerEmail.trim()) {
                 try {
-                    await EmailService.sendPublicRegistrationWelcome(
+                    await withEmailBrand(brandOfWarranty(warrantyId), () => EmailService.sendPublicRegistrationWelcome(
                         customerEmail,
                         customerName,
                         warrantyId
-                    );
+                    ));
                 } catch (err) {
                     console.error('[Email] Public registration welcome failed:', err);
                 }

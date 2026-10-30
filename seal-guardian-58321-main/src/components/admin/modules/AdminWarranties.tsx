@@ -130,6 +130,8 @@ export const AdminWarranties = () => {
 
     // Advanced Filter State
     const [productTypeFilter, setProductTypeFilter] = useState("all");
+    // The brand of the warranty's design (from the products list), for auditing by brand.
+    const [brandFilter, setBrandFilter] = useState("all");
     /* Narrows whatever tab is open to the ones already rejected once, rather
        than being a tab of its own — a resubmitted warranty is genuinely
        pending, and moving it out would make the count disagree with the list. */
@@ -203,6 +205,7 @@ export const AdminWarranties = () => {
 
     const clearFilters = () => {
         setProductTypeFilter('all');
+        setBrandFilter('all');
         setSelectedMake('all');
         setSelectedModel('all');
         setDateRange(undefined);
@@ -215,7 +218,7 @@ export const AdminWarranties = () => {
     // Reset pagination when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [statusFilter, productTypeFilter, selectedMake, selectedModel, dateRange, search, resubmittedOnly, reviewQueue]);
+    }, [statusFilter, productTypeFilter, brandFilter, selectedMake, selectedModel, dateRange, search, resubmittedOnly, reviewQueue]);
 
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 350);
@@ -228,6 +231,7 @@ export const AdminWarranties = () => {
             limit: String(limit),
             status: statusFilter === 'quick_review' && reviewQueue !== 'all' ? reviewQueue : statusFilter,
             product_type: productTypeFilter,
+            brand: brandFilter,
             make: selectedMake,
             model: selectedModel,
             sort_by: sortConfig.field,
@@ -292,7 +296,7 @@ export const AdminWarranties = () => {
         fetchWarranties();
         // The individual values intentionally drive a new server request.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentPage, statusFilter, productTypeFilter, selectedMake, selectedModel, dateRange, debouncedSearch, resubmittedOnly, reviewQueue, sortConfig.field, sortConfig.order]);
+    }, [currentPage, statusFilter, productTypeFilter, brandFilter, selectedMake, selectedModel, dateRange, debouncedSearch, resubmittedOnly, reviewQueue, sortConfig.field, sortConfig.order]);
 
     const fetchWarranties = async (isRefresh = false) => {
         setLoading(true);
@@ -566,6 +570,20 @@ export const AdminWarranties = () => {
                                 <SelectItem value="all" className="rounded-xl text-xs font-bold py-2.5">All Categories</SelectItem>
                                 <SelectItem value="seat-cover" className="rounded-xl text-xs font-bold py-2.5">Seat Cover</SelectItem>
                                 <SelectItem value="ppf" className="rounded-xl text-xs font-bold py-2.5">Paint Protection Film</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Brand Filter: by the warranty's design */}
+                    <div className="relative z-10">
+                        <Select value={brandFilter} onValueChange={setBrandFilter}>
+                            <SelectTrigger aria-label="Brand" className="w-[160px] h-11 bg-white border-orange-100 rounded-2xl text-xs font-bold shadow-sm hover:border-orange-200 transition-colors focus:ring-orange-500/20">
+                                <SelectValue placeholder="Brand" />
+                            </SelectTrigger>
+                            <SelectContent className="rounded-2xl border-orange-100 shadow-2xl p-1">
+                                <SelectItem value="all" className="rounded-xl text-xs font-bold py-2.5">All Brands</SelectItem>
+                                <SelectItem value="AF" className="rounded-xl text-xs font-bold py-2.5">Autoform</SelectItem>
+                                <SelectItem value="AC" className="rounded-xl text-xs font-bold py-2.5">Autocruze</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>

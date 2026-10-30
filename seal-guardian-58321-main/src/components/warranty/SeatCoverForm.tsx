@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { productsForBrand } from "@/lib/brand";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { getErrorMessage } from "@/lib/api";
 import {
@@ -76,6 +77,8 @@ interface SeatCoverFormProps {
   isPublic?: boolean;
   vendorDirect?: boolean;
   products?: any[];
+  /** The store's brand, when the form already knows its store (the QR page). */
+  brand?: string | null;
   storeDetails?: {
     id: number;
     store_name: string;
@@ -91,7 +94,7 @@ interface SeatCoverFormProps {
   installers?: any[];
 }
 
-const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic, vendorDirect, storeDetails, installers, products: initialProducts }: SeatCoverFormProps) => {
+const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic, vendorDirect, storeDetails, installers, products: initialProducts, brand }: SeatCoverFormProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -415,6 +418,10 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
       fetchManpower();
     }
   }, [formData.storeEmail, stores, isPublic]);
+
+  // The products of the store's brand: the QR page's store, the signed-in store, or the store a customer picks.
+  const formBrand = brand ?? (user?.role === 'vendor' ? user.brand : stores.find(st => st.store_email === formData.storeEmail)?.brand);
+  const brandProducts = useMemo(() => productsForBrand(products, formBrand, formData.productName), [products, formBrand, formData.productName]);
 
   // Auto-select warranty type based on product name
   // Auto-select warranty type based on product name
@@ -1779,7 +1786,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
                   Product Name <span className="text-destructive">*</span>
                 </Label>
                 <Combobox
-                  options={products.map(product => ({ value: product.name, label: product.name }))}
+                  options={brandProducts.map(product => ({ value: product.name, label: product.name }))}
                   value={formData.productName}
                   onChange={(value) => handleChange("productName", value)}
                   placeholder="Select Product"

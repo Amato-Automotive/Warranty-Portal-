@@ -1,4 +1,6 @@
-﻿import { Request, Response } from 'express';
+﻿import { withEmailBrand } from '../services/emailBrand.js';
+import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
+import { Request, Response } from 'express';
 import db, { getISTTimestamp } from '../config/database.js';
 import { EmailService } from '../services/email.service.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
@@ -557,18 +559,18 @@ export class AdminController {
             try {
                 if (is_verified) {
                     // Send approval email
-                    await EmailService.sendVendorApprovalConfirmation(
+                    await withEmailBrand(brandOfEmail(vendorData.email), () => EmailService.sendVendorApprovalConfirmation(
                         vendorData.email,
                         vendorData.name
-                    );
+                    ));
                     console.log(`âœ“ Vendor approval email sent to ${vendorData.email}`);
                 } else {
                     // Send rejection email
-                    await EmailService.sendVendorRejectionNotification(
+                    await withEmailBrand(brandOfEmail(vendorData.email), () => EmailService.sendVendorRejectionNotification(
                         vendorData.email,
                         vendorData.name,
                         rejection_reason
-                    );
+                    ));
                     console.log(`âœ“ Vendor rejection email sent to ${vendorData.email}`);
                 }
             } catch (emailError: any) {
@@ -2060,7 +2062,7 @@ export class AdminController {
                                 }
                                 // Send Email (always live alongside WhatsApp)
                                 await runWithRetry(
-                                    () => EmailService.sendWarrantyApprovalToCustomer(
+                                    () => withEmailBrand(brandOfWarranty(warrantyData.uid), () => EmailService.sendWarrantyApprovalToCustomer(
                                         warrantyData.customer_email,
                                         warrantyData.customer_name,
                                         warrantyData.uid,
@@ -2077,7 +2079,7 @@ export class AdminController {
                                         (warrantyData.purchase_date || warrantyData.created_at)
                                             ? new Date(warrantyData.purchase_date || warrantyData.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
                                             : 'N/A'
-                                    ),
+                                    )),
                                     3,
                                     5000,
                                     `Email Customer Approval (${warrantyData.uid})`
@@ -2115,7 +2117,7 @@ export class AdminController {
                                 }
                                 // Send Email (always live alongside WhatsApp)
                                 await runWithRetry(
-                                    () => EmailService.sendWarrantyRejectionToCustomer(
+                                    () => withEmailBrand(brandOfWarranty(warrantyData.uid), () => EmailService.sendWarrantyRejectionToCustomer(
                                         warrantyData.customer_email,
                                         warrantyData.customer_name,
                                         warrantyData.uid,
@@ -2130,7 +2132,7 @@ export class AdminController {
                                         storeFullAddress,
                                         warrantyData.store_email,
                                         warrantyData.applicator_name
-                                    ),
+                                    )),
                                     3,
                                     5000,
                                     `Email Customer Rejection (${warrantyData.uid})`
@@ -2295,7 +2297,7 @@ export class AdminController {
                             if (status === 'validated') {
                                 // Vendor approval: no WhatsApp template, email stays primary
                                 await runWithRetry(
-                                    () => EmailService.sendWarrantyApprovalToVendor(
+                                    () => withEmailBrand(brandOfWarranty(warrantyData.uid), () => EmailService.sendWarrantyApprovalToVendor(
                                         vendorEmail!,
                                         vendorName!,
                                         warrantyData.customer_name,
@@ -2308,7 +2310,7 @@ export class AdminController {
                                         warrantyData.car_model,
                                         productDetails,
                                         warrantyData.warranty_type
-                                    ),
+                                    )),
                                     3,
                                     5000,
                                     `Email Vendor Approval (${warrantyData.uid})`
@@ -2353,7 +2355,7 @@ export class AdminController {
                                 }
                                 // Send Email (always live alongside WhatsApp)
                                 await runWithRetry(
-                                    () => EmailService.sendWarrantyRejectionToVendor(
+                                    () => withEmailBrand(brandOfWarranty(warrantyData.uid), () => EmailService.sendWarrantyRejectionToVendor(
                                         vendorEmail!,
                                         vendorName!,
                                         warrantyData.customer_name,
@@ -2367,7 +2369,7 @@ export class AdminController {
                                         warrantyData.car_model,
                                         productDetails,
                                         warrantyData.warranty_type
-                                    ),
+                                    )),
                                     3,
                                     5000,
                                     `Email Vendor Rejection (${warrantyData.uid})`
@@ -2821,7 +2823,7 @@ export class AdminController {
             const offset = (page - 1) * limit;
 
             // Extract Filters
-            const { status, search, product_type, make, date_from, date_to, model, resubmitted } = req.query;
+            const { status, search, product_type, make, date_from, date_to, model, resubmitted, brand } = req.query;
 
             let conditions: string[] = [];
             let params: any[] = [];
@@ -2838,6 +2840,11 @@ export class AdminController {
             };
 
             // 1. Dynamic Filters
+
+            // Brand: the brand of the warranty's design, from the products list by its name.
+            // A name not in the list is from before the split, so Autoform.
+            if (brand === 'AC') addCondition("pb.brand = 'AC'");
+            else if (brand === 'AF') addCondition("COALESCE(pb.brand, 'AF') <> 'AC'");
 
             // Status Filtering. The API now uses the same status names as the UI.
             if (status && status !== 'all') {
@@ -2922,7 +2929,9 @@ export class AdminController {
             // (services/warrantyStore.ts) — never matched by name.
             const joins = `
                 LEFT JOIN manpower m ON wr.manpower_id = m.id
-                LEFT JOIN vendor_details vd_s ON vd_s.id = wr.vendor_details_id`;
+                LEFT JOIN vendor_details vd_s ON vd_s.id = wr.vendor_details_id
+                LEFT JOIN products pb ON LOWER(TRIM(pb.name)) = LOWER(TRIM(COALESCE(
+                    JSON_UNQUOTE(JSON_EXTRACT(wr.product_details, '$.productName')), JSON_UNQUOTE(JSON_EXTRACT(wr.product_details, '$.product')))))`;
 
             // Count Query (must include the same JOINs used in search conditions)
             const countQuery = `
@@ -2991,7 +3000,8 @@ export class AdminController {
                     vd_s.state as vendor_state,
                     vd_s.latitude as store_lat,
                     vd_s.longitude as store_lng,
-                    vp.phone_number as vendor_phone_number
+                    vp.phone_number as vendor_phone_number,
+                    CASE WHEN pb.brand = 'AC' THEN 'AC' ELSE 'AF' END as product_brand
                 FROM warranty_registrations wr
                 LEFT JOIN profiles p ON wr.user_id = p.id
                 ${joins}
