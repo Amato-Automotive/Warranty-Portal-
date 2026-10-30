@@ -2699,7 +2699,7 @@ export class OrderController {
 
             // 1. Fetch order details for access control and context
             const [orderRows]: any = await connection.execute(
-                'SELECT vendor_id, distributor_id FROM store_orders WHERE id = ?',
+                'SELECT vendor_id, distributor_id, status FROM store_orders WHERE id = ?',
                 [id]
             );
 
@@ -2709,6 +2709,7 @@ export class OrderController {
             }
 
             const order = orderRows[0];
+            let shippedNow = false;
 
             // Check role and retrieve distributor ID if sender is distributor
             let distributorId = null;
@@ -2738,8 +2739,10 @@ export class OrderController {
                 return res.status(403).json({ error: 'Only the distributor can share the docket number' });
             }
             if (docketId) {
+                // The docket is the shipment: an open order becomes Shipped.
+                shippedNow = order.status === 'processing' || order.status === 'pending';
                 await connection.execute(
-                    'UPDATE store_orders SET docket_id = ? WHERE id = ?',
+                    `UPDATE store_orders SET docket_id = ?${shippedNow ? ", status = 'shipped'" : ''} WHERE id = ?`,
                     [docketId, id]
                 );
 
@@ -2780,8 +2783,42 @@ export class OrderController {
                 success: true,
                 message: 'Message sent successfully',
                 chatMessage,
-                docketId: docketId || null
+                docketId: docketId || null,
+                status: shippedNow ? 'shipped' : order.status
             });
+
+            // The franchise hears its order is on the way, with the docket.
+            if (shippedNow) {
+                try {
+                    const [vendorRows]: any = await db.execute(
+                        `SELECT vd.store_name, vd.store_email, p.name AS contact_name, p.email AS contact_email
+                           FROM vendor_details vd JOIN profiles p ON p.id = vd.user_id WHERE vd.user_id = ?`, [order.vendor_id]);
+                    const [distRows]: any = await db.execute('SELECT name FROM distributors WHERE id = ?', [order.distributor_id]);
+                    const vendor = vendorRows[0];
+                    const to = vendor?.contact_email || vendor?.store_email;
+                    if (to) await transporter.sendMail({
+                        from: process.env.EMAIL_FROM,
+                        to,
+                        subject: `Order Shipped — #${id}`,
+                        html: `
+                            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                                <div style="background: linear-gradient(135deg, #4f46e5, #6366f1); padding: 28px; text-align: center; border-radius: 10px 10px 0 0;">
+                                    <h1 style="color: #fff; margin: 0; font-size: 22px;">Your order is on the way</h1>
+                                </div>
+                                <div style="background: #fff; padding: 30px; border: 1px solid #eee; border-radius: 0 0 10px 10px;">
+                                    <p>Hello <strong>${OrderController.escapeHtml(vendor?.store_name || vendor?.contact_name || 'Franchise Partner')}</strong>,</p>
+                                    <p>Your distributor <strong>${OrderController.escapeHtml(distRows[0]?.name || 'Distributor')}</strong> has shipped order <strong>#${OrderController.escapeHtml(id)}</strong>.</p>
+                                    <div style="background: #eef2ff; border-left: 4px solid #4f46e5; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                        <p style="margin: 0;"><strong>Docket / tracking no.:</strong> ${OrderController.escapeHtml(docketId)}</p>
+                                    </div>
+                                    <p style="color: #475569; font-size: 13px;">Press <strong>Mark Received</strong> on the order in your dashboard once it reaches you.</p>
+                                </div>
+                            </div>`,
+                    });
+                } catch (mailError: any) {
+                    console.error('[Order] Shipped email failed (non-critical):', mailError?.message);
+                }
+            }
 
         } catch (error: any) {
             await connection.rollback();

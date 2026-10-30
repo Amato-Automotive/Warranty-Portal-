@@ -65,8 +65,8 @@ interface Order {
 
 // â"€â"€â"€ Status Badge â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
-/* "On the way": the distributor has shared a docket but the order isn't
-   received yet. Nothing in the app sets "shipped", so the docket is the sign. */
+/* Sharing the docket ships an order ("Shipped"). An older open order that got
+   a docket before that still reads "On the way". */
 const StatusBadge = ({ status, isIncoming = false, docket }: { status: Order['status']; isIncoming?: boolean; docket?: string | null }) => {
   const config: Record<string, { label: string; icon: any; className: string }> = {
     pending:    isIncoming
@@ -187,6 +187,7 @@ type FilterOption = { value: string; label: string; activeBg: string; activeText
 const ORDER_FILTER_OPTIONS: FilterOption[] = [
   { value: 'all',       label: 'All Orders', activeBg: 'bg-orange-50',  activeText: 'text-orange-600',  dot: 'bg-orange-400' },
   { value: 'active',    label: 'Active',      activeBg: 'bg-blue-50',   activeText: 'text-blue-600',    dot: 'bg-blue-500'   },
+  { value: 'shipped',   label: 'Shipped',     activeBg: 'bg-indigo-50', activeText: 'text-indigo-600',  dot: 'bg-indigo-500' },
   { value: 'onhold',    label: 'On Hold',     activeBg: 'bg-amber-50',  activeText: 'text-amber-600',   dot: 'bg-amber-400'  },
   { value: 'completed', label: 'Completed',   activeBg: 'bg-emerald-50',activeText: 'text-emerald-600', dot: 'bg-emerald-500'},
   { value: 'declined',  label: 'Declined',    activeBg: 'bg-rose-50',   activeText: 'text-rose-600',    dot: 'bg-rose-500'   },
@@ -528,7 +529,7 @@ const B2BOrderManagement: React.FC = () => {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [receivingOrderId, setReceivingOrderId] = useState<string | null>(null);
-  const [orderFilter, setOrderFilter] = useState<'all' | 'active' | 'onhold' | 'completed' | 'declined'>('all');
+  const [orderFilter, setOrderFilter] = useState<'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined'>('all');
   const [orderSearch, setOrderSearch] = useState('');
   const [orderDateFrom, setOrderDateFrom] = useState('');
   const [orderDateTo, setOrderDateTo] = useState('');
@@ -539,7 +540,7 @@ const B2BOrderManagement: React.FC = () => {
   const [loadingIncomingOrders, setLoadingIncomingOrders] = useState(false);
   const [confirmingIncomingId, setConfirmingIncomingId] = useState<string | null>(null);
   const [cancellingIncomingId, setCancellingIncomingId] = useState<string | null>(null);
-  const [incomingFilter, setIncomingFilter] = useState<'all' | 'active' | 'onhold' | 'completed' | 'declined'>('all');
+  const [incomingFilter, setIncomingFilter] = useState<'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined'>('all');
   const [incomingSearch, setIncomingSearch] = useState('');
   const [incomingDateFrom, setIncomingDateFrom] = useState('');
   const [incomingDateTo, setIncomingDateTo] = useState('');
@@ -724,7 +725,8 @@ const B2BOrderManagement: React.FC = () => {
 
   const filteredIncomingOrders = baseFilteredIncoming
     .filter(order => {
-      if (incomingFilter === 'active') return order.status === 'processing' || order.status === 'shipped';
+      if (incomingFilter === 'active') return order.status === 'processing';
+      if (incomingFilter === 'shipped') return order.status === 'shipped';
       if (incomingFilter === 'onhold') return order.status === 'pending';
       if (incomingFilter === 'completed') return order.status === 'delivered' || order.status === 'received';
       if (incomingFilter === 'declined') return order.status === 'cancelled';
@@ -742,13 +744,15 @@ const B2BOrderManagement: React.FC = () => {
       if (res.data.success) {
         setDocketIdInput('');
         setDocketDialogOpen(false);
+        const shipped = res.data.status === 'shipped';
         toast({
-          title: 'Docket Shared',
-          description: `Docket ID ${res.data.docketId} has been linked and shared.`,
+          title: shipped ? 'Order shipped' : 'Docket Shared',
+          description: shipped ? `Docket ${res.data.docketId} shared. The franchise has been told.` : `Docket ID ${res.data.docketId} has been linked and shared.`,
         });
-        // Update local order lists docket_id so it reflects immediately in spec sheet and list card
-        setOrders(prev => prev.map(o => o.id === selectedOrderId ? { ...o, docket_id: res.data.docketId } : o));
-        setIncomingOrders(prev => prev.map(o => o.id === selectedOrderId ? { ...o, docket_id: res.data.docketId } : o));
+        // The docket and (when it shipped the order) the status, at once in the spec sheet and the list.
+        const patch = (o: any) => o.id === selectedOrderId ? { ...o, docket_id: res.data.docketId, ...(res.data.status ? { status: res.data.status } : {}) } : o;
+        setOrders(prev => prev.map(patch));
+        setIncomingOrders(prev => prev.map(patch));
       }
     } catch (err: any) {
       toast({
@@ -1038,10 +1042,11 @@ const B2BOrderManagement: React.FC = () => {
     downloadCSV(exportData, `inventory${brandSuffix}_${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
-  const handleExportOrders = (scope: 'orders' | 'incoming', statusFilter: 'all' | 'active' | 'onhold' | 'completed' | 'declined') => {
+  const handleExportOrders = (scope: 'orders' | 'incoming', statusFilter: 'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined') => {
     const statusMap: Record<string, string[]> = {
       all: [],
-      active: ['processing', 'shipped'],
+      active: ['processing'],
+      shipped: ['shipped'],
       onhold: ['pending'],
       completed: ['delivered', 'received'],
       declined: ['cancelled'],
@@ -1962,7 +1967,8 @@ const B2BOrderManagement: React.FC = () => {
 
   const filteredOrders = baseFilteredOrders
     .filter(order => {
-      if (orderFilter === 'active') return order.status === 'processing' || order.status === 'shipped';
+      if (orderFilter === 'active') return order.status === 'processing';
+      if (orderFilter === 'shipped') return order.status === 'shipped';
       if (orderFilter === 'onhold') return order.status === 'pending';
       if (orderFilter === 'completed') return order.status === 'delivered' || order.status === 'received';
       if (orderFilter === 'declined') return order.status === 'cancelled';
@@ -3661,14 +3667,16 @@ const B2BOrderManagement: React.FC = () => {
           const base = isOrders ? baseFilteredOrders : baseFilteredIncoming;
           const counts = {
             all: base.length,
-            active: base.filter((o: any) => o.status === 'processing' || o.status === 'shipped').length,
+            active: base.filter((o: any) => o.status === 'processing').length,
+            shipped: base.filter((o: any) => o.status === 'shipped').length,
             onhold: base.filter((o: any) => o.status === 'pending').length,
             completed: base.filter((o: any) => o.status === 'delivered' || o.status === 'received').length,
             declined: base.filter((o: any) => o.status === 'cancelled').length,
           };
-          const options: { key: 'all' | 'active' | 'onhold' | 'completed' | 'declined'; label: string; color: string; dot: string }[] = [
+          const options: { key: 'all' | 'active' | 'shipped' | 'onhold' | 'completed' | 'declined'; label: string; color: string; dot: string }[] = [
             { key: 'all',       label: 'All Orders',       color: 'bg-orange-50 border-orange-200 hover:border-orange-400 text-orange-700', dot: 'bg-orange-400' },
             { key: 'active',    label: 'Active',           color: 'bg-blue-50 border-blue-200 hover:border-blue-400 text-blue-700',         dot: 'bg-blue-500' },
+            { key: 'shipped',   label: 'Shipped',          color: 'bg-indigo-50 border-indigo-200 hover:border-indigo-400 text-indigo-700', dot: 'bg-indigo-500' },
             { key: 'onhold',    label: 'On Hold',          color: 'bg-amber-50 border-amber-200 hover:border-amber-400 text-amber-700',     dot: 'bg-amber-400' },
             { key: 'completed', label: 'Completed',        color: 'bg-emerald-50 border-emerald-200 hover:border-emerald-400 text-emerald-700', dot: 'bg-emerald-500' },
             { key: 'declined',  label: 'Declined',         color: 'bg-rose-50 border-rose-200 hover:border-rose-400 text-rose-700',         dot: 'bg-rose-500' },
@@ -3753,7 +3761,8 @@ const B2BOrderManagement: React.FC = () => {
                 options={ORDER_FILTER_OPTIONS}
                 counts={{
                   all: baseFilteredOrders.length,
-                  active: baseFilteredOrders.filter(o => o.status === 'processing' || o.status === 'shipped').length,
+                  active: baseFilteredOrders.filter(o => o.status === 'processing').length,
+                  shipped: baseFilteredOrders.filter(o => o.status === 'shipped').length,
                   onhold: baseFilteredOrders.filter(o => o.status === 'pending').length,
                   completed: baseFilteredOrders.filter(o => o.status === 'delivered' || o.status === 'received').length,
                   declined: baseFilteredOrders.filter(o => o.status === 'cancelled').length,
@@ -3765,7 +3774,8 @@ const B2BOrderManagement: React.FC = () => {
               {/* Desktop pill strip */}
               <div className="hidden sm:flex items-center gap-1.5 mb-3 bg-slate-50 rounded-2xl p-1 border border-slate-100 overflow-x-auto no-scrollbar">
                 <button onClick={() => setOrderFilter('all')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'all' ? 'bg-orange-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>All ({baseFilteredOrders.length})</button>
-                <button onClick={() => setOrderFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredOrders.filter(o => o.status === 'processing' || o.status === 'shipped').length})</button>
+                <button onClick={() => setOrderFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredOrders.filter(o => o.status === 'processing').length})</button>
+                <button onClick={() => setOrderFilter('shipped')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'shipped' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Shipped ({baseFilteredOrders.filter(o => o.status === 'shipped').length})</button>
                 <button onClick={() => setOrderFilter('onhold')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'onhold' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>On Hold ({baseFilteredOrders.filter(o => o.status === 'pending').length})</button>
                 <button onClick={() => setOrderFilter('completed')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'completed' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Completed ({baseFilteredOrders.filter(o => o.status === 'delivered' || o.status === 'received').length})</button>
                 <button onClick={() => setOrderFilter('declined')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', orderFilter === 'declined' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Declined ({baseFilteredOrders.filter(o => o.status === 'cancelled').length})</button>
@@ -3853,7 +3863,7 @@ const B2BOrderManagement: React.FC = () => {
               ) : orderList.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400 bg-white border border-slate-100 rounded-2xl shadow-sm">
                   <ClipboardList className="w-16 h-16 mb-4 opacity-30" />
-                  <p className="font-bold text-lg text-slate-600">{orderFilter === 'active' ? 'No active orders' : orderFilter === 'onhold' ? 'No orders on hold' : orderFilter === 'completed' ? 'No completed orders' : orderFilter === 'declined' ? 'No declined orders' : 'No orders yet'}</p>
+                  <p className="font-bold text-lg text-slate-600">{orderFilter === 'active' ? 'No active orders' : orderFilter === 'shipped' ? 'No shipped orders' : orderFilter === 'onhold' ? 'No orders on hold' : orderFilter === 'completed' ? 'No completed orders' : orderFilter === 'declined' ? 'No declined orders' : 'No orders yet'}</p>
                   <p className="text-sm mt-1">{orderFilter === 'all' && 'Place your first order from the Products tab.'}</p>
                 </div>
               ) : (
@@ -4250,7 +4260,8 @@ const B2BOrderManagement: React.FC = () => {
                 options={ORDER_FILTER_OPTIONS}
                 counts={{
                   all: baseFilteredIncoming.length,
-                  active: baseFilteredIncoming.filter((o: any) => o.status === 'processing' || o.status === 'shipped').length,
+                  active: baseFilteredIncoming.filter((o: any) => o.status === 'processing').length,
+                  shipped: baseFilteredIncoming.filter((o: any) => o.status === 'shipped').length,
                   onhold: baseFilteredIncoming.filter((o: any) => o.status === 'pending').length,
                   completed: baseFilteredIncoming.filter((o: any) => o.status === 'delivered' || o.status === 'received').length,
                   declined: baseFilteredIncoming.filter((o: any) => o.status === 'cancelled').length,
@@ -4262,7 +4273,8 @@ const B2BOrderManagement: React.FC = () => {
               {/* Desktop pill strip */}
               <div className="hidden sm:flex items-center gap-1.5 mb-3 bg-slate-50 rounded-2xl p-1 border border-slate-100 overflow-x-auto no-scrollbar">
                 <button onClick={() => setIncomingFilter('all')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'all' ? 'bg-orange-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>All ({baseFilteredIncoming.length})</button>
-                <button onClick={() => setIncomingFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredIncoming.filter((o: any) => o.status === 'processing' || o.status === 'shipped').length})</button>
+                <button onClick={() => setIncomingFilter('active')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'active' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Active ({baseFilteredIncoming.filter((o: any) => o.status === 'processing').length})</button>
+                <button onClick={() => setIncomingFilter('shipped')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'shipped' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Shipped ({baseFilteredIncoming.filter((o: any) => o.status === 'shipped').length})</button>
                 <button onClick={() => setIncomingFilter('onhold')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'onhold' ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>On Hold ({baseFilteredIncoming.filter((o: any) => o.status === 'pending').length})</button>
                 <button onClick={() => setIncomingFilter('completed')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'completed' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Completed ({baseFilteredIncoming.filter((o: any) => o.status === 'delivered' || o.status === 'received').length})</button>
                 <button onClick={() => setIncomingFilter('declined')} className={cn('px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 whitespace-nowrap shrink-0', incomingFilter === 'declined' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50')}>Declined ({baseFilteredIncoming.filter((o: any) => o.status === 'cancelled').length})</button>
@@ -4472,7 +4484,7 @@ const B2BOrderManagement: React.FC = () => {
               ) : filteredIncoming.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400 bg-white border border-slate-100 rounded-2xl shadow-sm px-6">
                   <ClipboardList className="w-16 h-16 mb-4 opacity-30" />
-                  <p className="font-bold text-lg text-slate-600 text-center">{incomingFilter === 'active' ? 'No active orders' : incomingFilter === 'onhold' ? 'No orders on hold' : incomingFilter === 'completed' ? 'No completed orders' : incomingFilter === 'declined' ? 'No declined orders' : 'No incoming orders yet'}</p>
+                  <p className="font-bold text-lg text-slate-600 text-center">{incomingFilter === 'active' ? 'No active orders' : incomingFilter === 'shipped' ? 'No shipped orders' : incomingFilter === 'onhold' ? 'No orders on hold' : incomingFilter === 'completed' ? 'No completed orders' : incomingFilter === 'declined' ? 'No declined orders' : 'No incoming orders yet'}</p>
                   <p className="text-sm mt-1 text-center max-w-[220px]">Orders submitted by franchise stores will appear here.</p>
                 </div>
               ) : (
