@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GraduationCap, RotateCcw, LogOut, Store, Warehouse } from "lucide-react";
+import { GraduationCap, RotateCcw, LogOut, Store, Warehouse, EyeOff } from "lucide-react";
 import { TRAINING_EXIT_KEY, isAdmitted } from "@/training/flag";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -8,15 +8,38 @@ import { useToast } from "@/hooks/use-toast";
    address when it loads); the dashboard may later move to a page without it. */
 const distributor = new URLSearchParams(window.location.search).get("as") === "distributor";
 
+/* Hidden for recording a training video: kept for the tab, so Start over and
+   reloads stay clean; Ctrl+Shift+H brings it back. */
+const HIDDEN_KEY = "training_bar_hidden";
+let hiddenNow = false;
+const readHidden = () => { try { return sessionStorage.getItem(HIDDEN_KEY) === "1"; } catch { return hiddenNow; } };
+
 /**
  * The bar over every page of a training tab, once TrainingPage has let the
- * person in: which store they are practising as, Start over, and Exit. It also
- * stops Call / WhatsApp / email links — the sample numbers look real (the
+ * person in: which store they are practising as, Start over, Hide (for
+ * recording a video; Ctrl+Shift+H brings it back) and Exit. It also stops
+ * Call / WhatsApp / email links — the sample numbers look real (the
  * forms insist on it), so none of them may actually open.
  */
 const TrainingBar = () => {
     const [shown, setShown] = useState(isAdmitted);
+    const [hidden, setHidden] = useState(readHidden);
+    const hide = (on: boolean) => {
+        hiddenNow = on;
+        setHidden(on);
+        try { if (on) sessionStorage.setItem(HIDDEN_KEY, "1"); else sessionStorage.removeItem(HIDDEN_KEY); } catch { /* just not kept */ }
+    };
     const { toast } = useToast();
+
+    useEffect(() => {
+        const key = (e: KeyboardEvent) => {
+            if (!(e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "h")) return;
+            e.preventDefault();
+            hide(!readHidden());
+        };
+        window.addEventListener("keydown", key);
+        return () => window.removeEventListener("keydown", key);
+    }, []);
 
     useEffect(() => {
         const show = () => setShown(true);
@@ -39,7 +62,7 @@ const TrainingBar = () => {
         return () => document.removeEventListener("click", stop, true);
     }, [toast]);
 
-    if (!shown) return null;
+    if (!shown || hidden) return null;
 
     const exit = () => {
         window.close();
@@ -67,8 +90,13 @@ const TrainingBar = () => {
             </div>
             {/* Back to the start, as the mode it is in: a reload of /training rebuilds the store. */}
             <button type="button" onClick={() => switchTo(distributor ? "distributor" : "franchise")} title="Start over with a fresh store"
-                className="inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium text-amber-900 hover:bg-amber-100">
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium text-amber-900 hover:bg-amber-100 whitespace-nowrap">
                 <RotateCcw className="h-3.5 w-3.5" /><span className="hidden sm:inline">Start over</span>
+            </button>
+            <button type="button" onClick={() => hide(true)} title="Hide this bar, e.g. for recording. Ctrl+Shift+H brings it back."
+                aria-label="Hide training bar"
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium text-amber-900 hover:bg-amber-100 whitespace-nowrap">
+                <EyeOff className="h-3.5 w-3.5" /><span className="hidden sm:inline">Hide</span>
             </button>
             <button type="button" onClick={exit}
                 className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 font-medium text-white hover:bg-slate-700">
