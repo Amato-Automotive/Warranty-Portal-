@@ -47,6 +47,8 @@ export const OLD_PART_ENABLED = false;
 /** The car, and for a seat cover its airbags (with, side airbags only, without) and the cover's colours. */
 export interface Vehicle {
     make: string; model: string; airbags: 'with' | 'sab' | 'without' | null;
+    /** The model year, when given. */
+    year?: number | null;
     major_colour?: string | null; minor_colour?: string | null;
     /** A photo of the vehicle: the customer's, needed; the store's, if it adds one. */
     photo?: string | null;
@@ -223,12 +225,16 @@ export function readVehicle(input: ClaimInput, productType: string | null | unde
     const model = text(input.vehicle_model, 60);
     if (!make) return { error: 'Enter the vehicle make' };
     if (!model) return { error: 'Enter the vehicle model' };
-    if (!asksAirbags(productType)) return { make, model, airbags: null };
+    // The year is optional here (the customer's form asks for it); when given it must be a year.
+    const rawYear = text(input.vehicle_year, 4);
+    const year = rawYear ? Number(rawYear) : null;
+    if (year !== null && !(Number.isInteger(year) && year >= 1980 && year <= new Date().getFullYear() + 1)) return { error: 'Enter the vehicle year' };
+    if (!asksAirbags(productType)) return { make, model, year, airbags: null };
     const airbags = pick(input.airbags, ['with', 'sab', 'without'] as const);
     if (!airbags) return { error: 'Choose with airbags, SAB or without airbags' };
     const major = text(input.major_colour, 40);
     if (!major) return { error: 'Enter the major colour' };
-    return { make, model, airbags, major_colour: major, minor_colour: text(input.minor_colour, 40) || null };
+    return { make, model, year, airbags, major_colour: major, minor_colour: text(input.minor_colour, 40) || null };
 }
 
 /** A new claim's issue and description, or why they are not complete. */
@@ -242,7 +248,7 @@ export function readProblem(input: ClaimInput, covered: boolean): { problem: str
 }
 
 const AIRBAGS = { with: 'with airbags', sab: 'SAB', without: 'without airbags' } as const;
-const vehicleText = (v: Vehicle | null) => v ? [v.make, v.model, v.airbags ? AIRBAGS[v.airbags] : null,
+const vehicleText = (v: Vehicle | null) => v ? [v.make, v.model, v.year || null, v.airbags ? AIRBAGS[v.airbags] : null,
     [v.major_colour, v.minor_colour].filter(Boolean).join('/') || null].filter(Boolean).join(' · ') : '(none)';
 
 /**
@@ -253,9 +259,10 @@ function correctDetails(c: FlowClaim, input: ClaimInput): { patch: Partial<Claim
     const changes: string[] = [];
     const patch: Partial<ClaimSnapshot> = {};
     let kind = c.kind;
-    if (['vehicle_make', 'vehicle_model', 'airbags', 'major_colour', 'minor_colour'].some(k => input[k] !== undefined)) {
+    if (['vehicle_make', 'vehicle_model', 'vehicle_year', 'airbags', 'major_colour', 'minor_colour'].some(k => input[k] !== undefined)) {
         const v = readVehicle({
             vehicle_make: input.vehicle_make ?? c.vehicle?.make, vehicle_model: input.vehicle_model ?? c.vehicle?.model,
+            vehicle_year: input.vehicle_year ?? c.vehicle?.year ?? '',
             airbags: input.airbags ?? c.vehicle?.airbags,
             major_colour: input.major_colour ?? c.vehicle?.major_colour, minor_colour: input.minor_colour ?? c.vehicle?.minor_colour,
         }, c.product_type);
@@ -411,7 +418,7 @@ const snap = (c: FlowClaim): ClaimSnapshot => ({
 });
 
 /** The detail fields a change sends, as text, leaving out what was not sent. */
-const DETAIL_FIELDS = ['vehicle_make', 'vehicle_model', 'airbags', 'major_colour', 'minor_colour', 'problem', 'description'];
+const DETAIL_FIELDS = ['vehicle_make', 'vehicle_model', 'vehicle_year', 'airbags', 'major_colour', 'minor_colour', 'problem', 'description'];
 const detailFields = (input: ClaimInput): Record<string, string> =>
     Object.fromEntries(DETAIL_FIELDS.filter(k => input[k] !== undefined).map(k => [k, String(input[k] ?? '')]));
 const photoLine = (n: number) => n ? [`${n} photo${n === 1 ? '' : 's'} added`] : [];

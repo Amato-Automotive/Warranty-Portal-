@@ -40,6 +40,7 @@ import { AssignmentSchedulerService } from './services/assignment-scheduler.serv
 import { WarrantyReminderScheduler } from './services/warrantyReminder.service.js';
 import { startAnalyticsRepairSchedule } from './services/analyticsEvents.service.js';
 import { startLeadSheetSchedule } from './services/leadSheetImport.service.js';
+import { startClaimSheetSchedule } from './services/claimSheetSync.service.js';
 import { runSchemeReminders } from './controllers/scheme.controller.js';
 import { initSocket } from './socket.js';
 import { getISTTimestamp } from './utils/dateUtils.js';
@@ -527,6 +528,17 @@ async function runMigrations() {
 
     // Warranty and alteration claims (claimFlow): raised by the customer or the
     // store, inspected by the store, decided and sent by head office.
+    /* The production sheets claims are read from (Claims › Sheet sync). */
+    await pool.query(`CREATE TABLE IF NOT EXISTS claim_sheet_sources (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         name VARCHAR(120) NOT NULL,
+         url VARCHAR(500) NOT NULL,
+         tab VARCHAR(120) NOT NULL DEFAULT 'ALTERATION',
+         active TINYINT(1) NOT NULL DEFAULT 1,
+         last_sync_at DATETIME NULL,
+         last_result JSON NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     await pool.query(`CREATE TABLE IF NOT EXISTS warranty_claims (
          id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
          claim_no VARCHAR(20) NULL,
@@ -622,6 +634,9 @@ if (process.env.DISABLE_SCHEDULERS === '1') {
 
   // The Instagram lead-ad sheet into Lead Management (off without LEAD_SHEET_URL).
   startLeadSheetSchedule();
+
+  // The plant's production sheets into Claims, every 10 minutes (the sheets the admin added).
+  startClaimSheetSchedule();
 
   // The day before each scheme window opens, the stores it is for are reminded (in-app).
   const remind = () => runSchemeReminders().catch(err => console.error('[Schemes] reminders failed:', err?.message));

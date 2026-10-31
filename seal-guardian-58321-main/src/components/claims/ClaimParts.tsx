@@ -116,12 +116,13 @@ export const ProblemPicker = ({ options, value, onChange }: { options: string[];
 };
 
 export interface VehicleValue {
-    vehicle_make: string; vehicle_model: string; airbags: '' | 'with' | 'sab' | 'without'; major_colour: string; minor_colour: string;
+    vehicle_make: string; vehicle_model: string; vehicle_year: string; airbags: '' | 'with' | 'sab' | 'without'; major_colour: string; minor_colour: string;
 }
-export const EMPTY_VEHICLE: VehicleValue = { vehicle_make: '', vehicle_model: '', airbags: '', major_colour: '', minor_colour: '' };
+export const EMPTY_VEHICLE: VehicleValue = { vehicle_make: '', vehicle_model: '', vehicle_year: '', airbags: '', major_colour: '', minor_colour: '' };
 export const vehicleValueOf = (v: Vehicle | null | undefined): VehicleValue => ({
-    vehicle_make: v?.make ?? '', vehicle_model: v?.model ?? '', airbags: v?.airbags ?? '', major_colour: v?.major_colour ?? '', minor_colour: v?.minor_colour ?? '',
+    vehicle_make: v?.make ?? '', vehicle_model: v?.model ?? '', vehicle_year: v?.year ? String(v.year) : '', airbags: v?.airbags ?? '', major_colour: v?.major_colour ?? '', minor_colour: v?.minor_colour ?? '',
 });
+const VEHICLE_YEARS = Array.from({ length: new Date().getFullYear() + 2 - 1990 }, (_, i) => String(new Date().getFullYear() + 1 - i));
 
 /*
  * The vehicle lists, loaded once a page: make → model for everyone (a customer
@@ -169,9 +170,10 @@ const PickOrType = ({ label, options, value, onChange, placeholder }: {
 };
 
 /**
- * Make and model from the list, and for seat covers the airbags and the
- * cover's colours. The store and the plant pick from the plant's own vehicle
- * names (plant), the customer from the plain make → model list.
+ * Make, model and year, and for seat covers the airbags and the cover's
+ * colours. The store and the plant pick from the plant's own vehicle names
+ * (plant); the customer types the make and model (with common names offered
+ * as it types) and picks the year.
  */
 export const VehicleFields = ({ value, onChange, airbags, registered, plant = false }: {
     value: VehicleValue; onChange: (v: VehicleValue) => void; airbags: boolean; registered?: string | null; plant?: boolean;
@@ -179,14 +181,35 @@ export const VehicleFields = ({ value, onChange, airbags, registered, plant = fa
     const lists = useVehicleLists();
     const models = plant && Object.keys(lists.plant).length ? lists.plant : lists.models;
     const makes = Object.keys(models);
+    const yearSelect = (
+        <select value={value.vehicle_year} onChange={e => onChange({ ...value, vehicle_year: e.target.value })} aria-label="Year"
+            className="h-12 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold">
+            <option value="">{plant ? 'Year (optional)' : 'Year'}</option>
+            {VEHICLE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+    );
     return (
         <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-                <PickOrType label="Make" options={makes} value={value.vehicle_make} placeholder="Make"
-                    onChange={v => onChange({ ...value, vehicle_make: v, vehicle_model: v === value.vehicle_make ? value.vehicle_model : '' })} />
-                <PickOrType key={value.vehicle_make} label={plant ? 'Vehicle' : 'Model'} options={models[value.vehicle_make] ?? []} value={value.vehicle_model} placeholder={plant ? 'Vehicle' : 'Model'}
-                    onChange={v => onChange({ ...value, vehicle_model: v })} />
-            </div>
+            {plant ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <PickOrType label="Make" options={makes} value={value.vehicle_make} placeholder="Make"
+                        onChange={v => onChange({ ...value, vehicle_make: v, vehicle_model: v === value.vehicle_make ? value.vehicle_model : '' })} />
+                    <PickOrType key={value.vehicle_make} label="Vehicle" options={models[value.vehicle_make] ?? []} value={value.vehicle_model} placeholder="Vehicle"
+                        onChange={v => onChange({ ...value, vehicle_model: v })} />
+                    <div className="col-span-2 sm:col-span-1">{yearSelect}</div>
+                </div>
+            ) : (
+                /* The customer writes the make and model as they know them; common names are offered as they type. */
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <Input value={value.vehicle_make} onChange={e => onChange({ ...value, vehicle_make: e.target.value })} list="claim-makes"
+                        placeholder="Make (e.g. Hyundai)" maxLength={60} className="h-12 rounded-xl" aria-label="Make" autoComplete="off" />
+                    <Input value={value.vehicle_model} onChange={e => onChange({ ...value, vehicle_model: e.target.value })} list="claim-models"
+                        placeholder="Model (e.g. Creta)" maxLength={60} className="h-12 rounded-xl" aria-label="Model" autoComplete="off" />
+                    <div className="col-span-2 sm:col-span-1">{yearSelect}</div>
+                    <datalist id="claim-makes">{makes.map(m => <option key={m} value={m} />)}</datalist>
+                    <datalist id="claim-models">{(models[makes.find(m => m.toLowerCase() === value.vehicle_make.trim().toLowerCase()) ?? ''] ?? []).map(m => <option key={m} value={m} />)}</datalist>
+                </div>
+            )}
             {airbags && (
                 <>
                     <ChoiceRow<'with' | 'sab' | 'without'> name="airbags" value={value.airbags} onChange={v => onChange({ ...value, airbags: v })}
@@ -211,9 +234,10 @@ export const VehiclePhoto = ({ files, onChange, required }: { files: File[]; onC
 );
 
 /** What a new request is missing, in the words a toast shows; null when complete. */
-export function missingForRequest(f: { problem: string; description: string; vehicle: VehicleValue; airbags: boolean; photos: number }): string | null {
+export function missingForRequest(f: { problem: string; description: string; vehicle: VehicleValue; airbags: boolean; photos: number; needYear?: boolean }): string | null {
     if (!f.vehicle.vehicle_make.trim()) return 'Enter the vehicle make';
     if (!f.vehicle.vehicle_model.trim()) return 'Enter the vehicle model';
+    if (f.needYear && !f.vehicle.vehicle_year) return 'Choose the vehicle year';
     if (f.airbags && !f.vehicle.airbags) return 'Choose with airbags, SAB or without airbags';
     if (f.airbags && !f.vehicle.major_colour.trim()) return 'Enter the major colour';
     if (!f.problem) return 'Choose the issue';

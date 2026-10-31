@@ -3,6 +3,7 @@ import db from '../config/database.js';
 import { modelList } from '../services/carModels.js';
 import { PLANT_VEHICLES } from '../services/plantVehicles.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { sheetSeen } from './claimSheet.controller.js';
 import { vendorRepository } from '../repositories/vendor.repository.js';
 import { NotificationService } from '../services/notification.service.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
@@ -193,6 +194,16 @@ async function distributorStoreIds(userId: string): Promise<string[]> {
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 /** Everything a claim is searched by, as one text: numbers, names, the car, the colours, the issue, the plant's columns. */
+/**
+ * A claim's brand: its product's (a product on the list by the same name),
+ * else its store's (an AC store is Autocruze; AF and AFAC are Autoform).
+ * Needs `vd` joined on the claim's store.
+ */
+const CLAIM_BRAND = `COALESCE(
+    (SELECT CASE WHEN p.brand = 'AC' THEN 'AC' ELSE 'AF' END FROM products p
+      WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.product_name')))) LIMIT 1),
+    CASE WHEN vd.allowed_brands = 'AC' THEN 'AC' ELSE 'AF' END)`;
+
 const SEARCH_TEXT = `CONCAT_WS(' ', c.claim_no, c.warranty_uid, vd.store_name, c.problem, c.description,
     JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_name')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_phone')),
     JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.registration_number')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.product_name')),
@@ -222,7 +233,15 @@ async function loadClaim(id: unknown) {
 async function access(req: AuthRequest, c: any): Promise<'act' | 'view' | null> {
     const role = req.user?.role;
     if (role === 'admin') return 'act';
-    if (c.raised_via === 'sheet') return null;
+    /* A sheet row is the plant's record: the store and its distributors may see it
+       (each while Claims › Sheet sync allows), never act on it — the sheet is the master. */
+    if (c.raised_via === 'sheet') {
+        if (role !== 'vendor' || !c.store_id) return null;
+        const seen = await sheetSeen();
+        const v = await storeOf(req.user!.id);
+        if (seen.store && v && String(v.id) === String(c.store_id)) return 'view';
+        return seen.distributor && (await distributorStoreIds(req.user!.id)).includes(String(c.store_id)) ? 'view' : null;
+    }
     if (role === 'vendor') {
         const v = await storeOf(req.user!.id);
         if (v && String(v.id) === String(c.store_id)) return 'act';
@@ -401,18 +420,20 @@ export default class ClaimsController {
         try {
             if (!(await claimsLive())) return ok(res, { claims: [], warranties: [], distributor_claims: [], live: false });
             const v = await storeOf(req.user!.id);
-            // Rows from the production sheet are the plant's alone for now.
-            const own: any[] = v ? (await db.execute("SELECT * FROM warranty_claims WHERE store_id = ? AND raised_via <> 'sheet' ORDER BY id DESC LIMIT 300", [v.id]) as any)[0] : [];
+            // Rows from the production sheet show while Claims › Sheet sync lets them.
+            const seen = await sheetSeen();
+            const own: any[] = v ? (await db.execute(`SELECT * FROM warranty_claims WHERE store_id = ? ${seen.store ? '' : "AND raised_via <> 'sheet'"} ORDER BY id DESC LIMIT 300`, [v.id]) as any)[0] : [];
             const storeIds = (await distributorStoreIds(req.user!.id)).filter(id => !v || id !== String(v.id));
             let watched: any[] = [];
             if (storeIds.length) {
                 const [rows]: any = await db.query(
                     `SELECT c.*, vd.store_name FROM warranty_claims c JOIN vendor_details vd ON vd.id = c.store_id
-                      WHERE c.store_id IN (?) AND c.raised_via <> 'sheet' ORDER BY c.id DESC LIMIT 300`, [storeIds]);
+                      WHERE c.store_id IN (?) ${seen.distributor ? '' : "AND c.raised_via <> 'sheet'"} ORDER BY c.id DESC LIMIT 300`, [storeIds]);
                 watched = rows;
             }
             return ok(res, {
-                claims: own.map(fromRow).map((c: any) => view(c, { actor: 'vendor' })),
+                // A sheet row is shown, not worked on: the sheet is the master.
+                claims: own.map(fromRow).map((c: any) => view(c, { actor: 'vendor' }, c.raised_via === 'sheet')),
                 distributor_claims: watched.map(fromRow).map((c: any) => view(c, { actor: 'vendor' }, true)),
                 is_distributor: storeIds.length > 0,
             });
@@ -508,6 +529,8 @@ export default class ClaimsController {
             const status = String(req.query.status ?? '');
             const q = String(req.query.q ?? '').trim().slice(0, 120);
             const store = String(req.query.store ?? '').trim();
+            const depot = String(req.query.depot ?? '').trim().slice(0, 120);
+            const brand = String(req.query.brand ?? '');
             const from = String(req.query.from ?? '');
             const to = String(req.query.to ?? '');
             const charge = String(req.query.charge ?? '');
@@ -522,9 +545,12 @@ export default class ClaimsController {
             }
             // A store is its id, or the sheet's name for a row with no portal store.
             if (store.startsWith('name:')) {
-                where.push("c.store_id IS NULL AND JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store')) = ?");
+                where.push("c.raised_via = 'sheet' AND JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store')) = ?");
                 params.push(store.slice(5));
-            } else if (store) { where.push('c.store_id = ?'); params.push(store); }
+            } else if (store) { where.push("c.store_id = ? AND c.raised_via <> 'sheet'"); params.push(store); }
+            // The depot a sheet row came through (the sheet's DEPOT NAME).
+            if (depot) { where.push("JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.depot')) = ?"); params.push(depot); }
+            if (brand === 'AF' || brand === 'AC') { where.push(`${CLAIM_BRAND} = ?`); params.push(brand); }
             if (DATE_ONLY.test(from)) { where.push('DATE(c.created_at) >= ?'); params.push(from); }
             if (DATE_ONLY.test(to)) { where.push('DATE(c.created_at) <= ?'); params.push(to); }
             if (charge === 'foc' || charge === 'chargeable') {
@@ -542,19 +568,26 @@ export default class ClaimsController {
 
             const FROM = 'FROM warranty_claims c LEFT JOIN vendor_details vd ON vd.id = c.store_id';
             const [cs]: any = await db.execute(
-                `SELECT c.*, vd.store_name ${FROM} ${listWhere.length ? `WHERE ${listWhere.join(' AND ')}` : ''} ORDER BY c.created_at DESC, c.id DESC LIMIT 1000`, listParams);
+                `SELECT c.*, vd.store_name, ${CLAIM_BRAND} AS brand ${FROM} ${listWhere.length ? `WHERE ${listWhere.join(' AND ')}` : ''} ORDER BY c.created_at DESC, c.id DESC LIMIT 1000`, listParams);
             const [n]: any = await db.execute(
                 `SELECT c.status, COUNT(*) AS n, SUM(c.change_request IS NOT NULL) AS ch ${FROM} ${filtered} GROUP BY c.status`, params);
             const counts: Record<string, number> = { change: 0 };
             for (const r of n) { counts[r.status] = Number(r.n); counts.change += Number(r.ch || 0); }
             // The stores to filter by: portal stores, and the sheet's names for rows with none.
+            // A sheet claim is filtered by the sheet's party name; a portal claim by its store.
             const [st]: any = await db.execute(
-                `SELECT c.store_id AS id, COALESCE(vd.store_name, JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store'))) AS name, COUNT(*) AS n
-                   ${FROM} GROUP BY c.store_id, name HAVING name IS NOT NULL ORDER BY name`);
+                `SELECT CASE WHEN c.raised_via = 'sheet' THEN NULL ELSE c.store_id END AS id,
+                        CASE WHEN c.raised_via = 'sheet' THEN JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store')) ELSE vd.store_name END AS name, COUNT(*) AS n
+                   ${FROM} GROUP BY id, name HAVING name IS NOT NULL ORDER BY name`);
             const stores = st.map((r: any) => ({ value: r.id ?? `name:${r.name}`, name: r.name, n: Number(r.n), portal: Boolean(r.id) }));
+            // The depots to filter by, with how many claims each.
+            const [dp]: any = await db.execute(
+                `SELECT JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.depot')) AS name, COUNT(*) AS n
+                   FROM warranty_claims c GROUP BY name HAVING name IS NOT NULL AND name <> '' AND name <> 'null' ORDER BY name`);
+            const depots = dp.map((r: any) => ({ value: String(r.name), name: String(r.name), n: Number(r.n) }));
             const who = whoOf(req);
             return ok(res, {
-                claims: cs.map(fromRow).map((c: any) => view(c, who)), counts, stores,
+                claims: cs.map(fromRow).map((c: any) => view(c, who)), counts, stores, depots,
                 total: Object.entries(counts).reduce((a, [k, v]) => (k === 'change' ? a : a + v), 0),
                 rights: who.rights ?? [],
             });
@@ -576,6 +609,9 @@ export default class ClaimsController {
             const [s]: any = await db.execute(
                 'SELECT vd.store_name, vd.city, p.phone_number AS phone FROM vendor_details vd LEFT JOIN profiles p ON p.id = vd.user_id WHERE vd.id = ?', [c.store_id ?? '']);
             const out = view(c, who, can === 'view');
+            const [[b]]: any = await db.execute(
+                `SELECT ${CLAIM_BRAND} AS brand FROM warranty_claims c LEFT JOIN vendor_details vd ON vd.id = c.store_id WHERE c.id = ?`, [c.id]);
+            out.brand = b?.brand ?? 'AF';
             out.store_name = s[0]?.store_name ?? null;
             out.store_city = s[0]?.city ?? null;
             out.store_phone = s[0]?.phone ?? null;

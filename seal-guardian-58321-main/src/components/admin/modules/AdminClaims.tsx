@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Eye, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
+import { ChevronLeft, Eye, FileSpreadsheet, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,11 +10,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn, formatToIST } from "@/lib/utils";
-import { decisionText, day, forgetClaimsLive, HOLD_REASONS, PROBLEMS, REJECT_REASONS, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
+import { decisionText, day, forgetClaimsLive, HOLD_REASONS, PROBLEMS, REJECT_REASONS, vehicleText, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
 import { ChangeRequestBox } from "@/components/claims/ClaimChange";
 import { CompareTable, StageDates } from "@/components/claims/ClaimView";
 import { ClaimStatusPill, ClaimSummary, ClaimTimeline, MediaGrid, ChoiceRow, ProblemPicker, VehicleFields, EMPTY_VEHICLE, vehicleValueOf, type VehicleValue } from "@/components/claims/ClaimParts";
 import { PlantTeam } from "@/components/admin/claims/PlantTeam";
+import { SheetSync } from "@/components/admin/claims/SheetSync";
 
 /** The plant's queues, in the order the work flows; "change" is the claims with a change asked for. */
 const CARDS: { key: string; statuses: ClaimStatus[]; label: string; right?: PlantRight }[] = [
@@ -37,7 +38,9 @@ const CARDS: { key: string; statuses: ClaimStatus[]; label: string; right?: Plan
  * The store filter: the list of stores with a search box on top that narrows
  * it as you type. "All stores" clears it.
  */
-const StorePicker = ({ stores, value, onChange }: { stores: { value: string; name: string; n: number }[]; value: string; onChange: (v: string) => void }) => {
+const StorePicker = ({ stores, value, onChange, what = 'store', all = 'All stores' }: {
+    stores: { value: string; name: string; n: number }[]; value: string; onChange: (v: string) => void; what?: string; all?: string;
+}) => {
     const [open, setOpen] = useState(false);
     const [find, setFind] = useState('');
     const chosen = stores.find(x => x.value === value);
@@ -47,22 +50,22 @@ const StorePicker = ({ stores, value, onChange }: { stores: { value: string; nam
     return (
         <Popover open={open} onOpenChange={o => { setOpen(o); if (!o) setFind(''); }}>
             <PopoverTrigger asChild>
-                <button type="button" aria-label="Store" className={cn(FILTER, "flex items-center justify-between gap-2 text-left md:w-64", value && "border-orange-400")}>
-                    <span className="truncate">{chosen ? `${chosen.name} (${chosen.n})` : 'All stores'}</span>
+                <button type="button" aria-label={what[0].toUpperCase() + what.slice(1)} className={cn(FILTER, "flex items-center justify-between gap-2 text-left md:w-64", value && "border-orange-400")}>
+                    <span className="truncate">{chosen ? `${chosen.name} (${chosen.n})` : all}</span>
                     <Search className="h-4 w-4 shrink-0 text-gray-400" />
                 </button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-80 p-2">
-                <Input autoFocus value={find} onChange={e => setFind(e.target.value)} placeholder="Search store" className="h-10" aria-label="Find a store" />
+                <Input autoFocus value={find} onChange={e => setFind(e.target.value)} placeholder={`Search ${what}`} className="h-10" aria-label={`Find a ${what}`} />
                 <div className="mt-2 max-h-72 overflow-y-auto">
-                    <button type="button" onClick={() => pick('')} className={cn("flex w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-100", !value && "font-bold text-orange-700")}>All stores</button>
+                    <button type="button" onClick={() => pick('')} className={cn("flex w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-100", !value && "font-bold text-orange-700")}>{all}</button>
                     {hits.map(x => (
                         <button key={x.value} type="button" onClick={() => pick(x.value)}
                             className={cn("flex w-full justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-100", x.value === value && "font-bold text-orange-700")}>
                             <span className="truncate">{x.name}</span><span className="shrink-0 text-gray-500">{x.n}</span>
                         </button>
                     ))}
-                    {needle && !hits.length && <p className="px-3 py-2 text-sm text-gray-500">No store found.</p>}
+                    {needle && !hits.length && <p className="px-3 py-2 text-sm text-gray-500">No {what} found.</p>}
                 </div>
             </PopoverContent>
         </Popover>
@@ -275,11 +278,26 @@ const Empty = () => <span className="text-gray-400">—</span>;
  * opens the claim on the right with the step each person's rights allow.
  * Anyone with only Warranty Claims read (and the depots) sees it all, read-only.
  */
+/** A claim's brand (its product's, else its store's), as a small tag. */
+const BrandTag = ({ c }: { c: { brand?: string } }) => c.brand ? (
+    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", c.brand === 'AC' ? "bg-violet-100 text-violet-800" : "bg-sky-100 text-sky-800")}>{c.brand === 'AC' ? 'Autocruze' : 'Autoform'}</span>
+) : null;
+
+/** Where a claim came from: the production sheet, or raised in the portal. */
+function SourceTag({ c }: { c: { raised_via?: string } }) {
+    const sheet = c.raised_via === 'sheet';
+    return <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", sheet ? "bg-teal-100 text-teal-800" : "bg-orange-100 text-orange-800")}>{sheet ? 'Sheet' : 'Portal'}</span>;
+}
+
+/** The store as the claim names it: a sheet row's PARTY NAME, else the portal store. */
+const storeOf = (c: { raised_via?: string; store_name?: string | null; snapshot?: { fitted_store?: string | null } | null }) =>
+    (c.raised_via === 'sheet' ? c.snapshot?.fitted_store : c.store_name ?? c.snapshot?.fitted_store) ?? null;
+
 export const AdminClaims = () => {
     const { toast } = useToast();
     const { user } = useAuth() as any;
     // The team is run by super admins, who alone can change admin access.
-    const [tab, setTab] = useState<'claims' | 'team'>('claims');
+    const [tab, setTab] = useState<'claims' | 'team' | 'sheets'>('claims');
     const [claims, setClaims] = useState<(Claim & { store_name?: string })[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [rights, setRights] = useState<PlantRight[] | null>(null);
@@ -290,6 +308,9 @@ export const AdminClaims = () => {
     useEffect(() => { const t = setTimeout(() => setQuery(q.trim()), 350); return () => clearTimeout(t); }, [q]);
     const [store, setStore] = useState('');
     const [stores, setStores] = useState<{ value: string; name: string; n: number }[]>([]);
+    const [depot, setDepot] = useState('');
+    const [brand, setBrand] = useState('');
+    const [depots, setDepots] = useState<{ value: string; name: string; n: number }[]>([]);
     const [charge, setCharge] = useState('');
     const [range, setRange] = useState('all');
     const [from, setFrom] = useState('');
@@ -324,12 +345,13 @@ export const AdminClaims = () => {
             const k = CARDS[card];
             const status = k.key === 'change' ? 'change' : k.statuses.join(',');
             const r = await api.get('/claims/admin/all', {
-                params: { status: status || undefined, q: query || undefined, store: store || undefined, charge: charge || undefined, from: from || undefined, to: to || undefined },
+                params: { status: status || undefined, q: query || undefined, store: store || undefined, depot: depot || undefined, brand: brand || undefined, charge: charge || undefined, from: from || undefined, to: to || undefined },
             });
             setClaims(r.data.claims ?? []);
             setCounts(r.data.counts ?? {});
             setTotal(r.data.total ?? 0);
             setStores(r.data.stores ?? []);
+            setDepots(r.data.depots ?? []);
             if (rights === null) setRights(r.data.rights ?? []);
         } catch (e) {
             toast({ variant: "destructive", title: "Could not load claims", description: getErrorMessage(e, "Try again in a moment.") });
@@ -338,14 +360,14 @@ export const AdminClaims = () => {
             setRefreshing(false);
         }
     };
-    useEffect(() => { load(); }, [card, query, store, charge, from, to]);
+    useEffect(() => { load(); }, [card, query, store, depot, brand, charge, from, to]);
     const pickRange = (key: string) => {
         setRange(key);
         const r = RANGES.find(x => x.key === key)?.range?.();
         if (r) { setFrom(r[0]); setTo(r[1]); } else if (key === 'all') { setFrom(''); setTo(''); }
     };
-    const filtered = Boolean(query || store || charge || from || to);
-    const clearAll = () => { setQ(''); setQuery(''); setStore(''); setCharge(''); pickRange('all'); };
+    const filtered = Boolean(query || store || depot || brand || charge || from || to);
+    const clearAll = () => { setQ(''); setQuery(''); setStore(''); setDepot(''); setBrand(''); setCharge(''); pickRange('all'); };
 
     /** A step taken from a sheet cell; the list reloads after it. */
     const quick = async (c: Claim, action: string, body: Record<string, unknown>, title: string) => {
@@ -370,6 +392,18 @@ export const AdminClaims = () => {
                 </div>
             </div>
             <PlantTeam />
+        </div>
+    );
+    if (tab === 'sheets') return (
+        <div className="space-y-5">
+            <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" aria-label="Back to claims" onClick={() => { setTab('claims'); load(); }}><ChevronLeft className="h-5 w-5" /></Button>
+                <div>
+                    <h1 className="text-2xl font-extrabold text-gray-900">Sheet sync</h1>
+                    <p className="text-sm text-gray-500">The production sheets claims are read from</p>
+                </div>
+            </div>
+            <SheetSync />
         </div>
     );
     const countOf = (k: typeof CARDS[number]) => k.key === 'change' ? counts.change ?? 0
@@ -437,6 +471,9 @@ export const AdminClaims = () => {
                     <Button variant="outline" size="icon" onClick={() => load()} disabled={refreshing} title="Refresh" aria-label="Refresh" className="h-11 w-11 rounded-xl">
                         <RefreshCw className={cn("h-5 w-5", refreshing && "animate-spin")} />
                     </Button>
+                    <Button variant="outline" size="icon" title="Sheet sync" aria-label="Sheet sync" onClick={() => setTab('sheets')} className="h-11 w-11 rounded-xl">
+                        <FileSpreadsheet className="h-5 w-5" />
+                    </Button>
                     {user?.isSuperAdmin && (
                         <Button variant="outline" size="icon" title="Plant team" aria-label="Plant team" onClick={() => setTab('team')} className="h-11 w-11 rounded-xl">
                             <Settings className="h-5 w-5" />
@@ -463,7 +500,13 @@ export const AdminClaims = () => {
                     <select value={card} onChange={e => setCard(Number(e.target.value))} aria-label="Queue" className={cn(FILTER, "font-bold md:w-60")}>
                         {CARDS.map((k, i) => <option key={k.key} value={i}>{k.label} ({countOf(k)})</option>)}
                     </select>
+                    {depots.length > 0 && <StorePicker what="depot" all="All depots" stores={depots} value={depot} onChange={setDepot} />}
                     <StorePicker stores={stores} value={store} onChange={setStore} />
+                    <select value={brand} onChange={e => setBrand(e.target.value)} aria-label="Brand" className={cn(FILTER, "md:w-40", brand && "border-orange-400")}>
+                        <option value="">All brands</option>
+                        <option value="AF">Autoform</option>
+                        <option value="AC">Autocruze</option>
+                    </select>
                     <select value={charge} onChange={e => setCharge(e.target.value)} aria-label="Charge" className={cn(FILTER, "md:w-44", charge && "border-orange-400")}>
                         <option value="">FOC and chargeable</option>
                         <option value="foc">Free of cost</option>
@@ -496,12 +539,12 @@ export const AdminClaims = () => {
                                             <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700"><Eye className="h-4 w-4" /></span>
                                             <span className="min-w-0 flex-1">
                                                 <span className="flex items-start justify-between gap-2">
-                                                    <span className="text-xs font-bold text-gray-500">{c.claim_no} · {day(c.created_at)}</span>
+                                                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-500">{c.claim_no} · {day(c.created_at)} <SourceTag c={c} /><BrandTag c={c} /></span>
                                                     <ClaimStatusPill status={c.status} who="admin" />
                                                 </span>
                                                 <span className="mt-1 block font-bold text-gray-900">{c.snapshot?.customer_name} · {c.snapshot?.product_name}</span>
                                                 <span className="block text-sm text-gray-600">{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</span>
-                                                <span className="block text-xs text-gray-500">{[c.store_name ?? c.snapshot?.fitted_store, [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || c.snapshot?.registration_number].filter(Boolean).join(' · ')}</span>
+                                                <span className="block text-xs text-gray-500">{[c.snapshot?.depot, storeOf(c), [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || c.snapshot?.registration_number].filter(Boolean).join(' · ')}</span>
                                                 {c.plan?.alteration_no && <span className="mt-1 block text-xs font-semibold text-indigo-700">Alt. no. {c.plan.alteration_no}</span>}
                                                 {c.dispatch && <span className="mt-1 block text-xs font-semibold text-sky-700">Docket {c.dispatch.docket}</span>}
                                                 {c.change_request && <span className="mt-1 block text-xs font-semibold text-amber-700">Change asked</span>}
@@ -514,7 +557,7 @@ export const AdminClaims = () => {
                                 <table className="w-full border-collapse text-sm">
                                     <thead className="sticky top-0 z-10 bg-gray-100 text-left text-xs font-bold text-gray-700">
                                         <tr>
-                                            {['S.No.', 'Status', 'Claim no.', 'Date', 'Store', 'Customer', 'Car', 'Product', 'Major colour', 'Minor colour', 'Issue', 'Decision', 'Alteration no.', 'Dispatch date', 'Docket no.', 'Courier / Transporter'].map(h => (
+                                            {['S.No.', 'Status', 'Claim no.', 'Date', 'Depot', 'Store', 'Customer', 'Car', 'Product', 'Major colour', 'Minor colour', 'Issue', 'Decision', 'Alteration no.', 'Dispatch date', 'Docket no.', 'Courier / Transporter'].map(h => (
                                                 <th key={h} className="px-3 py-2.5 border border-gray-300 whitespace-nowrap">{h}</th>
                                             ))}
                                         </tr>
@@ -529,13 +572,18 @@ export const AdminClaims = () => {
                                                     {c.change_request && <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">Change asked</span>}
                                                 </td>
                                                 <td className={cell}>
-                                                    <button onClick={e => { e.stopPropagation(); setOpen(c.id); }} className="font-bold text-gray-900 underline-offset-2 hover:text-orange-700 hover:underline">{c.claim_no}</button>
+                                                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                                                        <button onClick={e => { e.stopPropagation(); setOpen(c.id); }} className="font-bold text-gray-900 underline-offset-2 hover:text-orange-700 hover:underline">{c.claim_no}</button>
+                                                        <SourceTag c={c} />
+                                                        <BrandTag c={c} />
+                                                    </span>
                                                 </td>
                                                 <td className={cell}>{day(c.created_at)}</td>
-                                                <td className={cell}>{c.store_name ?? c.snapshot?.fitted_store ?? <Empty />}</td>
+                                                <td className={cell}>{c.snapshot?.depot || <Empty />}</td>
+                                                <td className={cell}>{storeOf(c) ?? <Empty />}</td>
                                                 <td className={cell}>{c.snapshot?.customer_name}</td>
-                                                <td className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || c.snapshot?.registration_number || <Empty />, 'Car',
-                                                    [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }])}</td>
+                                                <td className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || c.snapshot?.registration_number || <Empty />, 'Car',
+                                                    [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }, { key: 'vehicle_year', label: 'Year', value: c.vehicle?.year ? String(c.vehicle.year) : '' }])}</td>
                                                 <td className={cell}>{c.snapshot?.product_name}</td>
                                                 <td className={cell}>{detailCell(c, c.vehicle?.major_colour || <Empty />, 'Major colour', [{ key: 'major_colour', label: 'Major colour', value: c.vehicle?.major_colour ?? '', need: true }], true)}</td>
                                                 <td className={cell}>{detailCell(c, c.vehicle?.minor_colour || <Empty />, 'Minor colour', [{ key: 'minor_colour', label: 'Minor colour', value: c.vehicle?.minor_colour ?? '' }], true)}</td>
@@ -650,6 +698,8 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                             <div className="min-w-0 space-y-1">
                                 <div className="flex flex-wrap items-center gap-2">
                                     <span className="rounded-md bg-gray-900 px-2 py-0.5 text-xs font-bold tracking-wide text-white">{c.claim_no}</span>
+                                    <SourceTag c={c} />
+                                    <BrandTag c={c} />
                                     <span className="text-xs font-bold uppercase tracking-wider text-gray-500">{c.kind === 'alteration' ? 'Alteration' : 'Warranty claim'}</span>
                                     <ClaimStatusPill status={c.status} who="admin" />
                                 </div>
@@ -664,14 +714,21 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 ))}
                             </div>
                         </div>
-                        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-3 lg:grid-cols-6">
+                        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-3 lg:grid-cols-5">
                             {([
-                                ['Customer', [c.snapshot?.customer_name, c.snapshot?.registration_number].filter(Boolean).join(' · ')],
-                                ['Product', [c.snapshot?.product_name, `UID ${c.warranty_uid}`].filter(Boolean).join(' · ')],
-                                ['Warranty', [c.snapshot?.warranty_type, c.snapshot?.cover_end ? `covered till ${day(c.snapshot.cover_end)}` : null].filter(Boolean).join(' · ')],
-                                ['Store', [c.store_name ?? c.snapshot?.fitted_store, c.store_city].filter(Boolean).join(', ')],
+                                // Who: depot, store, brand. A sheet row has no customer or warranty, so those are left out.
                                 ...(c.snapshot?.depot ? [['Depot', c.snapshot.depot] as [string, string]] : []),
-                                ['Requested', `${c.raised_by_role === 'customer' ? 'By the customer' : c.raised_by_role === 'vendor' ? 'By the store' : 'By the plant'} · ${day(c.created_at)}`],
+                                ['Store', [storeOf(c), c.raised_via === 'sheet' ? null : c.store_city].filter(Boolean).join(', ')],
+                                ...(c.raised_via === 'sheet' && c.store_name ? [['Portal store', [c.store_name, c.store_city].filter(Boolean).join(', ')] as [string, string]] : []),
+                                ['Brand', c.brand === 'AC' ? 'Autocruze' : c.brand ? 'Autoform' : null],
+                                ...(c.raised_via === 'sheet' ? [] : [['Customer', [c.snapshot?.customer_name, c.snapshot?.registration_number].filter(Boolean).join(' · ')] as [string, string]]),
+                                // What: the product (or design), the vehicle, the plant's numbers.
+                                [c.raised_via === 'sheet' ? 'Design' : 'Product', [c.snapshot?.product_name, c.warranty_uid ? `UID ${c.warranty_uid}` : null].filter(Boolean).join(' · ')],
+                                ['Vehicle', vehicleText(c.vehicle)],
+                                ...(c.raised_via === 'sheet' ? [] : [['Warranty', [c.snapshot?.warranty_type, c.snapshot?.cover_end ? `covered till ${day(c.snapshot.cover_end)}` : null].filter(Boolean).join(' · ')] as [string, string]]),
+                                ...(c.plan?.alteration_no ? [['Alteration no.', c.plan.alteration_no] as [string, string]] : []),
+                                ...(c.snapshot?.mode ? [['Mode', c.snapshot.mode] as [string, string]] : []),
+                                ['Requested', `${c.raised_via === 'sheet' ? 'From the sheet' : c.raised_by_role === 'customer' ? 'By the customer' : c.raised_by_role === 'vendor' ? 'By the store' : 'By the plant'} · ${day(c.created_at)}`],
                                 ['Waiting for', c.waiting_on],
                             ] as [string, string | null | undefined][]).map(([k, v]) => (
                                 <div key={k} className="min-w-0 bg-white px-3 py-2">

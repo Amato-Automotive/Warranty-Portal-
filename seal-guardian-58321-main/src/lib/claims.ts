@@ -20,7 +20,7 @@ export interface ClaimHistory {
     by_role: 'customer' | 'vendor' | 'admin'; by_name?: string | null; undone?: boolean;
 }
 
-export interface Vehicle { make: string; model: string; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null; photo?: string | null }
+export interface Vehicle { make: string; model: string; year?: number | null; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null; photo?: string | null }
 
 export interface Claim {
     id: number;
@@ -33,6 +33,8 @@ export interface Claim {
     store_phone?: string | null;
     raised_by_role: 'customer' | 'vendor' | 'admin';
     raised_via: string;
+    /** The claim's brand: its product's, else its store's (admin list and detail). */
+    brand?: 'AF' | 'AC';
     problem: string;
     problem_text: string;
     description: string | null;
@@ -42,7 +44,7 @@ export interface Claim {
         product_type: string; product_name: string; customer_name: string; customer_phone: string;
         car: string | null; registration_number: string | null; warranty_type: string; cover_start: string | null; cover_end: string | null; fitted_store: string | null;
         /** A row brought in from the plant's production sheet: its depot, row and FOC note. */
-        source?: string; depot?: string | null; sheet_row?: number; foc_note?: string | null;
+        source?: string; depot?: string | null; sheet_row?: number; foc_note?: string | null; mode?: string | null;
     } | null;
     status: ClaimStatus;
     status_text: string;
@@ -221,7 +223,7 @@ export const isPhoto = (url: string) => /\.(jpe?g|png|webp|heic|heif)(\?|$)/i.te
 export const isVideo = (url: string) => /\.(mp4|mov|webm|3gp|m4v)(\?|$)/i.test(url);
 export const day = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 export const AIRBAGS = { with: 'With airbags', sab: 'SAB', without: 'Without airbags' } as const;
-export const vehicleText = (v: Vehicle | null | undefined) => v ? [v.make, v.model, v.airbags ? AIRBAGS[v.airbags] : null,
+export const vehicleText = (v: Vehicle | null | undefined) => v ? [v.make, v.model, v.year || null, v.airbags ? AIRBAGS[v.airbags] : null,
     [v.major_colour, v.minor_colour].filter(Boolean).join(' / ') || null].filter(Boolean).join(' · ') : null;
 
 /** What the plant decided, in one line. */

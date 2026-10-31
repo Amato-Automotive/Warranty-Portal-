@@ -28,8 +28,57 @@ export interface SheetClaim {
 }
 
 const clean = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const date = (v: unknown) => { const s = clean(v).slice(0, 10); return DATE.test(s) ? s : null; };
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const ymd = (y: number, m: number, d: number) => {
+    if (y < 100) y += 2000;
+    const t = new Date(Date.UTC(y, m - 1, d));
+    if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d || y < 2000 || y > 2100) return null;
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+};
+
+/**
+ * A date as the sheet holds it, as "YYYY-MM-DD": already so (the Excel
+ * import), day first as typed in India ("28/10/2026", "28-10-26", "28.10.2026"),
+ * with the month in words ("28-Oct-2026", "28 Oct 26"), or a spreadsheet's day
+ * number (46323). Anything else is no date.
+ */
+export function sheetDate(v: unknown): string | null {
+    const s = clean(v);
+    if (!s) return null;
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return ymd(+m[1], +m[2], +m[3]);
+    m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|\d{4})$/);
+    if (m) return ymd(+m[3], +m[2], +m[1]);
+    m = s.match(/^(\d{1,2})[\s\-/.]*([A-Za-z]{3})[A-Za-z]*[\s\-/.,]*(\d{2}|\d{4})$/);
+    if (m && MONTHS.includes(m[2].toUpperCase())) return ymd(+m[3], MONTHS.indexOf(m[2].toUpperCase()) + 1, +m[1]);
+    if (/^\d{5}(\.\d+)?$/.test(s)) {
+        const t = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(s)) * 86_400_000);
+        return ymd(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate());
+    }
+    return null;
+}
+const date = sheetDate;
+
+/**
+ * A tab as Google gives it (rows of cells) as rows by column name, each with
+ * its row number in the sheet. The header is the first row naming both
+ * ALT NO and DATE, so title rows above it are fine; empty rows are dropped.
+ */
+export function rowsFromGrid(grid: string[][]): SheetRow[] {
+    const name = (c: unknown) => clean(c).toUpperCase();
+    const at = grid.slice(0, 30).findIndex(r => r.some(c => name(c) === 'ALT NO') && r.some(c => name(c) === 'DATE'));
+    if (at < 0) return [];
+    const head = grid[at].map(clean);
+    const out: SheetRow[] = [];
+    for (let i = at + 1; i < grid.length; i++) {
+        const cells = grid[i];
+        if (!cells.some(c => clean(c))) continue;
+        const row: SheetRow = { _row: String(i + 1) };
+        head.forEach((h, j) => { if (h && !(h in row)) row[h] = cells[j] ?? ''; });
+        out.push(row);
+    }
+    return out;
+}
 const get = (r: SheetRow, name: string) => {
     const k = Object.keys(r).find(x => x.trim().toUpperCase() === name);
     return k ? clean(r[k]) : '';

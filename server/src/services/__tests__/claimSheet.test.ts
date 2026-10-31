@@ -57,3 +57,35 @@ test('a row becomes a claim with the plant\'s columns; one without an alteration
     assert.deepEqual(h.hold, { reason: 'airbags', note: 'ABF /W/O ABF?', at: '2026-06-10T00:00:00.000Z' });
     assert.deepEqual(readSheetRow(row({ 'ALT NO': null }), 7), { skip: 'row 7: no alteration no.' });
 });
+
+test('dates as a Google sheet shows them, day first', async () => {
+    const { sheetDate } = await import('../claimSheet.js');
+    assert.equal(sheetDate('2026-10-28'), '2026-10-28');
+    assert.equal(sheetDate('28/10/2026'), '2026-10-28');
+    assert.equal(sheetDate('8-1-26'), '2026-01-08');
+    assert.equal(sheetDate('28.10.2026'), '2026-10-28');
+    assert.equal(sheetDate('28-Oct-2026'), '2026-10-28');
+    assert.equal(sheetDate('28 October 26'), '2026-10-28');
+    assert.equal(sheetDate('46323'), '2026-10-28');
+    assert.equal(sheetDate('31/02/2026'), null);
+    assert.equal(sheetDate('DISPATCHED'), null);
+    assert.equal(sheetDate(''), null);
+});
+
+test('a tab as rows by column: the header found below title rows, empty rows dropped', async () => {
+    const { rowsFromGrid } = await import('../claimSheet.js');
+    const rows = rowsFromGrid([
+        ['PRODUCTION NOV 2026', '', ''],
+        ['DATE', 'ALT NO', 'PARTY NAME '],
+        ['01/11/2026', 'Y300', 'FOCUS COCHIN'],
+        ['', '', ''],
+        ['02/11/2026', 'Y301', 'AUTO CHOICE'],
+    ]);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]._row, '3');
+    assert.equal(rows[1]._row, '5');
+    const c = readSheetRow(rows[0], Number(rows[0]._row));
+    assert.ok(!('skip' in c));
+    if (!('skip' in c)) { assert.equal(c.created_at.slice(0, 10), '2026-11-01'); assert.equal(c.key, 'Y300|2026-11-01|FOCUS COCHIN'); }
+    assert.deepEqual(rowsFromGrid([['no', 'header']]), []);
+});

@@ -46,10 +46,13 @@ test('issues: all while covered, only alteration after; the description where it
 test('vehicle: make and model always, airbags only for seat covers', () => {
     assert.match(String((readVehicle({ vehicle_make: 'Kia' }, 'seat-cover') as any).error), /model/);
     assert.match(String((readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos' }, 'seat-cover') as any).error), /airbags/);
-    assert.deepEqual(readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos', airbags: 'with' }, 'ppf'), { make: 'Kia', model: 'Seltos', airbags: null });
+    assert.deepEqual(readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos', airbags: 'with' }, 'ppf'), { make: 'Kia', model: 'Seltos', year: null, airbags: null });
+    // The year, when given, must be a year.
+    assert.deepEqual(readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos', vehicle_year: '2022' }, 'ppf'), { make: 'Kia', model: 'Seltos', year: 2022, airbags: null });
+    assert.match(String((readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos', vehicle_year: '22' }, 'ppf') as any).error), /year/);
     assert.match(String((readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos', airbags: 'sab' }, 'seat-cover') as any).error), /major colour/);
     assert.deepEqual(readVehicle({ vehicle_make: 'Kia', vehicle_model: 'Seltos', airbags: 'sab', major_colour: 'Beige' }, 'seat-cover'),
-        { make: 'Kia', model: 'Seltos', airbags: 'sab', major_colour: 'Beige', minor_colour: null });
+        { make: 'Kia', model: 'Seltos', year: null, airbags: 'sab', major_colour: 'Beige', minor_colour: null });
 });
 
 test('the store verifies, correcting details in words', () => {

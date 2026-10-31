@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import ClaimsController from '../controllers/claims.controller.js';
+import ClaimSheetController from '../controllers/claimSheet.controller.js';
 import { authenticateToken, requirePermission, requireRole } from '../middleware/auth.js';
 import { claimUpload, attachPublicUrls } from '../config/localUpload.js';
 import { signalAdminAttentionOnSuccess as signalAttention } from '../services/adminAttention.service.js';
@@ -31,6 +32,15 @@ router.post('/store', authenticateToken, requireRole('vendor'), signalAttention,
 
 // The plant: everyone with Warranty Claims read sees every claim; the steps
 // each person may take come from their claims_* rights (see whoOf).
+// The production sheets claims come from, and who sees their claims.
+const sheetRead = [authenticateToken, requireRole('admin'), requirePermission('claims', 'read')];
+const sheetWrite = [authenticateToken, requireRole('admin'), requirePermission('claims', 'write')];
+router.get('/admin/sheets', ...sheetRead, ClaimSheetController.list);
+router.post('/admin/sheets', ...sheetWrite, ClaimSheetController.add);
+router.put('/admin/sheets/seen', ...sheetWrite, ClaimSheetController.setSeen);
+router.put('/admin/sheets/:id', ...sheetWrite, ClaimSheetController.update);
+router.delete('/admin/sheets/:id', ...sheetWrite, ClaimSheetController.remove);
+router.post('/admin/sheets/:id/sync', ...sheetWrite, ClaimSheetController.sync);
 router.get('/admin/all', authenticateToken, requireRole('admin'), requirePermission('claims', 'read'), ClaimsController.adminList);
 
 // A step by whoever is on the claim; claimFlow decides who may take which.

@@ -117,7 +117,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
 
     const send = async () => {
         if (!w) return toast({ variant: "destructive", title: "Choose the product" });
-        const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: photos.length });
+        const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: photos.length, needYear: true });
         if (missing) return toast({ variant: "destructive", title: missing });
         if (!vehiclePhoto.length) return toast({ variant: "destructive", title: "Add a photo of the vehicle" });
         if (!storeId) return toast({ variant: "destructive", title: "Choose the store to check it" });
@@ -175,7 +175,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
 
             {w && (
                 <>
-                    <FormStep n={2} title="Your vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour)))}>
+                    <FormStep n={2} title="Your vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && vehicle.vehicle_year && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour)))}>
                         <VehicleFields value={vehicle} onChange={setVehicle} airbags={w.asks_airbags} registered={w.car} />
                     </FormStep>
 
