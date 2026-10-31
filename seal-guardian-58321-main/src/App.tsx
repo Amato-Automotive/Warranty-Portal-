@@ -3,6 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AuthProvider } from "./contexts/AuthContext";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { B2BCartProvider } from "./contexts/B2BCartContext";
@@ -63,6 +64,7 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <AppErrorBoundary>
           <BrowserRouter>
             <Suspense fallback={<PageLoader />}>
               <Routes>
@@ -108,6 +110,7 @@ const App = () => (
               {TRAINING && <TrainingBar />}
             </Suspense>
           </BrowserRouter>
+          </AppErrorBoundary>
         </TooltipProvider>
         </LanguageProvider>
       </NotificationProvider>
