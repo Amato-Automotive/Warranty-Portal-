@@ -32,6 +32,8 @@ export interface PosmField {
     help?: string;
     /** select, chips: the choices. sizes: the sizes. */
     options?: string[];
+    /** select, chips, sizes: a choice for one brand only (none listed = both). */
+    option_brands?: Record<string, Brand>;
     /** chips, brand: more than one may be picked. */
     multiple?: boolean;
     /** files: how many. */
@@ -56,6 +58,8 @@ export interface PosmItem {
     clipart?: string | null;
     image?: string | null;
     enabled: boolean;
+    /** The brands it is available for; none listed = every brand. A store sees it only if it sells one of them. */
+    brands?: Brand[];
     qty_mode: QtyMode;
     limits: PosmLimits;
     fields: PosmField[];
@@ -137,7 +141,12 @@ function readField(f: any, i: number): PosmField {
     const type = (FIELD_TYPES as string[]).includes(f?.type) ? f.type as FieldType : 'text';
     const field: PosmField = { id: slug(str(f?.id) || str(f?.label) || `field_${i + 1}`) || `field_${i + 1}`, label: str(f?.label, 120) || `Field ${i + 1}`, type, required: !!f?.required };
     if (str(f?.help)) field.help = str(f.help, 200);
-    if (type === 'select' || type === 'chips' || type === 'sizes') field.options = list(f?.options);
+    if (type === 'select' || type === 'chips' || type === 'sizes') {
+        field.options = list(f?.options);
+        const ob: Record<string, Brand> = {};
+        for (const o of field.options) { const b = f?.option_brands?.[o]; if (b === 'AF' || b === 'AC') ob[o] = b; }
+        if (Object.keys(ob).length) field.option_brands = ob;
+    }
     if (type === 'chips' || type === 'brand') field.multiple = !!f?.multiple;
     if (type === 'files') field.max_files = Math.min(10, Math.max(1, Number(f?.max_files) || 3));
     if (type === 'table') {
@@ -174,11 +183,26 @@ export function readCatalog(stored: unknown): PosmCatalog {
                 id, name: str(it?.name, 80) || `Item ${i + 1}`, description: str(it?.description, 300),
                 clipart: str(it?.clipart, 40) || null, image: str(it?.image, 500) || null,
                 enabled: it?.enabled !== false, qty_mode: mode,
+                ...(() => {
+                    const b = [...new Set<Brand>((Array.isArray(it?.brands) ? it.brands : []).filter((x: unknown): x is Brand => x === 'AF' || x === 'AC'))];
+                    // Both brands is the same as none listed: every brand.
+                    return b.length === 1 ? { brands: b } : {};
+                })(),
                 limits: { min: limitOf(it?.limits?.min), max_request: limitOf(it?.limits?.max_request), max_month: limitOf(it?.limits?.max_month), max_year: limitOf(it?.limits?.max_year) },
                 fields,
             };
         }),
     };
+}
+
+/** The brands of a store an item is available for: those it shares with the item (every one, for an item listing none). */
+export function itemBrands(item: PosmItem, storeBrandList: Brand[]): Brand[] {
+    return item.brands?.length ? storeBrandList.filter(b => item.brands!.includes(b)) : storeBrandList;
+}
+
+/** The items a store can ask for: switched on, and available for a brand it sells. */
+export function storeCatalog(catalog: PosmCatalog, storeBrandList: Brand[]): PosmCatalog {
+    return { items: catalog.items.filter(it => it.enabled && itemBrands(it, storeBrandList).length > 0) };
 }
 
 /** What would stop the admin's catalog from working, in words; null when it is fine. */
@@ -259,12 +283,19 @@ export function validateLines(
     for (const [i, r] of raw.entries()) {
         const item = catalog.items.find(x => x.id === String((r as any)?.item_id));
         if (!item || !item.enabled) return { error: `Item ${i + 1} cannot be requested right now` };
+        // Only the brands the item is available for, among the store's.
+        const lineBrands = itemBrands(item, brands);
+        if (!lineBrands.length) return { error: `${item.name} is not available for your brand` };
         const inValues = ((r as any)?.values ?? {}) as Record<string, unknown>;
         const values: Record<string, unknown> = {};
         const display: PosmLine['display'] = [];
         let sizesTotal = 0;
         // The brand a design-table pick belongs to: the line's Brand, one or a list of one.
         const brandField = item.fields.find(f => f.type === 'brand');
+        // The brands a choice must suit: those picked on the line, else the item's for this store.
+        const sentBrands = brandField ? [].concat((inValues[brandField.id] ?? []) as any).map(x => String(x).toUpperCase()).filter(x => (lineBrands as string[]).includes(x)) as Brand[] : [];
+        const forBrands = sentBrands.length ? sentBrands : lineBrands;
+        const offered = (f: PosmField, o: string) => !f.option_brands?.[o] || forBrands.includes(f.option_brands[o]);
 
         for (const f of item.fields) {
             const v = inValues[f.id];
@@ -279,7 +310,7 @@ export function validateLines(
             if (f.type === 'sizes') {
                 const sizes: Record<string, number> = {};
                 for (const [size, q] of Object.entries((v ?? {}) as Record<string, unknown>)) {
-                    if (!f.options?.includes(size)) return { error: `${what} — size ${size} is not offered` };
+                    if (!f.options?.includes(size) || (!offered(f, size) && Number(q) > 0)) return { error: `${what} — size ${size} is not offered` };
                     if (q === '' || q == null || Number(q) === 0) continue;
                     const n = whole(q);
                     if (!(n >= 1 && n <= MAX_QTY)) return { error: `${what} — enter 1 to ${MAX_QTY} for size ${size}` };
@@ -312,20 +343,20 @@ export function validateLines(
                 }
                 case 'select': {
                     const s = str(v, 80);
-                    if (!f.options?.includes(s)) return { error: `${what} — choose from the list` };
+                    if (!f.options?.includes(s) || !offered(f, s)) return { error: `${what} — choose from the list` };
                     values[f.id] = s; display.push({ label: f.label, value: s });
                     break;
                 }
                 case 'chips': {
                     const picked = [...new Set((Array.isArray(v) ? v : [v]).map(x => str(x, 80)))];
-                    if (!picked.every(p => f.options?.includes(p))) return { error: `${what} — choose from the list` };
+                    if (!picked.every(p => f.options?.includes(p) && offered(f, p))) return { error: `${what} — choose from the list` };
                     if (!f.multiple && picked.length > 1) return { error: `${what} — choose one` };
                     values[f.id] = f.multiple ? picked : picked[0]; display.push({ label: f.label, value: picked.join(', ') });
                     break;
                 }
                 case 'brand': {
                     const picked = [...new Set((Array.isArray(v) ? v : [v]).map(x => String(x).toUpperCase()))];
-                    if (!picked.every(p => (brands as string[]).includes(p))) return { error: `${what} — choose a brand your store sells` };
+                    if (!picked.every(p => (lineBrands as string[]).includes(p))) return { error: `${what} — choose a brand this item is available for` };
                     if (!f.multiple && picked.length > 1) return { error: `${what} — choose one brand` };
                     values[f.id] = f.multiple ? picked : picked[0];
                     display.push({ label: f.label, value: picked.map(b => BRAND_LABEL[b as Brand]).join(' + ') });
@@ -336,7 +367,7 @@ export function validateLines(
                     const raw = brandField ? inValues[brandField.id] : null;
                     const one = Array.isArray(raw) ? (raw.length === 1 ? raw[0] : null) : raw;
                     const sent = one ? String(one).toUpperCase() as Brand : null;
-                    const brand = f.brand_split && sent && brands.includes(sent) ? sent : null;
+                    const brand = f.brand_split && sent && lineBrands.includes(sent) ? sent : null;
                     if (f.brand_split && !brand) return { error: `${item.name}: choose the brand first` };
                     const row = tableRows(f, brand).find(x => x.cells[0] === str(v, 80));
                     if (!row) return { error: `${what} — choose from the list` };

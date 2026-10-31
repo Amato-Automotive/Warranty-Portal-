@@ -162,3 +162,35 @@ test('admin decisions: a quantity of 0 rejects the line, even when "approve" was
     assert.equal(back[0].line_status, 'approved', 'a quantity above 0 approves a rejected line again');
     assert.equal(back[0].approved_qty, 2);
 });
+
+test('an item for one brand: only stores of that brand see it or may order it', async () => {
+    const { storeCatalog, itemBrands } = await import('../posmCatalog.js');
+    const cat: PosmCatalog = readCatalog({ items: [
+        { id: 'ac_banner', name: 'AC banner', enabled: true, qty_mode: 'number', brands: ['AC'], limits: {},
+          fields: [{ id: 'brand', label: 'Brand', type: 'brand', required: true }] },
+        { id: 'both', name: 'Both', enabled: true, qty_mode: 'number', brands: ['AF', 'AC'], limits: {}, fields: [] },
+    ] });
+    assert.deepEqual(cat.items[0].brands, ['AC']);
+    assert.equal(cat.items[1].brands, undefined, 'both brands is the same as every brand');
+    assert.deepEqual(storeCatalog(cat, ['AF']).items.map(i => i.id), ['both']);
+    assert.deepEqual(storeCatalog(cat, ['AF', 'AC']).items.map(i => i.id), ['ac_banner', 'both']);
+    assert.deepEqual(itemBrands(cat.items[0], ['AF', 'AC']), ['AC']);
+    assert.match(err(validateLines([{ item_id: 'ac_banner', qty: 1, values: { brand: 'AC' } }], cat, ['AF'])), /not available for your brand/);
+    assert.match(err(validateLines([{ item_id: 'ac_banner', qty: 1, values: { brand: 'AF' } }], cat, ['AF', 'AC'])), /brand this item is available for/);
+    ok(validateLines([{ item_id: 'ac_banner', qty: 1, values: { brand: 'AC' } }], cat, ['AF', 'AC']));
+});
+
+test('a choice for one brand: offered only for that brand', () => {
+    const cat: PosmCatalog = readCatalog({ items: [
+        { id: 'tee', name: 'T-shirt', enabled: true, qty_mode: 'sizes', limits: {}, fields: [
+            { id: 'brand', label: 'Brand', type: 'brand', required: true },
+            { id: 'sizes', label: 'Sizes', type: 'sizes', required: true, options: ['M', 'XL'], option_brands: { XL: 'AC', M: 'nope' } },
+        ] },
+    ] });
+    assert.deepEqual(cat.items[0].fields[1].option_brands, { XL: 'AC' });
+    // An AFAC store ordering for Autoform cannot have the Autocruze-only size; for Autocruze it can.
+    assert.match(err(validateLines([{ item_id: 'tee', values: { brand: 'AF', sizes: { XL: 2 } } }], cat, ['AF', 'AC'])), /size XL is not offered/);
+    ok(validateLines([{ item_id: 'tee', values: { brand: 'AC', sizes: { XL: 2 } } }], cat, ['AF', 'AC']));
+    ok(validateLines([{ item_id: 'tee', values: { brand: 'AF', sizes: { M: 1 } } }], cat, ['AF']));
+    assert.match(err(validateLines([{ item_id: 'tee', values: { brand: 'AF', sizes: { XL: 1 } } }], cat, ['AF'])), /not offered/);
+});

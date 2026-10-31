@@ -98,6 +98,11 @@ export function POSMItemForm({ item, brands, left, onAdd, onClose }: {
     const [files, setFiles] = useState<Record<string, File[]>>({});
     const [qty, setQty] = useState(Math.max(1, item.limits.min ?? 1));
     const set = (id: string, v: any) => setValues(p => ({ ...p, [id]: v }));
+    /* The choices offered: those for the brand picked on this line (or the store's), and those for both. */
+    const lineBrandField = item.fields.find(f => f.type === "brand");
+    const linePicked = lineBrandField ? ([] as string[]).concat(values[lineBrandField.id] ?? []).filter(b => (brands as string[]).includes(b)) : [];
+    const forBrands = linePicked.length ? linePicked : brands;
+    const offered = (f: PosmField) => (f.options ?? []).filter(o => !f.option_brands?.[o] || forBrands.includes(f.option_brands[o]));
 
     /* A design table split by brand (FRP): the store sees the designs of every
        brand it sells, each with its own quantity, and each design picked
@@ -127,7 +132,7 @@ export function POSMItemForm({ item, brands, left, onAdd, onClose }: {
     const add = () => {
         if (issue) return;
         const clean = { ...values };
-        for (const f of item.fields) if (f.type === "sizes") clean[f.id] = Object.fromEntries(Object.entries(clean[f.id] || {}).filter(([, n]) => Number(n) > 0).map(([k, n]) => [k, Number(n)]));
+        for (const f of item.fields) if (f.type === "sizes") clean[f.id] = Object.fromEntries(Object.entries(clean[f.id] || {}).filter(([k, n]) => Number(n) > 0 && offered(f).includes(k)).map(([k, n]) => [k, Number(n)]));
         if (pickTable && brandField) {
             // One line per design picked; the other fields (remarks, photos) go with each.
             onAdd(Object.entries(picks).filter(([, n]) => n > 0).map(([key, n], i) => {
@@ -198,14 +203,16 @@ export function POSMItemForm({ item, brands, left, onAdd, onClose }: {
                             case "number": return <div key={f.id} className="space-y-1 max-w-[200px]">{label}<Input type="number" min={0} value={v ?? ""} onChange={e => set(f.id, e.target.value)} />{help}</div>;
                             case "select": return (
                                 <div key={f.id} className="space-y-1">{label}
-                                    <Select value={v ?? ""} onValueChange={x => set(f.id, x)}>
+                                    <Select value={offered(f).includes(v) ? v : ""} onValueChange={x => set(f.id, x)}>
                                         <SelectTrigger><SelectValue placeholder="Choose" /></SelectTrigger>
-                                        <SelectContent>{(f.options ?? []).map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
+                                        <SelectContent>{offered(f).map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
                                     </Select>{help}
                                 </div>
                             );
                             case "chips": case "brand": {
-                                const opts = f.type === "brand" ? brands : (f.options ?? []);
+                                const opts = f.type === "brand" ? brands : offered(f);
+                                // An AF or AC store orders its own brand: no choice to show (it is filled in). Only AFAC stores pick.
+                                if (f.type === "brand" && opts.length === 1) return null;
                                 const picked: string[] = [].concat(v ?? []);
                                 return (
                                     <div key={f.id} className="space-y-1.5">{label}
@@ -234,7 +241,7 @@ export function POSMItemForm({ item, brands, left, onAdd, onClose }: {
                             case "sizes": return (
                                 <div key={f.id} className="space-y-1.5">{label}
                                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                        {(f.options ?? []).map(s => (
+                                        {offered(f).map(s => (
                                             <div key={s} className="flex items-center justify-between gap-2 rounded-xl bg-gray-50 px-3 py-2">
                                                 <span className="font-bold text-gray-700">{s}</span>
                                                 <Stepper label={`size ${s}`} value={Number(v?.[s] ?? 0)} onChange={n => set(f.id, { ...v, [s]: n })} />

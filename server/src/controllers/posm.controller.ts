@@ -6,7 +6,7 @@ import { posmRepository } from '../repositories/posm.repository.js';
 import { NotificationService } from '../services/notification.service.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import {
-    readCatalog, catalogProblem, storeBrands, validateLines, requestSummary, applyDecisions, usageFrom,
+    readCatalog, catalogProblem, storeBrands, storeCatalog, validateLines, requestSummary, applyDecisions, usageFrom,
     type PosmLine, type PosmCatalog, type Usage,
 } from '../services/posmCatalog.js';
 import { nextStatus, actionsFor, undoTarget, ACTION_TEXT, type HistoryEntry, type PosmAction } from '../services/posmFlow.js';
@@ -328,7 +328,7 @@ class POSMController {
                 const [[st]]: any = await db.execute('SELECT id, allowed_brands FROM vendor_details WHERE id = ? OR user_id = ? LIMIT 1', [forStore, forStore]);
                 if (!st) return res.status(404).json({ success: false, error: 'Franchise not found' });
                 return res.json({ success: true, data: {
-                    catalog: { items: catalog.items.filter(it => it.enabled) },
+                    catalog: storeCatalog(catalog, storeBrands(st.allowed_brands)),
                     brands: storeBrands(st.allowed_brands),
                     usage: await storeUsage(st.id),
                 } });
@@ -337,7 +337,7 @@ class POSMController {
             if (!vendor) return res.status(403).json({ success: false, error: 'Access denied.' });
             const [[row]]: any = await db.execute('SELECT allowed_brands FROM vendor_details WHERE id = ?', [vendor.id]);
             return res.json({ success: true, data: {
-                catalog: { items: catalog.items.filter(it => it.enabled) },
+                catalog: storeCatalog(catalog, storeBrands(row?.allowed_brands)),
                 brands: storeBrands(row?.allowed_brands),
                 usage: await storeUsage(vendor.id),
             } });
@@ -538,7 +538,7 @@ class POSMController {
             const catalog = await loadCatalog();
             const [[row]]: any = await db.execute('SELECT allowed_brands FROM vendor_details WHERE id = ?', [store.id]);
             return res.json({ success: true, data: {
-                catalog: { items: catalog.items.filter(it => it.enabled) },
+                catalog: storeCatalog(catalog, storeBrands(row?.allowed_brands)),
                 brands: storeBrands(row?.allowed_brands),
                 usage: await storeUsage(store.id),
             } });

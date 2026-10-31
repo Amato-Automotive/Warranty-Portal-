@@ -145,7 +145,7 @@ export function POSMItemBuilder() {
                                     <span className="min-w-0">
                                         <span className={cn("block text-sm font-bold truncate", it.enabled ? "text-slate-800" : "text-slate-400")}>{it.name}</span>
                                         <span className="block text-[11px] text-slate-400 truncate">
-                                            {it.enabled ? "" : "Hidden · "}{it.fields.length} field{it.fields.length === 1 ? "" : "s"}{limitText(it.limits) ? ` · ${limitText(it.limits)}` : ""}
+                                            {it.enabled ? "" : "Hidden · "}{it.brands?.length === 1 ? `${it.brands[0] === "AC" ? "Autocruze" : "Autoform"} only · ` : ""}{it.fields.length} field{it.fields.length === 1 ? "" : "s"}{limitText(it.limits) ? ` · ${limitText(it.limits)}` : ""}
                                         </span>
                                     </span>
                                 </button>
@@ -196,6 +196,19 @@ export function POSMItemBuilder() {
                                 <div className="flex items-center gap-3">
                                     <Switch id="pb-on" checked={item.enabled} onCheckedChange={v => patch({ enabled: v })} />
                                     <label htmlFor="pb-on" className="text-sm text-slate-600">{item.enabled ? "Shown to stores" : "Hidden from stores"}</label>
+                                </div>
+                                {/* Which brands' stores may order it: a store sees it only if it sells one of them. */}
+                                <div className="space-y-1">
+                                    <p className="text-xs font-semibold text-slate-500">Available for</p>
+                                    <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1" role="group" aria-label="Available for">
+                                        {([[null, "Both brands"], ["AF", "Autoform only"], ["AC", "Autocruze only"]] as const).map(([b, label]) => {
+                                            const on = b ? item.brands?.length === 1 && item.brands[0] === b : !item.brands?.length;
+                                            return (
+                                                <button key={label} type="button" aria-pressed={on} onClick={() => patch({ brands: b ? [b] : undefined })}
+                                                    className={cn("min-h-[40px] rounded-lg px-2 text-xs font-bold", on ? "bg-white text-slate-900 shadow" : "text-slate-600")}>{label}</button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
                             <div className="space-y-2">
@@ -279,6 +292,25 @@ export function POSMItemBuilder() {
                                         <div className="space-y-1">
                                             <p className="text-[11px] font-semibold text-slate-500">{f.type === "sizes" ? "Sizes" : "Choices"} (comma-separated)</p>
                                             <ListInput value={f.options ?? []} onChange={v => patchField(fi, { options: v })} />
+                                            {(f.options?.length ?? 0) > 0 && (
+                                                <div className="space-y-1 pt-1">
+                                                    <p className="text-[11px] font-semibold text-slate-500">For which brand? Tap to change</p>
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {(f.options ?? []).map(o => {
+                                                            const b = f.option_brands?.[o];
+                                                            const next = b === undefined ? "AF" : b === "AF" ? "AC" : undefined;
+                                                            return (
+                                                                <button key={o} type="button" title="Both → Autoform only → Autocruze only"
+                                                                    onClick={() => { const ob = { ...(f.option_brands ?? {}) }; if (next) ob[o] = next; else delete ob[o]; patchField(fi, { option_brands: ob }); }}
+                                                                    className={cn("rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+                                                                        b === "AF" ? "border-orange-300 bg-orange-50 text-orange-800" : b === "AC" ? "border-sky-300 bg-sky-50 text-sky-800" : "border-slate-200 bg-white text-slate-600")}>
+                                                                    {o} · {b === "AF" ? "Autoform" : b === "AC" ? "Autocruze" : "Both"}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                     {(f.type === "chips" || f.type === "brand") && (

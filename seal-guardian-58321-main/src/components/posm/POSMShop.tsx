@@ -134,7 +134,7 @@ export function POSMShop({ items, brands, usage, ignoreLimits, onSend, sendLabel
             )}
 
             {formItem && (
-                <POSMItemForm item={formItem} brands={brands} left={leftFor(formItem)}
+                <POSMItemForm item={formItem} brands={formItem.brands?.length ? brands.filter(b => formItem.brands!.includes(b)) : brands} left={leftFor(formItem)}
                     onClose={() => setFormItem(null)}
                     onAdd={lines => { setCart(c => [...c, ...lines]); setFormItem(null); }} />
             )}

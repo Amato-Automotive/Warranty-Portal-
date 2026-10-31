@@ -24,6 +24,8 @@ export interface PosmField {
     required: boolean;
     help?: string;
     options?: string[];
+    /** select, chips, sizes: a choice for one brand only (none listed = both). */
+    option_brands?: Record<string, Brand>;
     multiple?: boolean;
     max_files?: number;
     columns?: string[];
@@ -43,6 +45,8 @@ export interface PosmItem {
     clipart?: string | null;
     image?: string | null;
     enabled: boolean;
+    /** The brands it is available for; none = every brand (same as the server's). */
+    brands?: Brand[];
     qty_mode: QtyMode;
     limits: PosmLimits;
     fields: PosmField[];
