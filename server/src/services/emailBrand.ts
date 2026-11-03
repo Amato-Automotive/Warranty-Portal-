@@ -23,6 +23,8 @@ const AF_LOGO = 'https://res.cloudinary.com/dmwt4rg4m/image/upload/v1765531503/w
 const WORDS: [RegExp, string][] = [
     [/Autoform India Warranty Portal/g, 'AutoCruze Warranty Portal'],
     [/Autoform Franchise Management System/g, 'AutoCruze Franchise Management System'],
+    [/Autoform Franchise Portal/g, 'AutoCruze Franchise Portal'],
+    [/active Autoform Franchise/g, 'active AutoCruze Franchise'],
     [/Autoform Warranty Portal/g, 'AutoCruze Warranty Portal'],
     [/Autoform India Team/g, 'AutoCruze Team'],
     [/Team Autoform India/g, 'Team AutoCruze'],

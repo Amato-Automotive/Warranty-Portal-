@@ -12,6 +12,8 @@ test('an AutoCruze email gets its logo and words; the © line keeps the company 
     assert.ok(out.includes('AutoCruze Warranty Portal') && out.includes('AutoCruze Team'));
     assert.ok(out.includes('© 2026 Autoform India. All rights reserved.'));
     assert.equal(toAutoCruze('Grievance Registered - G1 | Autoform India', AC_LOGO), 'Grievance Registered - G1 | AutoCruze');
+    assert.equal(toAutoCruze('Welcome to the New Autoform Franchise Portal!', AC_LOGO), 'Welcome to the New AutoCruze Franchise Portal!');
+    assert.equal(toAutoCruze('because you are an active Autoform Franchise.', AC_LOGO), 'because you are an active AutoCruze Franchise.');
 });
 
 test('only AC changes an email; Autoform, both brands and no brand send it as it is', async () => {
