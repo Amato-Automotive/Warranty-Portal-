@@ -103,6 +103,9 @@ export interface PointSeries { id: string; name: string; points: number; product
 export interface StoreTier { id: string; name: string; times: number }
 export interface PointsRule { series: PointSeries[]; tiers: StoreTier[] }
 export interface SchemeSettings {
+    /* Sell More Earn More: a banner for each option. */
+    option_banners?: { option1?: string; option2?: string };
+    live?: boolean;
     measure?: Measure; points?: PointsRule;
     run: RunMode; source: TargetSource; baseline_months: number; count: WarrantyCount; date_by: WarrantyDate; unit: string; period: TargetPeriod; benefit: BenefitKind; steps: TargetStep[]; show: TargetVisibility;
 }

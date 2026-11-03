@@ -43,7 +43,7 @@ export function useWarrantyProducts() {
     return products;
 }
 
-export function PointsRuleEditor({ rule, onChange, products }: { rule: PointsRule; onChange: (r: PointsRule) => void; products: Product[] }) {
+export function PointsRuleEditor({ rule, onChange, products, hideTiers }: { rule: PointsRule; onChange: (r: PointsRule) => void; products: Product[]; hideTiers?: boolean }) {
     const [adding, setAdding] = useState<string | null>(null);
     const owner = useMemo(() => {
         const m = new Map<string, string>();
@@ -114,7 +114,7 @@ export function PointsRuleEditor({ rule, onChange, products }: { rule: PointsRul
                 )}
             </div>
 
-            <div className="space-y-2">
+            {!hideTiers && <div className="space-y-2">
                 <p className="text-sm font-bold text-slate-900">Store types</p>
                 {rule.tiers.map(t => (
                     <div key={t.id} className="flex items-end gap-2">
@@ -131,7 +131,7 @@ export function PointsRuleEditor({ rule, onChange, products }: { rule: PointsRul
                 <Button type="button" variant="outline" size="sm" onClick={() => onChange({ ...rule, tiers: [...rule.tiers, { id: newId("t"), name: "", times: 1 }] })}>
                     <Plus className="h-4 w-4 mr-1" />Add a store type
                 </Button>
-            </div>
+            </div>}
         </div>
     );
 }

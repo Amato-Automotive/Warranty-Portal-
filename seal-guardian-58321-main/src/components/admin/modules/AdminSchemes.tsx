@@ -7,6 +7,8 @@ import { Gift, Loader2, Plus, Search, Trash2, RefreshCw, CalendarDays, ArrowRigh
 import { cn } from "@/lib/utils";
 import { SchemeEditor } from "../schemes/SchemeEditor";
 import { TargetSchemeEditor } from "../schemes/TargetSchemeEditor";
+import { SellMoreEditor } from "../schemes/SellMoreEditor";
+import { SELL_MORE_SCHEME_ID } from "@/lib/sellMore";
 import { SchemeDetail } from "../schemes/SchemeDetail";
 import { CATEGORY_LABEL, STATE_META, formatDay, type Scheme, type SchemeState } from "@/lib/schemes";
 
@@ -116,7 +118,7 @@ export const AdminSchemes = () => {
         onClose: () => setEditing({ open: false, scheme: null }),
         onSaved: (s: Scheme) => { setEditing({ open: false, scheme: null }); load(); setOpenId(s.id); },
     };
-    const editor = isTargets ? <TargetSchemeEditor {...editorProps} /> : <SchemeEditor {...editorProps} />;
+    const editor = editing.scheme?.id === SELL_MORE_SCHEME_ID ? <SellMoreEditor {...editorProps} /> : isTargets ? <TargetSchemeEditor {...editorProps} /> : <SchemeEditor {...editorProps} />;
 
     if (openId) {
         return (

@@ -12,6 +12,8 @@ import { CorrectEntryDialog } from "./CorrectEntryDialog";
 import { ImportDialog } from "./ImportDialog";
 import { SellThroughTab } from "./SellThroughTab";
 import { TargetsTab } from "./TargetsTab";
+import { SellMoreProgram } from "./SellMoreProgram";
+import { SELL_MORE_SCHEME_ID } from "@/lib/sellMore";
 import { SchemeOverview } from "./SchemeOverview";
 import { ReviewQueue, type InvoiceOut } from "./ReviewQueue";
 import { type AdminEntry as Entry, type AdminDetail as Detail, stateKey, stateLabel, istDay } from "./adminTypes";
@@ -413,7 +415,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
                 </div>
             </div>
 
-            {byTargets ? <TargetsTab scheme={s} refreshKey={reloadKey} onEditDetails={() => onEdit(s)} onChanged={() => { load(); onChanged(); }} /> : <>
+            {s.id === SELL_MORE_SCHEME_ID ? <SellMoreProgram schemeId={s.id} refreshKey={reloadKey} /> : byTargets ? <TargetsTab scheme={s} refreshKey={reloadKey} onEditDetails={() => onEdit(s)} onChanged={() => { load(); onChanged(); }} /> : <>
             <div className="flex gap-1 overflow-x-auto border-b border-slate-200">
                 {([
                     ["overview", "Overview"],

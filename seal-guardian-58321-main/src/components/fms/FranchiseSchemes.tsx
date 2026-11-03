@@ -18,6 +18,8 @@ import {
     type Scheme, type SchemeCategory, type SchemeState, type EntryFile, type EntryLine, type SchemeWindow, type Club,
 } from "@/lib/schemes";
 import { SchemeTargetView, type StorePeriod, type StoreTargets } from "./SchemeTargetView";
+import { SellMoreView } from "./SellMoreView";
+import { points, type SellMoreCard, type StoreSellMore } from "@/lib/sellMore";
 
 /**
  * Offers & Schemes for a franchise: the schemes it can take part in, joining
@@ -33,7 +35,8 @@ interface Listed {
     windows: SchemeWindow[]; open_window: SchemeWindow | null; next_window: SchemeWindow | null;
     has_score: boolean; joined: boolean; achieved: Achieved | null;
     /* A scheme run by targets: this period's figures, as far as the scheme shows them. */
-    run?: "targets"; target_now?: StorePeriod | null;
+    run?: "targets" | "sell_more"; target_now?: StorePeriod | null;
+    sell_more?: SellMoreCard;
 }
 interface MyEntry {
     id: string; answers: Record<string, string>; files: Record<string, EntryFile[]>;
@@ -48,6 +51,8 @@ interface Detail {
     entries: MyEntry[]; leaderboard: { rank: number; name: string; score: number; me: boolean; club?: Club | null }[] | null;
     /* Only on a scheme run by targets, which has no entries. */
     targets?: StoreTargets;
+    /* Only on Sell More Earn More. */
+    sell_more?: StoreSellMore;
 }
 
 const when = (d: string) => new Date(d).toLocaleString("en-IN", { hour: "numeric", minute: "2-digit" });
@@ -214,6 +219,12 @@ export const FranchiseSchemes = ({ initialOpenId = null }: { initialOpenId?: str
                                             </div>
                                         ) : <p className="text-sm text-slate-500">{t("Your target shows here once it's set.")}</p>;
                                     })()}
+                                    {s.run === "sell_more" && s.sell_more?.opted && (
+                                        <div className="grid grid-cols-2 gap-px rounded-lg border border-slate-100 bg-slate-200 overflow-hidden text-sm [&>div]:bg-slate-50">
+                                            <div className="px-3 py-2"><p className="text-xs text-slate-500">{s.sell_more.option === "buy_more" ? tr("Sets available", "उपलब्ध सेट") : s.sell_more.month_label ?? t("Points")}</p><p className="font-bold text-slate-900 tabular-nums">{s.sell_more.option === "buy_more" ? s.sell_more.approved_sets : points(s.sell_more.month_points)}</p></div>
+                                            <div className="px-3 py-2"><p className="text-xs text-slate-500">{s.sell_more.option === "buy_more" ? tr("Free sets given", "मिले मुफ़्त सेट") : tr("Total points", "कुल पॉइंट")}</p><p className="font-bold text-slate-900 tabular-nums">{s.sell_more.option === "buy_more" ? s.sell_more.free_sets : points(s.sell_more.total)}</p></div>
+                                        </div>
+                                    )}
                                     {s.run !== "targets" && s.joined && a && (
                                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-px rounded-lg border border-slate-100 bg-slate-200 overflow-hidden text-sm [&>div]:bg-slate-50">
                                             {s.has_score && <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Points")}</p><p className="font-bold text-slate-900 tabular-nums">{a.score}</p></div>}
@@ -222,7 +233,7 @@ export const FranchiseSchemes = ({ initialOpenId = null }: { initialOpenId?: str
                                             <div className="px-3 py-2"><p className="text-xs text-slate-500">{t("Approved")}</p><p className="font-bold text-slate-900 tabular-nums">{a.approved}</p></div>
                                         </div>
                                     )}
-                                    {s.run !== "targets" && s.joined && !a && <p className="text-sm text-slate-500">{t("You've joined. Your points show here once an entry is approved.")}</p>}
+                                    {s.run !== "targets" && s.run !== "sell_more" && s.joined && !a && <p className="text-sm text-slate-500">{t("You've joined. Your points show here once an entry is approved.")}</p>}
 
                                     <div className="mt-auto flex flex-col-reverse sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 pt-1 [&>button]:w-full sm:[&>button]:w-auto">
                                         <Button variant="ghost" size="sm" className="text-slate-600" onClick={() => open(s.id)}>
@@ -235,7 +246,7 @@ export const FranchiseSchemes = ({ initialOpenId = null }: { initialOpenId?: str
                                                 </Button>
                                             )
                                         ) : s.state !== "closed" && (
-                                            <Button size="sm" className="h-10 sm:h-9 bg-orange-500 hover:bg-orange-600" onClick={() => open(s.id)}>{t("Join scheme")}</Button>
+                                            <Button size="sm" className="h-10 sm:h-9 bg-orange-500 hover:bg-orange-600" onClick={() => open(s.id)}>{s.run === "sell_more" ? tr("Choose your option", "अपना विकल्प चुनें") : t("Join scheme")}</Button>
                                         )}
                                     </div>
                                 </div>
@@ -276,6 +287,7 @@ function SchemeView({ id, startSubmit, onBack }: { id: string; startSubmit: bool
     }, [startSubmit, Boolean(d)]);
 
     if (!d) return <div className="flex items-center justify-center min-h-[400px] gap-3 text-slate-400"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div>;
+    if (d.sell_more) return <SellMoreView scheme={d.scheme} data={d.sell_more} onBack={onBack} onRefresh={load} />;
     if (d.targets) return <SchemeTargetView scheme={d.scheme} targets={d.targets} onBack={onBack} onRefresh={load} />;
     const s = d.scheme;
     const a = d.achieved;

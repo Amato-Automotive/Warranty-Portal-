@@ -15,6 +15,7 @@ import {
     stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth, pointsByProduct, roundPoints, tierOf,
     type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
+import { addSets, earned, eligibility, invoiceProblems, isOffer, isSellMore, noSets, optionOf, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -44,7 +45,7 @@ function readScheme(r: any) {
     const now = istNow();
     return {
         id: r.id as string,
-        title: r.title as string,
+        title: (isSellMore(r.id) ? SELL_MORE_PROGRAM : r.title) as string,
         category: r.category as string,
         summary: r.summary as string | null,
         banner_url: r.banner_url as string | null,
@@ -230,10 +231,10 @@ async function myStore(req: Request) {
     const userId = (req as any).user?.id;
     if (!userId) return null;
     const [[s]]: any = await db.execute(
-        'SELECT id, store_name, state, allowed_brands, user_id FROM vendor_details WHERE user_id = ? LIMIT 1',
+        'SELECT id, store_name, state, allowed_brands, user_id, is_franchise FROM vendor_details WHERE user_id = ? LIMIT 1',
         [userId]
     );
-    return s ? { id: String(s.id), name: s.store_name, state: s.state, allowed_brands: s.allowed_brands, user_id: s.user_id } : null;
+    return s ? { id: String(s.id), name: s.store_name, state: s.state, allowed_brands: s.allowed_brands, user_id: s.user_id, is_franchise: Boolean(s.is_franchise) } : null;
 }
 
 async function loadScheme(id: string): Promise<Scheme | null> {
@@ -579,6 +580,164 @@ async function storeTargets(scheme: Scheme, storeId: string) {
     };
 }
 
+/* ─── Sell More Earn More ─────────────────────────────────────────────────── */
+
+/**
+ * Live, every franchise can see it and choose. Paused, which is how it starts,
+ * only the scheme's own list of stores can: the test store, so it can be tried
+ * on the live site without any real store seeing it.
+ */
+const canSee = (scheme: Scheme, store: NonNullable<Awaited<ReturnType<typeof myStore>>>) =>
+    isSellMore(scheme.id) && scheme.settings.live ? store.is_franchise : isEligible(scheme.eligibility, store);
+
+/** The scheme's months up to this one (just its first before it starts). */
+function sellMoreMonths(scheme: Scheme) {
+    const all = periodsOf(scheme.starts_on, scheme.ends_on, 'month');
+    const thisMonth = dayOf(new Date()).slice(0, 7);
+    const sofar = all.filter(m => m.key <= thisMonth);
+    return sofar.length ? sofar : all.slice(0, 1);
+}
+
+/** Warranties by store, day and product within the scheme's dates; rejected ones don't count. */
+async function sellMoreRows(scheme: Scheme, storeIds: string[]) {
+    const out = new Map<string, WarrantyRow[]>();
+    if (!storeIds.length) return out;
+    const [rows]: any = await db.query(
+        `SELECT vendor_details_id AS store_id, DATE_FORMAT(created_at, '%Y-%m-%d') AS d, ${PRODUCT_NAME} AS pn, COUNT(*) AS n
+           FROM warranty_registrations
+          WHERE vendor_details_id IN (?) AND status <> 'rejected' AND created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)
+          GROUP BY store_id, d, pn`,
+        [storeIds, scheme.starts_on, scheme.ends_on]
+    );
+    for (const r of rows) {
+        const k = String(r.store_id);
+        out.set(k, [...(out.get(k) ?? []), { d: r.d, pn: r.pn, n: Number(r.n) }]);
+    }
+    return out;
+}
+
+/** Each store's category and target, by store then month. */
+async function sellMoreMonthTerms(schemeId: string, storeIds: string[]) {
+    const out = new Map<string, Map<string, { tier: string | null; target: number | null }>>();
+    if (!storeIds.length) return out;
+    const [rows]: any = await db.query('SELECT store_id, month, tier, target FROM scheme_store_months WHERE scheme_id = ? AND store_id IN (?)', [schemeId, storeIds]);
+    for (const r of rows) {
+        const k = String(r.store_id);
+        if (!out.has(k)) out.set(k, new Map());
+        out.get(k)!.set(String(r.month), { tier: r.tier ?? null, target: r.target === null ? null : Number(r.target) });
+    }
+    return out;
+}
+
+/** One store's month as the admin sees it: its category, target, calculated score and plain points. */
+function adminMonth(scheme: Scheme, rows: WarrantyRow[], m: Period, months: Period[], terms: Map<string, { tier: string | null; target: number | null }> | undefined) {
+    const rule = scheme.settings.points;
+    const set = Object.fromEntries([...(terms?.entries() ?? [])].map(([k, v]) => [k, v.tier]));
+    const tier = tierOf(rule, tierIdForMonth(set, months, m.key, undefined));
+    const calc = earned(rows, worthOf(rule, tier), [m], scheme.starts_on, scheme.ends_on).months[0];
+    const plain = earned(rows, worthOf(rule), [m], scheme.starts_on, scheme.ends_on).months[0];
+    return { tier_obj: tier, tier: tier?.id ?? null, target: terms?.get(m.key)?.target ?? null, calc, plain };
+}
+
+/** Each store's reward rows, by store then month. */
+async function sellMoreRewards(schemeId: string, storeIds: string[]) {
+    const out = new Map<string, Map<string, any>>();
+    if (!storeIds.length) return out;
+    const [rows]: any = await db.query(
+        'SELECT id, store_id, month, points, status, source, note, requested_at, sent_at FROM scheme_reward_requests WHERE scheme_id = ? AND store_id IN (?)',
+        [schemeId, storeIds]
+    );
+    for (const r of rows) {
+        const k = String(r.store_id);
+        if (!out.has(k)) out.set(k, new Map());
+        out.get(k)!.set(String(r.month), { ...r, store_id: k, points: Number(r.points) });
+    }
+    return out;
+}
+
+const readInvoice = (r: any) => ({
+    id: r.id, store_id: String(r.store_id), invoice_no: r.invoice_no, invoice_date: day(r.invoice_date),
+    files: json<EntryFile[]>(r.files, []).map(f => ({ name: f.name, url: f.url, sha256: f.sha256 })),
+    sets: readSets(json(r.sets, {})), read_sets: r.read_sets ? readSets(json(r.read_sets, {})) : null,
+    status: r.status as 'pending' | 'approved' | 'rejected', review_note: r.review_note, reviewed_at: r.reviewed_at, created_at: r.created_at,
+});
+
+/** The seat cover names the invoice reader looks for: every warranty product and every series' products. */
+async function seatCoverNames(scheme: Scheme) {
+    const [rows]: any = await db.execute("SELECT name FROM products WHERE type = 'seat_cover' ORDER BY name");
+    return [...new Set<string>([...rows.map((r: any) => String(r.name).trim()), ...scheme.settings.points.series.flatMap(s => s.products)])];
+}
+
+/** What a store has: sets approved, sets used by approved rewards, what is left, and what it stands at. */
+function buyBalance(invoices: { status: string; sets: Sets }[], claims: { status: string; used?: unknown }[]) {
+    const approved = invoices.filter(i => i.status === 'approved').reduce((t, i) => addSets(t, i.sets), noSets());
+    const used = claims.filter(c => c.status === 'approved').reduce((t, c) => addSets(t, readSets(json(c.used, {}))), noSets());
+    const available = subtractSets(approved, used);
+    return { approved, used, available, eligibility: eligibility(available), rewards: claims.filter(c => c.status === 'approved').length };
+}
+
+/** A store's Option 2: its invoices, its balance, where it stands on each offer, its rewards. */
+async function buyMoreForStore(scheme: Scheme, storeId: string) {
+    const [rows]: any = await db.execute('SELECT * FROM scheme_buy_invoices WHERE scheme_id = ? AND store_id = ? ORDER BY created_at DESC', [scheme.id, storeId]);
+    const invoices = rows.map(readInvoice);
+    const [claimRows]: any = await db.execute(
+        'SELECT id, offer, used, status, note, requested_at, sent_at FROM scheme_free_sets WHERE scheme_id = ? AND store_id = ? ORDER BY requested_at DESC', [scheme.id, storeId]);
+    return {
+        invoices: invoices.map((i: any) => ({ ...i, files: i.files.map(({ sha256: _h, ...f }: any) => f) })),
+        ...buyBalance(invoices, claimRows),
+        waiting_sets: invoices.filter((i: any) => i.status === 'pending').reduce((n: number, i: any) => n + setsTotal(i.sets), 0),
+        claims: claimRows.map((c: any) => ({ ...c, used: c.used ? readSets(json(c.used, {})) : null })),
+        products: await seatCoverNames(scheme),
+    };
+}
+
+/** One store's own view: its choice, its plain points by day and month, each month's reward. Never its store type or calculated score. */
+async function sellMoreForStore(scheme: Scheme, storeId: string) {
+    const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
+    const terms = json<StoreTerms & { option?: string; opted_at?: string }>(p?.terms, {});
+    const option = optionOf(terms);
+    if (option !== 'sell_more') {
+        return {
+            option, opted_at: terms.opted_at ?? null, total: 0, warranties: 0, months: [],
+            buy_more: option === 'buy_more' ? await buyMoreForStore(scheme, storeId) : null,
+        };
+    }
+    const months = sellMoreMonths(scheme);
+    const rows = (await sellMoreRows(scheme, [storeId])).get(storeId) ?? [];
+    const e = earned(rows, worthOf(scheme.settings.points), months, scheme.starts_on, scheme.ends_on);
+    const rewards = (await sellMoreRewards(scheme.id, [storeId])).get(storeId);
+    const monthTerms = (await sellMoreMonthTerms(scheme.id, [storeId])).get(storeId);
+    const shown = new Set(months.map(m => m.key));
+    return {
+        option, opted_at: terms.opted_at ?? null, total: e.total, warranties: e.warranties,
+        months: [
+            ...e.months.map(m => {
+                const r = rewards?.get(m.key);
+                return {
+                    key: m.key, label: m.label, warranties: m.warranties, points: m.points, future: false,
+                    days: m.days.filter(d => d.warranties > 0).map(({ no_series: _n, ...d }) => d),
+                    series: seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on),
+                    /* Requests open once the calculated points reach the admin's target; the store never sees the number. */
+                    can_request: (() => {
+                        const d = adminMonth(scheme, rows, months.find(x => x.key === m.key)!, months, monthTerms);
+                        return d.target !== null && d.calc.points >= d.target;
+                    })(),
+                    reward: r ? { status: r.status, note: r.note, requested_at: r.requested_at, sent_at: r.sent_at } : null,
+                };
+            }),
+            ...periodsOf(scheme.starts_on, scheme.ends_on, 'month').filter(m => !shown.has(m.key)).map(m => ({
+                key: m.key, label: m.label, warranties: 0, points: 0, future: true, days: [], series: [], can_request: false, reward: null,
+            })),
+        ],
+    };
+}
+
+/** The scheme as a store may see it: no store types or multipliers. */
+const sellMoreVisible = (scheme: Scheme) => {
+    const { eligibility: _e, ...visible } = scheme;
+    return { ...visible, settings: { ...visible.settings, points: { series: [], tiers: [] } } };
+};
+
 /** The verified franchises an admin can add, with what an import matches them by. */
 async function allFranchises() {
     const [rows]: any = await db.execute(
@@ -916,6 +1075,333 @@ export class SchemeController {
         } catch (error: any) {
             console.error('[Schemes] target import:', error);
             res.status(500).json({ error: error?.message || 'Could not import' });
+        }
+    }
+
+    /** Sell More Earn More: every store that opted, its type, points by month and reward requests. */
+    static async adminSellMore(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const [parts]: any = await db.execute(
+                `SELECT sp.store_id, sp.joined_at, sp.terms, vd.store_name, vd.store_code, vd.city, vd.state, COALESCE(vd.allowed_brands, 'AF') AS brand
+                   FROM scheme_participants sp JOIN vendor_details vd ON vd.id = sp.store_id
+                  WHERE sp.scheme_id = ?`,
+                [scheme.id]
+            );
+            const opted = parts.map((p: any) => ({ ...p, terms: json<any>(p.terms, {}) })).filter((p: any) => optionOf(p.terms) === 'sell_more');
+            const rule = scheme.settings.points;
+            const months = sellMoreMonths(scheme);
+            const ids = opted.map((p: any) => String(p.store_id));
+            const rows = await sellMoreRows(scheme, ids);
+            const rewards = await sellMoreRewards(scheme.id, ids);
+            const monthTerms = await sellMoreMonthTerms(scheme.id, ids);
+            const stores = opted.map((p: any) => {
+                const id = String(p.store_id);
+                const data = months.map(m => [m, adminMonth(scheme, rows.get(id) ?? [], m, months, monthTerms.get(id))] as const);
+                const mine = rewards.get(id);
+                return {
+                    store_id: id, store_name: String(p.store_name ?? '').trim(), store_code: p.store_code ?? null, city: p.city ?? null, state: p.state ?? null, brand: p.brand,
+                    opted_at: p.terms.opted_at ?? p.joined_at,
+                    months: Object.fromEntries(data.map(([m, d]) => [m.key, {
+                        tier: d.tier, target: d.target, calculated: d.calc.points, store_points: d.plain.points,
+                        warranties: d.calc.warranties, no_series: d.calc.no_series, reward: mine?.get(m.key)?.status ?? null,
+                    }])),
+                };
+            });
+            res.json({
+                success: true,
+                months: months.map(m => ({ key: m.key, label: m.label })),
+                tiers: rule.tiers.map(t => ({ id: t.id, name: t.name })),
+                stores,
+            });
+        } catch (error: any) {
+            console.error('[Schemes] sell more:', error);
+            res.status(500).json({ error: 'Could not load the stores' });
+        }
+    }
+
+    /** One opted store's points day by day. */
+    static async adminSellMoreStore(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, req.params.storeId]);
+            const terms = json<any>(p?.terms, {});
+            if (optionOf(terms) !== 'sell_more') return res.status(404).json({ error: 'This store has not opted' });
+            const rows = (await sellMoreRows(scheme, [req.params.storeId])).get(req.params.storeId) ?? [];
+            const rule = scheme.settings.points;
+            const months = sellMoreMonths(scheme);
+            const monthTerms = (await sellMoreMonthTerms(scheme.id, [req.params.storeId])).get(req.params.storeId);
+            const rewards = (await sellMoreRewards(scheme.id, [req.params.storeId])).get(req.params.storeId);
+            res.json({
+                success: true,
+                months: months.map(m => {
+                    const d = adminMonth(scheme, rows, m, months, monthTerms);
+                    const storeDay = new Map(d.plain.days.map(x => [x.date, x.points]));
+                    return {
+                        key: m.key, label: m.label, points: d.calc.points, store_points: d.plain.points, warranties: d.calc.warranties, no_series: d.calc.no_series,
+                        reward: rewards?.get(m.key) ?? null,
+                        series: seriesInMonth(rows, rule, m.key, scheme.starts_on, scheme.ends_on, d.tier_obj),
+                        days: d.calc.days.map(x => ({ ...x, store_points: storeDay.get(x.date) ?? 0 })),
+                    };
+                }),
+            });
+        } catch (error: any) {
+            console.error('[Schemes] sell more store:', error);
+            res.status(500).json({ error: 'Could not load the store' });
+        }
+    }
+
+    /** Set an opted store's category and/or target for one month. Reaching the target opens the store's request for that month. */
+    static async adminSellMoreMonth(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const storeId = String(req.body?.store_id ?? '');
+            const month = String(req.body?.month ?? '');
+            const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
+            if (optionOf(json<any>(p?.terms, {})) !== 'sell_more') return res.status(404).json({ error: 'This store has not opted' });
+            if (!sellMoreMonths(scheme).some(m => m.key === month)) return res.status(400).json({ error: 'That month is not open' });
+
+            const [[now]]: any = await db.execute('SELECT tier, target FROM scheme_store_months WHERE scheme_id = ? AND store_id = ? AND month = ?', [scheme.id, storeId, month]);
+            let tier: string | null = now?.tier ?? null;
+            let target: number | null = now?.target == null ? null : Number(now.target);
+            if (req.body?.tier !== undefined) {
+                const t = scheme.settings.points.tiers.find(x => x.id === req.body.tier);
+                if (!t) return res.status(400).json({ error: 'Pick a category' });
+                tier = t.id;
+            }
+            if (req.body?.target !== undefined) {
+                if (req.body.target === null || req.body.target === '') target = null;
+                else {
+                    const n = Number(req.body.target);
+                    if (!Number.isFinite(n) || n <= 0 || n > 1000000) return res.status(400).json({ error: 'The target should be a number above 0' });
+                    target = Math.round(n * 100) / 100;
+                }
+            }
+            await db.execute(
+                `INSERT INTO scheme_store_months (scheme_id, store_id, month, tier, target, updated_by) VALUES (?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE tier = VALUES(tier), target = VALUES(target), updated_by = VALUES(updated_by)`,
+                [scheme.id, storeId, month, tier, target, (req as any).user?.id ?? null]
+            );
+            log(req, 'SCHEME_STORE_MONTH_SET', scheme, { store_id: storeId, month, tier, target, was: now ?? null });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] sell more month:', error);
+            res.status(500).json({ error: 'Could not save' });
+        }
+    }
+
+    /** Open the program to every franchise, or pause it so only the scheme's own stores can see it. */
+    static async adminSellMoreLive(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const live = req.body?.live === true;
+            const { live: _was, ...rest } = scheme.settings;
+            await db.execute('UPDATE schemes SET settings = ? WHERE id = ?', [JSON.stringify(live ? { ...rest, live: true } : rest), scheme.id]);
+            log(req, live ? 'SCHEME_MADE_LIVE' : 'SCHEME_PAUSED', scheme, {});
+            res.json({ success: true, live });
+        } catch (error: any) {
+            console.error('[Schemes] program live:', error);
+            res.status(500).json({ error: 'Could not change it' });
+        }
+    }
+
+    /** The whole program at a glance: what's waiting, who chose what, and the totals. */
+    static async adminSellMoreProgram(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const [parts]: any = await db.execute('SELECT store_id, terms FROM scheme_participants WHERE scheme_id = ?', [scheme.id]);
+            const optionFor = new Map<string, string | null>(parts.map((p: any) => [String(p.store_id), optionOf(json<any>(p.terms, {}))]));
+            const franchises = await allFranchises();
+            const months = sellMoreMonths(scheme);
+            const current = months[months.length - 1];
+            const sell = franchises.filter((f: any) => optionFor.get(f.id) === 'sell_more').map((f: any) => f.id as string);
+            const rows = await sellMoreRows(scheme, sell);
+            const monthTerms = await sellMoreMonthTerms(scheme.id, sell);
+            let points = 0, noSeries = 0, noTarget = 0;
+            for (const id of sell) {
+                const d = adminMonth(scheme, rows.get(id) ?? [], current, months, monthTerms.get(id));
+                points += d.calc.points; noSeries += d.calc.no_series;
+                if (d.target === null) noTarget++;
+            }
+            const [[invoices]]: any = await db.execute(
+                `SELECT SUM(status = 'pending') AS waiting, MIN(CASE WHEN status = 'pending' THEN created_at END) AS oldest FROM scheme_buy_invoices WHERE scheme_id = ?`, [scheme.id]);
+            const [approved]: any = await db.execute(`SELECT sets FROM scheme_buy_invoices WHERE scheme_id = ? AND status = 'approved'`, [scheme.id]);
+            const [[free]]: any = await db.execute(
+                `SELECT SUM(status = 'requested') AS waiting, SUM(status = 'approved') AS given FROM scheme_free_sets WHERE scheme_id = ?`, [scheme.id]);
+            const [[rewards]]: any = await db.execute(
+                `SELECT SUM(status = 'requested') AS waiting, SUM(status = 'sent') AS sent FROM scheme_reward_requests WHERE scheme_id = ?`, [scheme.id]);
+            res.json({
+                success: true,
+                live: scheme.settings.live === true,
+                preview_stores: franchises.filter((f: any) => (scheme.eligibility.store_ids ?? []).includes(f.id)).map((f: any) => f.name),
+                month_label: current.label,
+                franchises: franchises.length, option1: sell.length,
+                option2: franchises.filter((f: any) => optionFor.get(f.id) === 'buy_more').length,
+                not_chosen: franchises.filter((f: any) => !optionFor.get(f.id)).map((f: any) => ({ id: f.id, name: f.name, code: f.code, city: f.city, state: f.state, brand: f.brand })),
+                invoices_waiting: Number(invoices?.waiting) || 0, oldest_invoice: invoices?.oldest ?? null,
+                redeem_waiting: Number(free?.waiting) || 0, free_given: Number(free?.given) || 0,
+                reward_waiting: Number(rewards?.waiting) || 0, rewards_sent: Number(rewards?.sent) || 0,
+                no_target: noTarget, month_points: Math.round(points * 100) / 100, no_series: noSeries,
+                sets_approved: approved.reduce((n: number, r: any) => n + setsTotal(readSets(json(r.sets, {}))), 0),
+            });
+        } catch (error: any) {
+            console.error('[Schemes] program:', error);
+            res.status(500).json({ error: 'Could not load the program' });
+        }
+    }
+
+    /**
+     * Mark one store's month as sent, asked for or not. Undoing goes back to the
+     * store's request, or removes the row when the store never asked.
+     */
+    static async adminSellMoreReward(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const storeId = String(req.body?.store_id ?? '');
+            const month = String(req.body?.month ?? '');
+            const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
+            if (optionOf(json<any>(p?.terms, {})) !== 'sell_more') return res.status(404).json({ error: 'This store has not opted' });
+            const months = sellMoreMonths(scheme);
+            if (!months.some(m => m.key === month)) return res.status(400).json({ error: 'That month is not open' });
+            const by = (req as any).user?.id ?? null;
+            if (req.body?.status === 'sent') {
+                const note = String(req.body?.note ?? '').trim().slice(0, 500) || null;
+                const rows = (await sellMoreRows(scheme, [storeId])).get(storeId) ?? [];
+                const plain = earned(rows, worthOf(scheme.settings.points), months, scheme.starts_on, scheme.ends_on).months.find(m => m.key === month)?.points ?? 0;
+                await db.execute(
+                    `INSERT INTO scheme_reward_requests (id, scheme_id, store_id, month, points, status, source, note, sent_at, sent_by)
+                     VALUES (?, ?, ?, ?, ?, 'sent', 'admin', ?, NOW(), ?)
+                     ON DUPLICATE KEY UPDATE status = 'sent', note = VALUES(note), sent_at = NOW(), sent_by = VALUES(sent_by)`,
+                    [uuidv4(), scheme.id, storeId, month, plain, note, by]
+                );
+            } else {
+                await db.execute(`DELETE FROM scheme_reward_requests WHERE scheme_id = ? AND store_id = ? AND month = ? AND source = 'admin'`, [scheme.id, storeId, month]);
+                await db.execute(
+                    `UPDATE scheme_reward_requests SET status = 'requested', note = NULL, sent_at = NULL, sent_by = NULL WHERE scheme_id = ? AND store_id = ? AND month = ?`,
+                    [scheme.id, storeId, month]
+                );
+            }
+            log(req, req.body?.status === 'sent' ? 'SCHEME_REWARD_SENT' : 'SCHEME_REWARD_UNDONE', scheme, { store_id: storeId, month, note: req.body?.note ?? null });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] sell more reward:', error);
+            res.status(500).json({ error: 'Could not update the reward' });
+        }
+    }
+
+    /** Option 2 for the admin: every store that opted, every invoice, every free set. */
+    static async adminBuyMore(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const [parts]: any = await db.execute(
+                `SELECT sp.store_id, sp.joined_at, sp.terms, vd.store_name, vd.store_code, vd.city, vd.state, COALESCE(vd.allowed_brands, 'AF') AS brand
+                   FROM scheme_participants sp JOIN vendor_details vd ON vd.id = sp.store_id WHERE sp.scheme_id = ?`,
+                [scheme.id]
+            );
+            const opted = parts.map((p: any) => ({ ...p, terms: json<any>(p.terms, {}) })).filter((p: any) => optionOf(p.terms) === 'buy_more');
+            const names = new Map<string, any>(opted.map((p: any) => [String(p.store_id), p]));
+            const [invoiceRows]: any = await db.execute('SELECT * FROM scheme_buy_invoices WHERE scheme_id = ? ORDER BY created_at DESC', [scheme.id]);
+            const invoices = invoiceRows.map(readInvoice);
+            const [claimRows]: any = await db.execute("SELECT id, store_id, offer, used, status, note, requested_at, sent_at FROM scheme_free_sets WHERE scheme_id = ? ORDER BY status = 'requested' DESC, requested_at DESC", [scheme.id]);
+            const label = (id: string) => ({ store_name: String(names.get(id)?.store_name ?? 'Store').trim(), city: names.get(id)?.city ?? null });
+            const balances = new Map<string, ReturnType<typeof buyBalance>>();
+            const balanceOf = (id: string) => {
+                if (!balances.has(id)) balances.set(id, buyBalance(invoices.filter((i: any) => i.store_id === id), claimRows.filter((c: any) => String(c.store_id) === id)));
+                return balances.get(id)!;
+            };
+            res.json({
+                success: true,
+                stores: opted.map((p: any) => {
+                    const id = String(p.store_id);
+                    const claims = claimRows.filter((c: any) => String(c.store_id) === id);
+                    const b = balanceOf(id);
+                    return {
+                        store_id: id, store_name: String(p.store_name ?? '').trim(), store_code: p.store_code ?? null, city: p.city ?? null, state: p.state ?? null, brand: p.brand,
+                        opted_at: p.terms.opted_at ?? p.joined_at, approved: b.approved, used: b.used, available: b.available, eligibility: b.eligibility, rewards: b.rewards,
+                        waiting_sets: invoices.filter((i: any) => i.store_id === id && i.status === 'pending').reduce((n: number, i: any) => n + setsTotal(i.sets), 0),
+                        requests: claims.filter((c: any) => c.status === 'requested').length,
+                    };
+                }),
+                invoices: invoices.map((i: any) => ({ ...i, ...label(i.store_id), files: i.files.map(({ sha256: _h, ...f }: any) => f) })),
+                free_sets: claimRows.map((c: any) => {
+                    const id = String(c.store_id);
+                    const available = balanceOf(id).available;
+                    return {
+                        ...c, store_id: id, ...label(id), available,
+                        used: c.used ? readSets(json(c.used, {})) : setsForOffer(available, isOffer(c.offer) ? c.offer : 'offer1'),
+                    };
+                }),
+            });
+        } catch (error: any) {
+            console.error('[Schemes] buy more:', error);
+            res.status(500).json({ error: 'Could not load the invoices' });
+        }
+    }
+
+    /** Approve an invoice (with the sets corrected if need be), reject it with a reason, or put it back to waiting. */
+    static async adminBuyMoreInvoice(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const status = String(req.body?.status ?? '');
+            if (!['approved', 'rejected', 'pending'].includes(status)) return res.status(400).json({ error: 'Pick a status' });
+            const note = String(req.body?.note ?? '').trim().slice(0, 500) || null;
+            if (status === 'rejected' && !note) return res.status(400).json({ error: 'Give a reason; the store sees it' });
+            const [[inv]]: any = await db.execute('SELECT id, sets FROM scheme_buy_invoices WHERE id = ? AND scheme_id = ?', [req.params.invoiceId, scheme.id]);
+            if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+            const sets = status === 'approved' ? readSets(req.body?.sets) : readSets(json(inv.sets, {}));
+            if (status === 'approved' && setsTotal(sets) <= 0) return res.status(400).json({ error: 'Enter the sets on this invoice' });
+            const by = (req as any).user?.id ?? null;
+            await db.execute(
+                `UPDATE scheme_buy_invoices SET status = ?, sets = ?, review_note = ?, reviewed_by = ?, reviewed_at = ${status === 'pending' ? 'NULL' : 'NOW()'} WHERE id = ?`,
+                [status, JSON.stringify(sets), status === 'rejected' ? note : null, status === 'pending' ? null : by, inv.id]
+            );
+            log(req, 'SCHEME_BUY_INVOICE_REVIEWED', scheme, { invoice_id: inv.id, status, sets, was: json(inv.sets, {}), note });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] buy more invoice:', error);
+            res.status(500).json({ error: 'Could not update the invoice' });
+        }
+    }
+
+    /**
+     * Approve a redeem request, which uses up the sets (the admin may change how
+     * many) and leaves the rest as balance; reject it with a reason; or undo.
+     */
+    static async adminBuyMoreFreeSet(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const status = String(req.body?.status ?? '');
+            if (!['approved', 'rejected', 'requested'].includes(status)) return res.status(400).json({ error: 'Pick a status' });
+            const note = status === 'requested' ? null : String(req.body?.note ?? '').trim().slice(0, 500) || null;
+            if (status === 'rejected' && !note) return res.status(400).json({ error: 'Give a reason; the store sees it' });
+            const [[claim]]: any = await db.execute('SELECT id, store_id, status FROM scheme_free_sets WHERE id = ? AND scheme_id = ?', [req.params.claimId, scheme.id]);
+            if (!claim) return res.status(404).json({ error: 'Not found' });
+            let used: Sets | null = null;
+            if (status === 'approved') {
+                const mine = await buyMoreForStore(scheme, String(claim.store_id));
+                used = readSets(req.body?.used);
+                const problem = usedProblem(used, mine.available);
+                if (problem) return res.status(400).json({ error: problem });
+            }
+            const by = (req as any).user?.id ?? null;
+            await db.execute(
+                `UPDATE scheme_free_sets SET status = ?, used = ?, note = ?, sent_at = ${status === 'approved' ? 'NOW()' : 'NULL'}, sent_by = ? WHERE id = ?`,
+                [status, used ? JSON.stringify(used) : null, note, status === 'requested' ? null : by, claim.id]
+            );
+            log(req, 'SCHEME_BUY_REWARD_REVIEWED', scheme, { claim_id: claim.id, store_id: String(claim.store_id), status, used, note });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] buy reward:', error);
+            res.status(500).json({ error: 'Could not update the request' });
         }
     }
 
@@ -1645,12 +2131,27 @@ export class SchemeController {
             const [rows]: any = await db.execute(
                 "SELECT * FROM schemes WHERE status IN ('published', 'ended') AND deleted_at IS NULL ORDER BY starts_on DESC"
             );
-            const mine = rows.map(readScheme).filter((s: Scheme) => isEligible(s.eligibility, store));
+            const mine = rows.map(readScheme).filter((s: Scheme) => canSee(s, store));
             const [joined]: any = await db.execute('SELECT scheme_id FROM scheme_participants WHERE store_id = ?', [store.id]);
             const joinedSet = new Set(joined.map((j: any) => String(j.scheme_id)));
 
             const out = [];
             for (const s of mine) {
+                if (isSellMore(s.id)) {
+                    const sm = await sellMoreForStore(s, store.id);
+                    const latest = (sm.months as { label: string; points: number; future: boolean }[]).filter(m => !m.future).pop();
+                    const buy = (sm as { buy_more?: Awaited<ReturnType<typeof buyMoreForStore>> | null }).buy_more ?? null;
+                    out.push({
+                        id: s.id, title: s.title, category: s.category, summary: s.summary, banner_url: s.banner_url,
+                        starts_on: s.starts_on, ends_on: s.ends_on, windows: s.windows, open_window: null, next_window: null, state: s.state,
+                        has_score: false, joined: Boolean(sm.option), achieved: null, run: 'sell_more',
+                        sell_more: {
+                            opted: Boolean(sm.option), option: sm.option, total: sm.total, month_label: latest?.label ?? null, month_points: latest?.points ?? 0,
+                            free_sets: buy?.rewards ?? 0, approved_sets: buy?.eligibility.total ?? 0,
+                        },
+                    });
+                    continue;
+                }
                 if (s.settings.run === 'targets') {
                     const t = await storeTargets(s, store.id);
                     out.push({
@@ -1682,8 +2183,11 @@ export class SchemeController {
             const store = await myStore(req);
             if (!store) return res.status(404).json({ error: 'Store not found' });
             const scheme = await loadScheme(req.params.id);
-            if (!scheme || scheme.status === 'draft' || !isEligible(scheme.eligibility, store)) {
+            if (!scheme || scheme.status === 'draft' || !canSee(scheme, store)) {
                 return res.status(404).json({ error: 'Scheme not found' });
+            }
+            if (isSellMore(scheme.id)) {
+                return res.json({ success: true, scheme: sellMoreVisible(scheme), joined: true, can_submit: false, sell_more: await sellMoreForStore(scheme, store.id) });
             }
             if (scheme.settings.run === 'targets') {
                 const { eligibility: _e, ...visible } = scheme;
@@ -1754,6 +2258,126 @@ export class SchemeController {
         } catch (error: any) {
             console.error('[Schemes] join:', error);
             res.status(500).json({ error: 'Could not join the scheme' });
+        }
+    }
+
+    /** Sell More Earn More: opt for an option, once. There is no way back. */
+    static async storeOpt(req: Request, res: Response) {
+        try {
+            const store = await myStore(req);
+            if (!store) return res.status(404).json({ error: 'Store not found' });
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id) || scheme.status !== 'published' || !canSee(scheme, store)) {
+                return res.status(404).json({ error: 'Scheme not found' });
+            }
+            if (scheme.state === 'closed') return res.status(400).json({ error: 'This scheme has closed' });
+            if (req.body?.option !== 'sell_more' && req.body?.option !== 'buy_more') return res.status(400).json({ error: 'Choose an option' });
+            if (req.body?.accept_terms !== true) return res.status(400).json({ error: 'Accept the terms to choose' });
+            await db.execute('INSERT IGNORE INTO scheme_participants (scheme_id, store_id) VALUES (?, ?)', [scheme.id, store.id]);
+            /* Only a store with no option yet is written, so a second choice can't replace the first. */
+            const [r]: any = await db.execute(
+                `UPDATE scheme_participants
+                    SET terms = JSON_SET(COALESCE(terms, '{}'), '$.option', ?, '$.opted_at', ?)
+                  WHERE scheme_id = ? AND store_id = ? AND (terms IS NULL OR JSON_EXTRACT(terms, '$.option') IS NULL)`,
+                [req.body.option, new Date().toISOString(), scheme.id, store.id]
+            );
+            if (!r.affectedRows) return res.status(400).json({ error: "You've already chosen, and it can't be changed" });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] opt:', error);
+            res.status(500).json({ error: 'Could not save your choice' });
+        }
+    }
+
+    /** Option 2: an invoice the store sends, with the sets it checked. Counts once the admin approves it. */
+    static async storeBuyInvoice(req: Request, res: Response) {
+        try {
+            const store = await myStore(req);
+            if (!store) return res.status(404).json({ error: 'Store not found' });
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id) || scheme.status !== 'published' || !canSee(scheme, store)) {
+                return res.status(404).json({ error: 'Scheme not found' });
+            }
+            const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, store.id]);
+            if (optionOf(json<any>(p?.terms, {})) !== 'buy_more') return res.status(400).json({ error: 'Choose Buy More Get More first' });
+
+            const files = (uploadedFiles(req).invoice ?? []);
+            const allowed = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'];
+            const bad = files.find(f => !allowed.includes(f.ext) || f.size > 10 * 1024 * 1024);
+            if (bad) return res.status(400).json({ error: `${bad.name}: send a photo or PDF of up to 10 MB` });
+            if (files.length > 10) return res.status(400).json({ error: 'Up to 10 files' });
+            const invoice_no = String(req.body?.invoice_no ?? '').trim().slice(0, 60);
+            const invoice_date = String(req.body?.invoice_date ?? '').trim();
+            const sets = readSets(req.body?.sets);
+            const problems = invoiceProblems({ invoice_no, invoice_date, sets, files: files.length }, scheme.starts_on, scheme.ends_on, dayOf(new Date()));
+            if (problems.length) return res.status(400).json({ error: problems[0] });
+
+            /* One invoice counts once: the same file or number again is refused, unless it was rejected. */
+            const [mine]: any = await db.execute("SELECT invoice_no, files, created_at FROM scheme_buy_invoices WHERE scheme_id = ? AND store_id = ? AND status <> 'rejected'", [scheme.id, store.id]);
+            const hashes = new Set(files.map(f => f.sha256).filter(Boolean));
+            for (const r of mine) {
+                if (invoiceKey(r.invoice_no) === invoiceKey(invoice_no)) return res.status(400).json({ error: `Invoice ${invoice_no} was already sent on ${dayOf(r.created_at)}` });
+                const same = json<EntryFile[]>(r.files, []).find(f => f.sha256 && hashes.has(f.sha256));
+                if (same) return res.status(400).json({ error: `"${same.name}" was already sent on ${dayOf(r.created_at)}` });
+            }
+            await db.execute(
+                'INSERT INTO scheme_buy_invoices (id, scheme_id, store_id, invoice_no, invoice_date, files, sets, read_sets) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [uuidv4(), scheme.id, store.id, invoice_no, invoice_date, JSON.stringify(files), JSON.stringify(sets), req.body?.read_sets ? JSON.stringify(readSets(req.body.read_sets)) : null]
+            );
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] buy invoice:', error);
+            res.status(500).json({ error: 'Could not send the invoice' });
+        }
+    }
+
+    /** Option 2: redeem an offer the store has enough sets for. The admin's approval uses the sets. */
+    static async storeClaimFreeSet(req: Request, res: Response) {
+        try {
+            const store = await myStore(req);
+            if (!store) return res.status(404).json({ error: 'Store not found' });
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id) || scheme.status === 'draft' || !canSee(scheme, store)) {
+                return res.status(404).json({ error: 'Scheme not found' });
+            }
+            const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, store.id]);
+            if (optionOf(json<any>(p?.terms, {})) !== 'buy_more') return res.status(400).json({ error: 'Choose Buy More Get More first' });
+            const offer = req.body?.offer;
+            if (!isOffer(offer)) return res.status(400).json({ error: 'Choose an offer' });
+            const mine = await buyMoreForStore(scheme, store.id);
+            if (mine.claims.some((c: any) => c.status === 'requested')) return res.status(400).json({ error: 'Your request is already with head office' });
+            const ready = offer === 'offer1' ? mine.eligibility.offer1.ready : mine.eligibility.offer2_ready;
+            if (!ready) return res.status(400).json({ error: "You don't have enough sets for this offer yet" });
+            await db.execute('INSERT INTO scheme_free_sets (id, scheme_id, store_id, offer) VALUES (?, ?, ?, ?)', [uuidv4(), scheme.id, store.id, offer]);
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] claim free set:', error);
+            res.status(500).json({ error: 'Could not send your claim' });
+        }
+    }
+
+    /** Sell More Earn More: ask for one month's reward. The admin works it out and sends it by hand. */
+    static async storeRedeem(req: Request, res: Response) {
+        try {
+            const store = await myStore(req);
+            if (!store) return res.status(404).json({ error: 'Store not found' });
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id) || scheme.status === 'draft' || !canSee(scheme, store)) {
+                return res.status(404).json({ error: 'Scheme not found' });
+            }
+            const mine = await sellMoreForStore(scheme, store.id);
+            const month = (mine.months as { key: string; points: number; reward: unknown; future: boolean; can_request: boolean }[]).find(m => m.key === req.body?.month && !m.future) ?? null;
+            const problem = redeemProblem(mine.option, month, Boolean(month?.reward));
+            if (problem) return res.status(400).json({ error: problem });
+            /* The unique key stops a double tap making two requests. */
+            await db.execute(
+                'INSERT IGNORE INTO scheme_reward_requests (id, scheme_id, store_id, month, points) VALUES (?, ?, ?, ?, ?)',
+                [uuidv4(), scheme.id, store.id, month!.key, month!.points]
+            );
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] redeem:', error);
+            res.status(500).json({ error: 'Could not send your request' });
         }
     }
 

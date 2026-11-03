@@ -26,7 +26,6 @@ export interface ReadLine {
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9+]+/g, "");
 const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9+.]+/g, " ").trim().split(/\s+/).filter(Boolean);
-const keyOf = (name: string) => squash(name.replace(/\bseries\b/gi, ""));
 
 function distance(a: string, b: string): number {
     if (a === b) return 0;
@@ -46,6 +45,12 @@ const likeness = (a: string, b: string) => (a && b ? 1 - distance(a, b) / Math.m
 
 const SURE = 0.82;
 const MAYBE = 0.72;
+/*
+ * A product is in a series when its name contains the series word ("AMAZE DUO
+ * PLUS" is Amaze). Only that exact word is taken as read; a near-spelling —
+ * OCR's "AMAZF" off a photo — is kept for the store but marked to check.
+ */
+const EXACT = 0.999;
 
 /*
  * What OCR usually gets wrong in a word: "m" read as "rn", "w" as "vv", and
@@ -59,33 +64,107 @@ function ocrFix(token: string): string {
     return t.replace(/rn/g, "m").replace(/vv/g, "w").replace(/\|/g, "l");
 }
 
-/** The best product for one line, the words it took up, and how alike they were. */
-function bestOnLine(tokens: string[], products: ReaderProduct[]) {
-    let best: { p: ReaderProduct; score: number; from: number; to: number } | null = null;
-    const fixed = tokens.map(ocrFix);
-    for (const p of products) {
-        const key = keyOf(p.name);
-        if (!key) continue;
-        for (let i = 0; i < tokens.length; i++) {
-            let joined = "";
-            let joinedFixed = "";
-            for (let j = i; j < Math.min(tokens.length, i + 4); j++) {
-                joined += squash(tokens[j]);
-                joinedFixed += squash(fixed[j]);
-                if (!joined) continue;
-                /* A run much longer than the name cannot be it; stop growing. */
-                if (joined.length > key.length + 3 && joinedFixed.length > key.length + 3) break;
-                let score = Math.max(likeness(joined, key), likeness(joinedFixed, key));
-                /* A name the invoice shortens: "UMAXPREM" for U Max Premium. */
-                for (const j2 of [joined, joinedFixed]) if (j2.length >= 5 && key.startsWith(j2) && j2.length / key.length >= 0.6) score = Math.max(score, 0.85);
-                if (!best || score > best.score || (score === best.score && key.length > keyOf(best.p.name).length)) {
-                    best = { p, score, from: i, to: j };
-                }
+/* Words in a product's name that say nothing about which product it is. */
+const FILLER = new Set(["series", "artificial", "leather", "seat", "seats", "cover", "covers", "car", "the", "and", "with", "for", "of", "a", "an"]);
+
+/**
+ * A product's key words: its name, whatever the admin called it, without the
+ * filler. "Amaze Series" → amaze; "VECTOR (SIGNATURE)" → vector, signature;
+ * "D5 Artificial Leather Seat Covers" → d5. A long catalogue name is known by
+ * its first four key words, the part an invoice keeps.
+ */
+export function keyWords(name: string): string[] {
+    const all = words(String(name ?? "").replace(/[()[\]]/g, " ")).map(w => w.replace(/^\.+|\.+$/g, "")).filter(Boolean);
+    const kept = all.filter(w => !FILLER.has(w));
+    return (kept.length ? kept : all).slice(0, 4);
+}
+
+/** How well one invoice word reads as a name word: 1 when exact, else OCR-tolerant — short words must be exact. */
+function wordLike(token: string, fixedToken: string, w: string): number {
+    const t = squash(token), f = squash(fixedToken), k = squash(w);
+    if (!t || !k) return 0;
+    if (t === k || f === k) return 1;
+    if (k.length < 4) return 0;          // "u", "d5", "q2", "2d" are exact or nothing
+    return Math.max(likeness(t, k), likeness(f, k));
+}
+
+type Hit = { p: ReaderProduct; score: number; from: number; to: number; words: number };
+
+/**
+ * Where a product sits on a line: every key word found, in order, each as one
+ * invoice word or two run together ("SIGNA TURE"). The score is the weakest
+ * word's — 1 when all are exact. A name the invoice writes as one word or
+ * shortens ("UMAX", "UMAXPREM") is tried whole as well.
+ */
+function matchProduct(tokens: string[], fixed: string[], p: ReaderProduct): Hit | null {
+    const kw = keyWords(p.name);
+    if (!kw.length) return null;
+    let hit: Hit | null = null;
+
+    let pos = 0, first = -1, last = -1, score = 1;
+    for (const w of kw) {
+        let at = -1, best = 0, span = 1;
+        for (let i = pos; i < tokens.length && best < 1; i++) {
+            let s = wordLike(tokens[i], fixed[i], w), len = 1;
+            if (s < 1 && i + 1 < tokens.length) {
+                const s2 = wordLike(tokens[i] + tokens[i + 1], fixed[i] + fixed[i + 1], w);
+                if (s2 > s) { s = s2; len = 2; }
             }
+            if (s > best) { best = s; at = i; span = len; }
+        }
+        if (at < 0 || best < 0.8) { score = 0; break; }
+        if (first < 0) first = at;
+        last = at + span - 1;
+        pos = last + 1;
+        score = Math.min(score, best);
+    }
+    if (score > 0) hit = { p, score, from: first, to: last, words: kw.length };
+
+    const key = squash(kw.join(""));
+    for (let i = 0; i < tokens.length; i++) {
+        let joined = "", joinedFixed = "";
+        for (let j = i; j < Math.min(tokens.length, i + 4); j++) {
+            joined += squash(tokens[j]);
+            joinedFixed += squash(fixed[j]);
+            if (!joined) continue;
+            if (joined.length > key.length + 3 && joinedFixed.length > key.length + 3) break;
+            let s = Math.max(likeness(joined, key), likeness(joinedFixed, key));
+            /* Shortened on the invoice: "UMAXPREM" for U Max Premium — a guess, so never exact. */
+            for (const j2 of [joined, joinedFixed]) if (j2.length >= 5 && key.startsWith(j2) && j2.length / key.length >= 0.6) s = Math.max(s, 0.85);
+            if (s >= 1 && j > i && kw.length === 1) s = 0.9;   // one name word found only by gluing words: check it
+            if (!hit || s > hit.score) hit = { p, score: s, from: i, to: j, words: kw.length };
         }
     }
-    return best;
+    return hit;
 }
+
+/**
+ * The product for one line, out of the scheme's own products — whatever the
+ * admin picked or typed.
+ *
+ * When several fit the line, the most specific wins ("U Max Arrow Plus" over
+ * "U Max Arrow"); between equally specific ones, the one named last — "SIGNATURE
+ * SWED DOBLE" is Doble and "SIGNATURE LE EMPORIO" is Emporio, as the invoices'
+ * prices show. Exact names come before near-spellings.
+ */
+function bestOnLine(tokens: string[], products: ReaderProduct[]): Hit | null {
+    const fixed = tokens.map(ocrFix);
+    const hits = products.map(p => matchProduct(tokens, fixed, p)).filter((h): h is Hit => Boolean(h));
+    if (!hits.length) return null;
+    const exact = hits.filter(h => h.score >= EXACT);
+    const clear = exact.length ? exact : hits.filter(h => h.score >= SURE);
+    if (clear.length) return clear.sort((a, b) => b.words - a.words || b.from - a.from || b.score - a.score)[0];
+    return hits.sort((a, b) => b.score - a.score)[0];
+}
+
+/*
+ * An e-invoice PDF often carries its e-Way Bill as the last page, listing
+ * every line again; reading it as well would count everything twice. Its
+ * section starts with an "e-Way Bill" heading or "e-Way Bill Details", and a
+ * new "Tax Invoice" heading ends it (an invoice photographed after its bill).
+ */
+const EWAY_START = /^(\d+\.\s*)?e[\s-]?way\s*bill(\s+details)?(\s+e[\s-]?way\s*bill)?\s*$/i;
+const INVOICE_START = /^tax\s+invoice\b/i;
 
 const UNIT = /^(pcs?|pc\.?|nos?\.?|sets?|set\.?|qty|units?|pair|pairs)$/i;
 /* A number before one of these describes the product, not how many: "2 Row", "5 Seater", "12mm". */
@@ -118,8 +197,12 @@ function quantityOn(tokens: string[], from: number, to: number): { qty: number; 
 /** Every product found in the invoice text, with its quantity; the same product on two lines is added up. */
 export function matchInvoice(text: string, products: ReaderProduct[]): ReadLine[] {
     const out = new Map<string, ReadLine>();
+    let inEwayBill = false;
     for (const raw of String(text ?? "").split(/\r?\n/)) {
         const line = raw.trim();
+        if (EWAY_START.test(line)) { inEwayBill = true; continue; }
+        if (INVOICE_START.test(line)) inEwayBill = false;
+        if (inEwayBill) continue;
         if (line.length < 3) continue;
         const tokens = words(line);
         const hit = bestOnLine(tokens, products);
@@ -128,7 +211,7 @@ export function matchInvoice(text: string, products: ReaderProduct[]): ReadLine[
         /* A product line has a quantity. A near-name with none — "Signatory"
            at the foot of the bill — is not a product line. */
         if (!q && hit.score < 0.95) continue;
-        const sure = hit.score >= SURE && Boolean(q?.clear);
+        const sure = hit.score >= EXACT && Boolean(q?.clear);
         const qty = q?.qty ?? 1;
         const prev = out.get(hit.p.id);
         if (prev) {

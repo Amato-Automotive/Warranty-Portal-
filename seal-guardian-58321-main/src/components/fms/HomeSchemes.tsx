@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { ClubBadge } from "@/components/schemes/ClubBadge";
 import type { Club } from "@/lib/schemes";
 import { daysLeft, type StorePeriod } from "./SchemeTargetView";
+import { points, type SellMoreCard } from "@/lib/sellMore";
 
 /**
  * "Your schemes" on the franchise's home: every scheme running for the store
@@ -18,7 +19,8 @@ export interface HomeScheme {
     open_window: { start: string; end: string } | null;
     next_window: { start: string; end: string } | null;
     achieved: { score: number; rank: number; of: number; club?: Club | null } | null;
-    run?: "targets"; target_now?: StorePeriod | null;
+    run?: "targets" | "sell_more"; target_now?: StorePeriod | null;
+    sell_more?: SellMoreCard;
 }
 
 const W = {
@@ -31,6 +33,8 @@ const W = {
         reached: "Target reached!", notSet: "Your target shows here once it's set.",
         viewTarget: "View my target", submitTill: (d: string) => `Submit till ${d}`, opens: (d: string) => `Opens ${d}`,
         pts: "points", rank: (r: number, of: number) => `Rank ${r} of ${of}`, noPoints: "Your points show once an invoice is approved.",
+        choose: "Choose your option", chooseNote: "Two options. Choose one.", total: "total", viewPoints: "View my points",
+        freeSets: "free sets", approvedSets: (n: number) => `${n} sets available`, viewOffers: "View my offers",
         submit: "Submit invoice", join: "Join the scheme", open: "Open the scheme", starts: (d: string) => `Starts ${d}`, see: "See what's in it",
     },
     hi: {
@@ -42,6 +46,8 @@ const W = {
         reached: "टारगेट पूरा!", notSet: "टारगेट तय होते ही यहाँ दिखेगा।",
         viewTarget: "मेरा टारगेट देखें", submitTill: (d: string) => `${d} तक जमा करें`, opens: (d: string) => `${d} से खुलेगा`,
         pts: "पॉइंट", rank: (r: number, of: number) => `${of} में रैंक ${r}`, noPoints: "इनवॉइस मंज़ूर होते ही पॉइंट दिखेंगे।",
+        choose: "अपना विकल्प चुनें", chooseNote: "दो विकल्प। एक चुनें।", total: "कुल", viewPoints: "मेरे पॉइंट देखें",
+        freeSets: "मुफ़्त सेट", approvedSets: (n: number) => `${n} सेट उपलब्ध`, viewOffers: "मेरे ऑफ़र देखें",
         submit: "इनवॉइस जमा करें", join: "स्कीम से जुड़ें", open: "स्कीम खोलें", starts: (d: string) => `${d} से शुरू`, see: "देखें इसमें क्या है",
     },
 };
@@ -98,6 +104,38 @@ export function HomeSchemes({ schemes, lang, onOpen }: { schemes: HomeScheme[] |
             </div>
             <div className="-mx-1 flex snap-x gap-4 overflow-x-auto no-scrollbar px-1 pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-3">
                 {live.map(s => {
+                    if (s.run === "sell_more") {
+                        const m = s.sell_more;
+                        return (
+                            <button key={s.id} type="button" onClick={() => onOpen(s.id)} className={card}>
+                                <Top s={s} kind="points" badge={{ text: w.live, live: true }} />
+                                <div className="flex flex-1 flex-col gap-3 p-4">
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-orange-600">{w.points}{m?.option === "sell_more" && m.month_label ? ` · ${m.month_label}` : ""}</p>
+                                        <p className="mt-0.5 text-base font-bold leading-snug text-slate-900">{s.title}</p>
+                                    </div>
+                                    {m?.option === "buy_more" ? (
+                                        <div className="flex items-end justify-between gap-3">
+                                            <p className="flex items-baseline gap-1.5">
+                                                <span className="text-4xl font-extrabold leading-none tabular-nums text-slate-900">{m.free_sets}</span>
+                                                <span className="text-sm font-medium text-slate-500">{w.freeSets}</span>
+                                            </p>
+                                            <span className="text-xs font-semibold text-slate-600">{w.approvedSets(m.approved_sets)}</span>
+                                        </div>
+                                    ) : m?.opted ? (
+                                        <div className="flex items-end justify-between gap-3">
+                                            <p className="flex items-baseline gap-1.5">
+                                                <span className="text-4xl font-extrabold leading-none tabular-nums text-slate-900">{points(m.month_points)}</span>
+                                                <span className="text-sm font-medium text-slate-500">{w.pts}</span>
+                                            </p>
+                                            <span className="text-xs font-semibold text-slate-600">{w.total} {points(m.total)}</span>
+                                        </div>
+                                    ) : <p className="text-sm text-slate-500">{w.chooseNote}</p>}
+                                    {button(m?.option === "buy_more" ? w.viewOffers : m?.opted ? w.viewPoints : w.choose, !m?.opted)}
+                                </div>
+                            </button>
+                        );
+                    }
                     if (s.run === "targets") {
                         const p = s.target_now;
                         const target = p?.target ?? null;

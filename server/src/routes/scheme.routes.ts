@@ -62,11 +62,26 @@ router.put('/admin/:id/targets/figures', ...write, SchemeController.adminTargetF
 router.put('/admin/:id/targets/paid', ...write, SchemeController.adminTargetPaid);
 router.post('/admin/:id/targets/import', ...write, SchemeController.adminTargetImport);
 
+// Sell More Earn More: the stores that opted, their points and reward requests.
+router.get('/admin/:id/program', ...read, SchemeController.adminSellMoreProgram);
+router.put('/admin/:id/program/live', ...write, SchemeController.adminSellMoreLive);
+router.get('/admin/:id/sell-more', ...read, SchemeController.adminSellMore);
+router.get('/admin/:id/sell-more/stores/:storeId', ...read, SchemeController.adminSellMoreStore);
+router.put('/admin/:id/sell-more/month', ...write, SchemeController.adminSellMoreMonth);
+router.put('/admin/:id/sell-more/reward', ...write, SchemeController.adminSellMoreReward);
+router.get('/admin/:id/buy-more', ...read, SchemeController.adminBuyMore);
+router.put('/admin/:id/buy-more/invoices/:invoiceId', ...write, SchemeController.adminBuyMoreInvoice);
+router.put('/admin/:id/buy-more/free-sets/:claimId', ...write, SchemeController.adminBuyMoreFreeSet);
+
 // Franchise: see, join and enter schemes. Scoped to the signed-in store.
 const store = [authenticateToken, requireRole('vendor')];
 router.get('/', ...store, SchemeController.storeList);
 router.get('/:id', ...store, SchemeController.storeGet);
 router.post('/:id/join', ...store, SchemeController.storeJoin);
+router.post('/:id/opt', ...store, SchemeController.storeOpt);
+router.post('/:id/redeem', ...store, SchemeController.storeRedeem);
+router.post('/:id/invoices', ...store, entryFiles, SchemeController.storeBuyInvoice);
+router.post('/:id/claims', ...store, SchemeController.storeClaimFreeSet);
 router.post('/:id/entries', ...store, entryFiles, SchemeController.storeSubmit);
 
 export default router;

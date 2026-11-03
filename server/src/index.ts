@@ -469,6 +469,69 @@ async function runMigrations() {
          PRIMARY KEY (scheme_id, store_id, period),
          KEY idx_st_store (store_id)
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* Sell More Earn More: a store asking for its reward; the admin sends it by hand. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_reward_requests (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         points DECIMAL(12,2) NOT NULL DEFAULT 0,
+         status VARCHAR(20) NOT NULL DEFAULT 'requested',
+         note TEXT NULL,
+         requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         sent_at TIMESTAMP NULL,
+         sent_by CHAR(36) NULL,
+         KEY idx_srr_scheme (scheme_id, status),
+         KEY idx_srr_store (store_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* Sell More Earn More, Option 2: the invoices a store sends, and the free sets it claims. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_buy_invoices (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         invoice_no VARCHAR(60) NOT NULL,
+         invoice_date DATE NOT NULL,
+         files JSON NOT NULL,
+         sets JSON NOT NULL,
+         read_sets JSON NULL,
+         status VARCHAR(20) NOT NULL DEFAULT 'pending',
+         review_note TEXT NULL,
+         reviewed_by CHAR(36) NULL,
+         reviewed_at TIMESTAMP NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         KEY idx_sbi_scheme (scheme_id, status),
+         KEY idx_sbi_store (store_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_free_sets (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         status VARCHAR(20) NOT NULL DEFAULT 'requested',
+         note TEXT NULL,
+         requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         sent_at TIMESTAMP NULL,
+         sent_by CHAR(36) NULL,
+         KEY idx_sfs_scheme (scheme_id, status),
+         KEY idx_sfs_store (store_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* Sell More Earn More, Option 1: each store's category and target, month by month. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_store_months (
+         scheme_id CHAR(36) NOT NULL,
+         store_id VARCHAR(36) NOT NULL,
+         month VARCHAR(7) NOT NULL,
+         tier VARCHAR(40) NULL,
+         target DECIMAL(12,2) NULL,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         PRIMARY KEY (scheme_id, store_id, month)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    const [sfsOffer]: any = await pool.query("SHOW COLUMNS FROM scheme_free_sets LIKE 'offer'");
+    if (!sfsOffer.length) await pool.query("ALTER TABLE scheme_free_sets ADD COLUMN offer VARCHAR(10) NOT NULL DEFAULT 'offer1', ADD COLUMN used JSON NULL");
+    const [srrMonth]: any = await pool.query("SHOW COLUMNS FROM scheme_reward_requests LIKE 'month'");
+    if (!srrMonth.length) {
+      await pool.query("ALTER TABLE scheme_reward_requests ADD COLUMN month VARCHAR(7) NULL, ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'store'");
+      await pool.query("UPDATE scheme_reward_requests SET month = DATE_FORMAT(requested_at, '%Y-%m') WHERE month IS NULL");
+      await pool.query('ALTER TABLE scheme_reward_requests ADD UNIQUE KEY uq_srr_month (scheme_id, store_id, month)');
+    }
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_reminders (
          scheme_id CHAR(36) NOT NULL,
          window_start VARCHAR(16) NOT NULL,

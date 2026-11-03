@@ -49,7 +49,7 @@ export type Measure = 'warranties' | 'points';
 /** A series: the warranty products (by name) in it and the points each is worth. */
 export interface PointSeries { id: string; name: string; points: number; products: string[] }
 /** A kind of store and what its points are multiplied by. */
-export interface StoreTier { id: string; name: string; times: number }
+export interface StoreTier { id: string; name: string; times: number; rates?: Record<string, number> }
 export interface PointsRule { series: PointSeries[]; tiers: StoreTier[] }
 
 export interface SchemeSettings {
@@ -66,6 +66,10 @@ export interface SchemeSettings {
     benefit: BenefitKind;
     steps: TargetStep[];
     show: TargetVisibility;
+    /* Sell More Earn More: a banner for each option. */
+    option_banners?: { option1?: string; option2?: string };
+    /* Sell More Earn More: open to every franchise. Off, only the scheme's own stores see it. */
+    live?: boolean;
 }
 
 export const DEFAULT_SETTINGS: SchemeSettings = {
@@ -127,6 +131,8 @@ export function readPoints(raw: any): PointsRule {
         id: id(t?.id, 't', i),
         name: String(t?.name ?? '').trim().slice(0, 40),
         times: Number(t?.times),
+        /* Points per series for this type, by series id, where the admin set them. */
+        ...(t?.rates && typeof t.rates === 'object' ? { rates: Object.fromEntries(Object.entries(t.rates).map(([k, v]) => [k, Number(v)]).filter(([, v]) => Number.isFinite(v as number) && (v as number) > 0)) } : {}),
     }));
     return { series, tiers };
 }
@@ -278,6 +284,13 @@ export function readSettings(raw: unknown): SchemeSettings {
             percent: s.show?.percent ?? d.show.percent, steps: s.show?.steps ?? d.show.steps,
             to_next: s.show?.to_next ?? d.show.to_next,
         },
+        ...(s.live === true ? { live: true } : {}),
+        ...(s.option_banners ? {
+            option_banners: {
+                ...(String(s.option_banners.option1 ?? '').trim() ? { option1: String(s.option_banners.option1).trim().slice(0, 500) } : {}),
+                ...(String(s.option_banners.option2 ?? '').trim() ? { option2: String(s.option_banners.option2).trim().slice(0, 500) } : {}),
+            },
+        } : {}),
     };
 }
 
