@@ -1031,12 +1031,12 @@ export class AsmController {
         try {
             const admin = (req as any).user;
             const before = await getLocatorSettings();
-            const { min_warranties, radius_km, support_phone, support_name, whatsapp_live, test_numbers, hidden_stores } = req.body || {};
+            const { min_warranties, radius_km, support_phone, support_name, whatsapp_live, test_numbers, hidden_stores, hidden_brands } = req.body || {};
 
             let saved;
             try {
                 saved = await saveLocatorSettings(
-                    { min_warranties, radius_km, support_phone, support_name, whatsapp_live, test_numbers, hidden_stores },
+                    { min_warranties, radius_km, support_phone, support_name, whatsapp_live, test_numbers, hidden_stores, hidden_brands },
                     admin?.id || null
                 );
             } catch (err: any) {

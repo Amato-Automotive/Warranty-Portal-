@@ -35,6 +35,8 @@ interface Settings {
     test_numbers: string[];
     /** Stores never offered to customers — e.g. our own Autoform Brand Store. */
     hidden_stores: string[];
+    /** Brands whose stores are not offered to customers. */
+    hidden_brands: string[];
 }
 
 interface StoreOption { id: string; store_name: string; city: string | null; state: string | null }
@@ -47,6 +49,7 @@ const tenDigits = (s: string) => s.replace(/\D/g, "").slice(-10);
 interface OfferedStore {
     id: string;
     store_name: string;
+    brand: string;
     city: string | null;
     phone: string | null;
     warranties: number;
@@ -126,7 +129,7 @@ export const AdminStoreLocator = () => {
 
     const [saved, setSaved] = useState<Settings | null>(null);
     const [form, setForm] = useState<Settings>({
-        min_warranties: 1, radius_km: 15, support_phone: "", support_name: "", whatsapp_live: false, test_numbers: [], hidden_stores: [],
+        min_warranties: 1, radius_km: 15, support_phone: "", support_name: "", whatsapp_live: false, test_numbers: [], hidden_stores: [], hidden_brands: [],
     });
     const [allStores, setAllStores] = useState<StoreOption[]>([]);
     // Typed freely, turned into test_numbers on save.
@@ -139,7 +142,7 @@ export const AdminStoreLocator = () => {
     const [previewing, setPreviewing] = useState(false);
 
     const load = (s: Settings) => {
-        const withHidden = { ...s, hidden_stores: s.hidden_stores || [] };
+        const withHidden = { ...s, hidden_stores: s.hidden_stores || [], hidden_brands: s.hidden_brands || [] };
         setSaved(withHidden);
         setForm(withHidden);
         setTestText((s.test_numbers || []).join(", "));
@@ -169,6 +172,7 @@ export const AdminStoreLocator = () => {
         || saved.whatsapp_live !== form.whatsapp_live
         || (saved.test_numbers || []).join(",") !== testNumbers.join(",")
         || [...saved.hidden_stores].sort().join(",") !== [...form.hidden_stores].sort().join(",")
+        || [...saved.hidden_brands].sort().join(",") !== [...form.hidden_brands].sort().join(",")
     );
 
     const storeLabel = (s: StoreOption) => [s.store_name, s.city].filter(Boolean).join(" · ");
@@ -314,6 +318,29 @@ export const AdminStoreLocator = () => {
                             {form.min_warranties === 0
                                 ? `Every store within ${form.radius_km} km is offered, including ones with no approved warranty yet.`
                                 : `A store needs ${form.min_warranties}+ approved warranties to be offered.`}
+                        </p>
+                    </div>
+
+                    {/* Whole brands on or off. A store with both stays while either is on. */}
+                    <div className="border-t border-slate-100 pt-4 space-y-2">
+                        <Label className="text-xs">Brands shown to customers</Label>
+                        {([["AF", "Autoform stores"], ["AC", "Autocruze stores"]] as const).map(([b, label]) => (
+                            <div key={b} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+                                <span className="text-sm font-semibold text-slate-800">{label}</span>
+                                <Switch
+                                    checked={!form.hidden_brands.includes(b)}
+                                    onCheckedChange={on => setForm(f => ({
+                                        ...f,
+                                        hidden_brands: on ? f.hidden_brands.filter(x => x !== b) : [...f.hidden_brands, b],
+                                    }))}
+                                    aria-label={`Show ${label} to customers`}
+                                />
+                            </div>
+                        ))}
+                        <p className={`text-[11px] leading-snug ${form.hidden_brands.length === 2 ? "text-amber-700" : "text-slate-400"}`}>
+                            {form.hidden_brands.length === 2
+                                ? "No store is offered. Every customer goes to the ASM, else customer support."
+                                : "A store with both brands stays listed while either is on."}
                         </p>
                     </div>
 
@@ -501,7 +528,12 @@ export const AdminStoreLocator = () => {
                                         {preview.stores.map(s => (
                                             <div key={s.id} className="px-3.5 py-2.5 flex items-start gap-3 min-w-0">
                                                 <div className="min-w-0 flex-1">
-                                                    <p className="text-sm font-bold text-slate-800 truncate">{s.store_name}</p>
+                                                    <p className="text-sm font-bold text-slate-800 truncate">
+                                                        {s.store_name}
+                                                        <span className={`ml-1.5 text-[10px] font-bold ${s.brand === "AC" ? "text-blue-600" : s.brand === "AFAC" ? "text-purple-600" : "text-orange-600"}`}>
+                                                            {s.brand === "AFAC" ? "AF+AC" : s.brand}
+                                                        </span>
+                                                    </p>
                                                     <p className="text-[11px] text-slate-400 truncate">
                                                         {[s.city, s.phone].filter(Boolean).join(" · ")}
                                                     </p>

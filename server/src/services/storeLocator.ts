@@ -186,6 +186,17 @@ export function isTestAccount(name: unknown): boolean {
     return /(^|[^a-z])test/i.test(String(name ?? ''));
 }
 
+/**
+ * Whether the brands switched off in the locator take this store out of the
+ * customer's list. A store with both brands stays while either is on. A store
+ * with no brand set counts as Autoform, as it does everywhere else.
+ */
+export function hiddenByBrand(allowedBrands: unknown, hiddenBrands: readonly string[]): boolean {
+    const brand = String(allowedBrands ?? '').trim().toUpperCase() || 'AF';
+    const carries = brand === 'AFAC' ? ['AF', 'AC'] : [brand];
+    return carries.every(b => hiddenBrands.includes(b));
+}
+
 /** Distance as the customer should read it: approximate, never falsely precise. */
 export function formatDistance(km: number): string {
     if (km < 1) return '< 1 km';

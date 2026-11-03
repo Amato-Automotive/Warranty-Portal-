@@ -7,6 +7,7 @@ import {
     storesToOffer,
     distributorsToOffer,
     isTestAccount,
+    hiddenByBrand,
     formatDistance,
     isPincode,
     clampMinWarranties,
@@ -21,6 +22,18 @@ import {
  * Distances are checked against real places, so a sign or radian slip shows up
  * as Delhi being in the wrong city rather than as a subtly different number.
  */
+
+test('brands switched off take their stores out; a store with both stays while either is on', () => {
+    assert.equal(hiddenByBrand('AC', []), false);
+    assert.equal(hiddenByBrand('AC', ['AC']), true);
+    assert.equal(hiddenByBrand('AF', ['AC']), false);
+    assert.equal(hiddenByBrand('AFAC', ['AC']), false);
+    assert.equal(hiddenByBrand('AFAC', ['AF']), false);
+    assert.equal(hiddenByBrand('AFAC', ['AF', 'AC']), true);
+    // No brand set counts as Autoform.
+    assert.equal(hiddenByBrand(null, ['AF']), true);
+    assert.equal(hiddenByBrand('', ['AC']), false);
+});
 
 const DELHI_CP = { lat: 28.6315, lng: 77.2167 };      // Connaught Place
 const ROHINI = { lat: 28.7124, lng: 77.1330 };        // pincode 110085

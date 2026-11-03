@@ -4,6 +4,7 @@ import { findState } from './indianStates.js';
 import {
     storesToOffer,
     isTestAccount,
+    hiddenByBrand,
     parseCoordinate,
     isPincode,
     formatDistance,
@@ -51,6 +52,8 @@ export interface LocatorSettings {
      * An admin can still send one from Lead Management.
      */
     hidden_stores: string[];
+    /** Brands whose stores are not offered to customers: AF, AC, or both. */
+    hidden_brands: string[];
 }
 
 /** At most this many test numbers — it is for a handful of people's phones. */
@@ -66,12 +69,19 @@ const DEFAULTS: LocatorSettings = {
     whatsapp_live: false,
     test_numbers: [],
     hidden_stores: [],
+    hidden_brands: [],
 };
 
 /** Store ids, de-duplicated; at most 50 — it is for a handful of our own stores. */
 function cleanStoreIds(raw: unknown): string[] {
     const list = Array.isArray(raw) ? raw : String(raw ?? '').split(/[\s,;]+/);
     return [...new Set(list.map(v => String(v ?? '').trim()).filter(v => /^[\w-]{6,64}$/.test(v)))].slice(0, 50);
+}
+
+/** Only the two brands; anything else is dropped. */
+function cleanBrands(raw: unknown): string[] {
+    const list = Array.isArray(raw) ? raw : [];
+    return ['AF', 'AC'].filter(b => list.map(v => String(v ?? '').trim().toUpperCase()).includes(b));
 }
 
 /** The ten digits a phone is compared on: country code and formatting dropped. */
@@ -95,7 +105,7 @@ export function repliesTo(settings: LocatorSettings, phone: string): boolean {
  */
 const CACHE_MS = 30_000;
 let cached: { at: number; value: LocatorSettings } | null = null;
-const copy = (v: LocatorSettings): LocatorSettings => ({ ...v, test_numbers: [...v.test_numbers], hidden_stores: [...v.hidden_stores] });
+const copy = (v: LocatorSettings): LocatorSettings => ({ ...v, test_numbers: [...v.test_numbers], hidden_stores: [...v.hidden_stores], hidden_brands: [...v.hidden_brands] });
 
 export async function getLocatorSettings(): Promise<LocatorSettings> {
     if (cached && Date.now() - cached.at < CACHE_MS) return copy(cached.value);
@@ -124,6 +134,8 @@ async function readLocatorSettings(): Promise<LocatorSettings> {
             whatsapp_live: stored.whatsapp_live === true,
             test_numbers: cleanTestNumbers(stored.test_numbers ?? []),
             hidden_stores: cleanStoreIds(stored.hidden_stores ?? []),
+            // Settings saved before this existed hide no brand.
+            hidden_brands: cleanBrands(stored.hidden_brands ?? []),
         };
     } catch (error) {
         // An unreadable setting must not take the locator down with it.
@@ -174,6 +186,9 @@ export async function saveLocatorSettings(
     if (changes.hidden_stores !== undefined) {
         next.hidden_stores = cleanStoreIds(changes.hidden_stores);
     }
+    if (changes.hidden_brands !== undefined) {
+        next.hidden_brands = cleanBrands(changes.hidden_brands);
+    }
 
     await db.execute(
         `INSERT INTO system_settings (setting_key, setting_value, updated_by)
@@ -191,6 +206,8 @@ export interface OfferedStoreRow {
     id: string;
     store_code: string | null;
     store_name: string;
+    /** AF, AC or AFAC. */
+    brand: string;
     address: string | null;
     city: string | null;
     pincode: string | null;
@@ -315,7 +332,7 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
     const [[storeRows], counts]: any = await Promise.all([
         db.execute(
             `SELECT vd.id, vd.store_code, vd.store_name, vd.address, vd.city, vd.pincode,
-                    vd.latitude, vd.longitude, p.phone_number
+                    vd.latitude, vd.longitude, vd.allowed_brands, p.phone_number
                FROM vendor_details vd
                JOIN vendor_verification vv ON vv.user_id = vd.user_id AND vv.is_verified = 1
                LEFT JOIN profiles p ON p.id = vd.user_id
@@ -330,6 +347,7 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
         if (isTestAccount(row.store_name)) continue;
         // Our own stores are never offered to a customer.
         if (hidden.has(String(row.id))) continue;
+        if (hiddenByBrand(row.allowed_brands, settings.hidden_brands)) continue;
         const lat = parseCoordinate(row.latitude);
         const lng = parseCoordinate(row.longitude);
         if (lat === null || lng === null) continue;
@@ -387,6 +405,7 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
             id: String(store.row.id),
             store_code: store.row.store_code || null,
             store_name: store.row.store_name,
+            brand: store.row.allowed_brands || 'AF',
             address: store.row.address || null,
             city: store.row.city || null,
             pincode: store.row.pincode || null,
