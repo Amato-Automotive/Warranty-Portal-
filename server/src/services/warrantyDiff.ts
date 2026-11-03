@@ -53,6 +53,7 @@ const PHOTO_LABELS: Record<string, string> = {
     frontReg: 'Front with Reg. No. photo',
     backReg: 'Back with Reg. No. photo',
     warranty: 'Invoice photo',
+    mrpLabel: 'MRP sticker / Taffeta label photo',
     seatCover: 'Seat cover photo',
     vehicle: 'Vehicle photo',
     carOuter: 'Car exterior photo',

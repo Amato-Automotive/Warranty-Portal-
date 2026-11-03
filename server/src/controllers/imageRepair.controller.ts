@@ -13,7 +13,7 @@ import { isHeicBuffer, urlToDiskPath } from '../config/localUpload.js';
 
 const REPAIRABLE_FIELDS = new Set([
     'invoiceFileName',
-    'photos.vehicle', 'photos.seatCover', 'photos.lhs', 'photos.rhs',
+    'photos.vehicle', 'photos.mrpLabel', 'photos.seatCover', 'photos.lhs', 'photos.rhs',
     'photos.frontReg', 'photos.backReg', 'photos.warranty', 'photos.carOuter',
 ]);
 

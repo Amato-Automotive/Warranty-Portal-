@@ -23,7 +23,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Upload, Loader2, HelpCircle, CheckCircle2, FileText, Building2, User, Car, Smartphone, Mail, Package, XCircle, AlertCircle, Armchair, ImageIcon, QrCode, Camera } from "lucide-react";
+import { Upload, Loader2, HelpCircle, CheckCircle2, FileText, Building2, User, Car, Smartphone, Mail, Package, XCircle, AlertCircle, Armchair, Tag, ImageIcon, QrCode, Camera } from "lucide-react";
 import CameraCapture from "@/components/ui/CameraCapture";
 import { submitWarranty, updateWarranty } from "@/lib/warrantyApi";
 import { TermsModal } from "./TermsModal";
@@ -140,7 +140,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
     carYear: initialData.car_year || "",
     warrantyType: initialData.warranty_type || "1 Year",
     invoiceFile: null as File | null,
-    vehicleFile: null as File | null,
+    mrpLabelFile: null as File | null,
     seatCoverPhoto: null as File | null,
     termsAccepted: true, // Already accepted if editing
     exifData: null as any,
@@ -159,7 +159,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
     carYear: "",
     warrantyType: "1 Year",
     invoiceFile: null as File | null,
-    vehicleFile: null as File | null,
+    mrpLabelFile: null as File | null,
     seatCoverPhoto: null as File | null,
     termsAccepted: false,
     exifData: null as any,
@@ -611,17 +611,17 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
       if (!warrantyId) {
         if (!formData.invoiceFile) {
           toast({
-            title: "Invoice Required",
-            description: "Please upload proof of purchase (Invoice / MRP Sticker)",
+            title: "GST Invoice Required",
+            description: "Please upload proof of purchase (GST Invoice)",
             variant: "destructive",
           });
           setLoading(false);
           return;
         }
-        if (!formData.vehicleFile) {
+        if (!formData.mrpLabelFile) {
           toast({
-            title: "Car Exterior Photo Required",
-            description: "Please capture a photo of the car exterior with the number plate visible",
+            title: "MRP Sticker / Taffeta Label Required",
+            description: "Please add a photo of the MRP sticker or Taffeta label",
             variant: "destructive",
           });
           setLoading(false);
@@ -685,7 +685,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
           invoiceFileName: formData.invoiceFile?.name || null,
           invoiceFile: formData.invoiceFile, // Pass file object for API wrapper
           photos: {
-            vehicle: formData.vehicleFile,
+            mrpLabel: formData.mrpLabelFile,
             seatCover: formData.seatCoverPhoto,
           }
         },
@@ -719,8 +719,8 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
             if (invoiceFile instanceof File) formDataPayload.append('invoiceFile', invoiceFile);
 
             // Append photo files
-            if (pd.photos?.vehicle instanceof File) {
-              formDataPayload.append('vehiclePhoto', pd.photos.vehicle);
+            if (pd.photos?.mrpLabel instanceof File) {
+              formDataPayload.append('mrpLabelPhoto', pd.photos.mrpLabel);
             }
             if (pd.photos?.seatCover instanceof File) {
               formDataPayload.append('seatCoverPhoto', pd.photos.seatCover);
@@ -1082,7 +1082,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
   const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif', 'application/pdf'];
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, field: 'invoiceFile' | 'vehicleFile' | 'seatCoverPhoto') => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, field: 'invoiceFile' | 'mrpLabelFile' | 'seatCoverPhoto') => {
     const file = e.target.files?.[0];
     if (file) {
       // Check file type
@@ -1097,7 +1097,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
       }
 
       // --- FRAUD DETECTION: Extract EXIF BEFORE compression ---
-      if (['vehicleFile', 'seatCoverPhoto'].includes(field)) {
+      if (['mrpLabelFile', 'seatCoverPhoto'].includes(field)) {
         try {
           // Parse EXIF, GPS, and TIFF data (for make/model)
           const exif = await exifr.parse(file, {
@@ -1176,7 +1176,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
   // Handle camera captures: geolocation and EXIF are fire-and-forget fraud metadata
   // (they update state whenever they complete). Only compression is awaited — it's
   // the only thing that affects upload size and must finish before submission.
-  const handleCameraCapture = async (file: File | null, field: 'vehicleFile' | 'seatCoverPhoto') => {
+  const handleCameraCapture = async (file: File | null, field: 'mrpLabelFile' | 'seatCoverPhoto') => {
     if (!file) {
       setFormData(prev => ({ ...prev, [field]: null }));
       return;
@@ -1813,19 +1813,76 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
                 </div>
               </div>
 
-              {/* Number Plate Photo (Now Exterior with Plate) */}
+              {/* Order on screen: GST invoice, MRP sticker or Taffeta label, fitted seat cover. */}
+              <div className="space-y-3 md:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="invoiceFile" className="text-sm font-medium text-slate-700 shrink-0">
+                    Proof of Purchase (GST Invoice) <span className="text-destructive">*</span>
+                  </Label>
+                  {isEditing && initialData?.product_details?.invoiceFileName && (
+                    <button
+                      type="button"
+                      onClick={() => setShowExistingInvoice(true)}
+                      className="flex items-center gap-1 text-xs text-emerald-600 font-medium hover:text-emerald-800 transition-colors"
+                    >
+                      <ImageIcon className="h-3 w-3" />
+                      View Existing
+                    </button>
+                  )}
+                </div>
+                <div className={`mt-2 border-2 border-dashed rounded-xl p-4 sm:p-6 transition-all duration-200 text-center relative ${formData.invoiceFile ? 'border-orange-300 bg-orange-50/30' : 'border-slate-200 hover:border-orange-300 hover:bg-slate-50'}`}>
+                  <div className="flex flex-col items-center gap-2">
+                    <div className={`p-3 rounded-full ${formData.invoiceFile ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500'}`}>
+                      {formData.invoiceFile ? <FileText className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
+                    </div>
+                    <div>
+                      {formData.invoiceFile ? (
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium text-orange-700 break-all">{formData.invoiceFile.name}</p>
+                          <p className="text-xs text-orange-600/70">{(formData.invoiceFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                          <label htmlFor="invoiceFile" className="text-xs text-orange-600 underline cursor-pointer hover:text-orange-800">Change File</label>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium text-slate-700">Click to upload or drag and drop</p>
+                          <p className="text-xs text-muted-foreground">(Max 2MB)</p>
+                          {isEditing && initialData?.product_details?.invoiceFileName && (
+                             <p className="text-[10px] text-emerald-600 font-medium mt-1">
+                                ✓ Proof of purchase is already uploaded
+                             </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <Input
+                      id="invoiceFile"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleFileChange(e, 'invoiceFile')}
+                      required={!warrantyId}
+                      disabled={loading}
+                      className="hidden"
+                    />
+                    {!formData.invoiceFile && (
+                      <label htmlFor="invoiceFile" className="absolute inset-0 cursor-pointer"></label>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* MRP sticker or Taffeta label */}
               <CameraCapture
-                id="vehicleFile"
-                label="Car Exterior image with number plate"
+                id="mrpLabelFile"
+                label="MRP Sticker / Taffeta Label"
                 description="Take a photo or upload from gallery"
                 required={!warrantyId}
                 disabled={loading}
                 cameraOnly={false}
-                value={formData.vehicleFile}
-                onChange={(file) => handleCameraCapture(file, 'vehicleFile')}
-                selectedIcon={<Car className="h-6 w-6" />}
-                sampleImageUrl="https://res.cloudinary.com/dmwt4rg4m/image/upload/v1776228125/Car_Exterior_Image_New_vvjoqa.jpg"
-                existingImageUrl={isEditing && initialData?.product_details?.photos?.vehicle ? initialData.product_details.photos.vehicle : null}
+                value={formData.mrpLabelFile}
+                onChange={(file) => handleCameraCapture(file, 'mrpLabelFile')}
+                selectedIcon={<Tag className="h-6 w-6" />}
+                sampleImageUrl="/images/warranty/uid-ref-01.jpeg"
+                existingImageUrl={isEditing && initialData?.product_details?.photos?.mrpLabel ? initialData.product_details.photos.mrpLabel : null}
               />
 
               {/* Fitted Seat Cover Photo */}
@@ -1844,61 +1901,6 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
               />
 
 
-            </div>
-            <div className="space-y-3 mt-5 md:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Label htmlFor="invoiceFile" className="text-sm font-medium text-slate-700 shrink-0">
-                  Proof of Purchase (GST Invoice / MRP Sticker) <span className="text-destructive">*</span>
-                </Label>
-                {isEditing && initialData?.product_details?.invoiceFileName && (
-                  <button
-                    type="button"
-                    onClick={() => setShowExistingInvoice(true)}
-                    className="flex items-center gap-1 text-xs text-emerald-600 font-medium hover:text-emerald-800 transition-colors"
-                  >
-                    <ImageIcon className="h-3 w-3" />
-                    View Existing
-                  </button>
-                )}
-              </div>
-              <div className={`mt-2 border-2 border-dashed rounded-xl p-4 sm:p-6 transition-all duration-200 text-center relative ${formData.invoiceFile ? 'border-orange-300 bg-orange-50/30' : 'border-slate-200 hover:border-orange-300 hover:bg-slate-50'}`}>
-                <div className="flex flex-col items-center gap-2">
-                  <div className={`p-3 rounded-full ${formData.invoiceFile ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500'}`}>
-                    {formData.invoiceFile ? <FileText className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
-                  </div>
-                  <div>
-                    {formData.invoiceFile ? (
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium text-orange-700 break-all">{formData.invoiceFile.name}</p>
-                        <p className="text-xs text-orange-600/70">{(formData.invoiceFile.size / 1024 / 1024).toFixed(2)} MB</p>
-                        <label htmlFor="invoiceFile" className="text-xs text-orange-600 underline cursor-pointer hover:text-orange-800">Change File</label>
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium text-slate-700">Click to upload or drag and drop</p>
-                        <p className="text-xs text-muted-foreground">(Max 2MB)</p>
-                        {isEditing && initialData?.product_details?.invoiceFileName && (
-                           <p className="text-[10px] text-emerald-600 font-medium mt-1">
-                              ✓ Proof of purchase is already uploaded
-                           </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <Input
-                    id="invoiceFile"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleFileChange(e, 'invoiceFile')}
-                    required={!warrantyId}
-                    disabled={loading}
-                    className="hidden"
-                  />
-                  {!formData.invoiceFile && (
-                    <label htmlFor="invoiceFile" className="absolute inset-0 cursor-pointer"></label>
-                  )}
-                </div>
-              </div>
             </div>
           </CardContent>
         </Card>
@@ -1932,7 +1934,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
                 type="submit"
                 size="lg"
                 className="w-full text-lg h-12 shadow-orange-200 shadow-lg hover:shadow-xl transition-all"
-                disabled={loading || processingCapture || !formData.termsAccepted || (!warrantyId && (!formData.invoiceFile || !formData.vehicleFile || !formData.seatCoverPhoto))}
+                disabled={loading || processingCapture || !formData.termsAccepted || (!warrantyId && (!formData.invoiceFile || !formData.mrpLabelFile || !formData.seatCoverPhoto))}
               >
                 {loading ? (
                   <>
@@ -2002,14 +2004,14 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
         ]}
         photos={[
           {
-            label: "Invoice / MRP sticker",
+            label: "GST invoice",
             file: formData.invoiceFile,
             url: (() => {
               const f = initialData?.product_details?.invoiceFileName;
               return f ? (String(f).startsWith("http") ? f : `${window.location.origin}/uploads/${f}`) : null;
             })(),
           },
-          { label: "Car exterior", file: formData.vehicleFile, url: initialData?.product_details?.photos?.vehicle },
+          { label: "MRP sticker / Taffeta label", file: formData.mrpLabelFile, url: initialData?.product_details?.photos?.mrpLabel },
           { label: "Seat cover fitted", file: formData.seatCoverPhoto, url: initialData?.product_details?.photos?.seatCover },
         ]}
       />

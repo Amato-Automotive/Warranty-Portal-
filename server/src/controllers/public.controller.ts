@@ -501,7 +501,7 @@ export class PublicController {
                 files.forEach(file => {
                     if (file.fieldname === 'invoiceFile') {
                         warrantyData.productDetails.invoiceFileName = file.path;
-                    } else if (['lhsPhoto', 'rhsPhoto', 'frontRegPhoto', 'backRegPhoto', 'warrantyPhoto', 'vehiclePhoto', 'seatCoverPhoto'].includes(file.fieldname)) {
+                    } else if (['lhsPhoto', 'rhsPhoto', 'frontRegPhoto', 'backRegPhoto', 'warrantyPhoto', 'vehiclePhoto', 'mrpLabelPhoto', 'seatCoverPhoto'].includes(file.fieldname)) {
                         if (!warrantyData.productDetails.photos) {
                             warrantyData.productDetails.photos = {};
                         }

@@ -91,7 +91,7 @@ export class WarrantyController {
         files.forEach(file => {
           if (file.fieldname === 'invoiceFile') {
             warrantyData.productDetails.invoiceFileName = file.path;
-          } else if (['lhsPhoto', 'rhsPhoto', 'frontRegPhoto', 'backRegPhoto', 'warrantyPhoto', 'vehiclePhoto', 'seatCoverPhoto'].includes(file.fieldname)) {
+          } else if (['lhsPhoto', 'rhsPhoto', 'frontRegPhoto', 'backRegPhoto', 'warrantyPhoto', 'vehiclePhoto', 'mrpLabelPhoto', 'seatCoverPhoto'].includes(file.fieldname)) {
             if (!warrantyData.productDetails.photos) {
               warrantyData.productDetails.photos = {};
             }
@@ -1200,7 +1200,7 @@ export class WarrantyController {
         files.forEach(file => {
           if (file.fieldname === 'invoiceFile') {
             warrantyData.productDetails.invoiceFileName = file.path;
-          } else if (['lhsPhoto', 'rhsPhoto', 'frontRegPhoto', 'backRegPhoto', 'warrantyPhoto', 'vehiclePhoto', 'seatCoverPhoto'].includes(file.fieldname)) {
+          } else if (['lhsPhoto', 'rhsPhoto', 'frontRegPhoto', 'backRegPhoto', 'warrantyPhoto', 'vehiclePhoto', 'mrpLabelPhoto', 'seatCoverPhoto'].includes(file.fieldname)) {
             if (!warrantyData.productDetails.photos) {
               warrantyData.productDetails.photos = {};
             }
@@ -1344,7 +1344,7 @@ export class WarrantyController {
         }
         
         // Ensure seat-cover internal photos are preserved! This caused the UI corruption earlier!
-        const seatCoverKeys = ['vehicle', 'seatCover', 'carOuter'];
+        const seatCoverKeys = ['vehicle', 'mrpLabel', 'seatCover', 'carOuter'];
         seatCoverKeys.forEach(key => {
           if (!(warrantyData.productDetails.photos as any)[key] && existingProductDetails.photos?.[key]) {
              (warrantyData.productDetails.photos as any)[key] = existingProductDetails.photos[key];

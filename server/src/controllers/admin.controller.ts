@@ -76,7 +76,7 @@ async function runWithRetry<T>(
  */
 const REPLACEABLE_PHOTO_FIELDS = new Set([
     'invoiceFileName',
-    'vehicle', 'seatCover', 'carOuter',
+    'vehicle', 'mrpLabel', 'seatCover', 'carOuter',
     'lhs', 'rhs', 'frontReg', 'backReg', 'warranty',
 ]);
 

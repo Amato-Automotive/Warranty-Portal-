@@ -188,7 +188,7 @@ export const QuickReviewPanel = ({
     const photosList: { key: string; label: string; url: string }[] = [];
     if (productDetails.photos) {
         const photoKeys = warranty.product_type === 'seat-cover' 
-            ? [{ key: 'seatCover', label: 'Seat Cover' }, { key: 'vehicle', label: 'Car Exterior' }, { key: 'carOuter', label: 'Car Outer' }]
+            ? [{ key: 'mrpLabel', label: 'MRP / Taffeta Label' }, { key: 'seatCover', label: 'Seat Cover' }, { key: 'vehicle', label: 'Car Exterior' }, { key: 'carOuter', label: 'Car Outer' }]
             : [{ key: 'lhs', label: 'LHS View' }, { key: 'rhs', label: 'RHS View' }, { key: 'frontReg', label: 'Front Reg' }, { key: 'backReg', label: 'Back Reg' }];
 
         photoKeys.forEach(({ key, label }) => {
@@ -867,7 +867,7 @@ export const QuickReviewPanel = ({
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         {/* Invoice */}
                         <div className="border border-slate-150 rounded-2xl bg-slate-50/50 p-3 flex flex-col h-64 relative overflow-hidden">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2 block">Invoice / MRP Sticker</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2 block">Proof of Purchase</span>
                             {invoiceUrl ? (
                                 isInvoicePdf ? (
                                     <div className="flex-1 flex flex-col items-center justify-center bg-blue-50 text-blue-500 rounded-xl border border-dashed border-blue-200">
@@ -879,7 +879,7 @@ export const QuickReviewPanel = ({
                                     </div>
                                 ) : (
                                     <div className="flex-1 relative rounded-xl overflow-hidden bg-slate-900 flex items-center justify-center group cursor-zoom-in"
-                                         onMouseMove={(e) => invoiceUrl && !isInvoicePdf && handleMouseMove(e, 'invoice', invoiceUrl, 'Invoice / MRP Sticker')}
+                                         onMouseMove={(e) => invoiceUrl && !isInvoicePdf && handleMouseMove(e, 'invoice', invoiceUrl, 'Proof of Purchase')}
                                          onMouseLeave={() => setZoomState(null)}
                                     >
                                         <img 

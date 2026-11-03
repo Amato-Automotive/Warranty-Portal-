@@ -101,7 +101,7 @@ function warrantyCard(w: any) {
 
 /* Registration photos by product, in the order the warranty screen shows them. */
 const REG_PHOTOS: [string, string][] = [
-    ['vehicle', 'Car exterior'], ['seatCover', 'Seat cover'], ['carOuter', 'Car outer'],
+    ['mrpLabel', 'MRP / Taffeta label'], ['seatCover', 'Seat cover'], ['vehicle', 'Car exterior'], ['carOuter', 'Car outer'],
     ['lhs', 'LHS view'], ['rhs', 'RHS view'], ['frontReg', 'Front number plate'], ['backReg', 'Back number plate'], ['warranty', 'Warranty card'],
 ];
 const fullUrl = (raw: unknown) => (typeof raw === 'string' && raw ? (raw.startsWith('http') ? raw : `${APP_URL}/uploads/${raw}`) : null);

@@ -477,7 +477,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                                                     {isPdf ? <ExternalLink className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" /> : <ZoomIn className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />}
                                                 </div>
                                                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-1">
-                                                    <span className="text-white text-[10px] font-medium leading-tight block">Invoice / MRP</span>
+                                                    <span className="text-white text-[10px] font-medium leading-tight block">Proof of Purchase</span>
                                                 </div>
                                                 <ReplaceOverlay field="invoiceFileName" />
                                             </div>
@@ -485,7 +485,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                                     })()}
 
                                     {/* Photos */}
-                                    {productDetails.photos && [{ key: 'vehicle', label: 'Car Exterior' }, { key: 'seatCover', label: 'Seat Cover' }, { key: 'carOuter', label: 'Car Outer' }]
+                                    {productDetails.photos && [{ key: 'mrpLabel', label: 'MRP / Taffeta Label' }, { key: 'seatCover', label: 'Seat Cover' }, { key: 'vehicle', label: 'Car Exterior' }, { key: 'carOuter', label: 'Car Outer' }]
                                         .filter(({ key }) => productDetails.photos[key])
                                         .map(({ key, label }) => {
                                             const raw = productDetails.photos[key];
@@ -535,7 +535,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                                                     {isPdf ? <ExternalLink className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" /> : <ZoomIn className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />}
                                                 </div>
                                                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-1">
-                                                    <span className="text-white text-[10px] font-medium leading-tight block">Invoice / MRP</span>
+                                                    <span className="text-white text-[10px] font-medium leading-tight block">Proof of Purchase</span>
                                                 </div>
                                                 <ReplaceOverlay field="warranty" />
                                             </div>
