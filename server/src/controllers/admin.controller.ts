@@ -1721,7 +1721,8 @@ export class AdminController {
             store_name = store_name?.substring(0, 255);
             contact_name = contact_name?.substring(0, 100);
             email = email?.substring(0, 100);
-            phone_number = phone_number?.substring(0, 15);
+            // A stray space would make the login number unusable.
+            phone_number = phone_number?.replace(/\s/g, '').substring(0, 15);
             // Optional address/registration fields — normalize empty strings to null
             address = address ? String(address).substring(0, 500) : null;
             city = city ? String(city).substring(0, 100) : null;
@@ -2486,6 +2487,10 @@ export class AdminController {
     static async updateWarrantyDetails(req: Request, res: Response) {
         try {
             const { uid } = req.params;
+            // A stray space breaks phone search and WhatsApp sends.
+            if (typeof req.body.customer_phone === 'string') {
+                req.body.customer_phone = req.body.customer_phone.replace(/\s/g, '');
+            }
             const {
                 customer_name, customer_email, customer_phone,
                 car_make, car_model, car_colour,
@@ -2633,8 +2638,12 @@ export class AdminController {
             };
             for (const [key, label] of Object.entries(fieldMap)) {
                 const bodyVal = req.body[key];
-                if (bodyVal !== undefined && String(bodyVal) !== String(existing[key] ?? '')) {
-                    changes[label] = { before: existing[key] ?? null, after: bodyVal };
+                // The driver returns a DATE as a Date; compare it as the IST day the form sends.
+                const beforeVal = existing[key] instanceof Date
+                    ? existing[key].toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+                    : existing[key];
+                if (bodyVal !== undefined && String(bodyVal) !== String(beforeVal ?? '')) {
+                    changes[label] = { before: beforeVal ?? null, after: bodyVal };
                 }
             }
             if (product_name !== undefined && product_name !== productDetails.productName) {

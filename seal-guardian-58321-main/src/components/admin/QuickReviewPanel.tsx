@@ -21,7 +21,7 @@ import {
     Wifi,
     Layers
 } from "lucide-react";
-import { cn, formatToIST } from "@/lib/utils";
+import { cn, formatToIST, formatToISTDateISO } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -146,7 +146,7 @@ export const QuickReviewPanel = ({
                 registration_number: warranty.registration_number || pd.carRegistration || '',
                 product_name: pd.product || pd.productName || '',
                 warranty_type: warranty.warranty_type || '',
-                purchase_date: warranty.purchase_date ? new Date(warranty.purchase_date).toISOString().split('T')[0] : '',
+                purchase_date: warranty.purchase_date ? formatToISTDateISO(warranty.purchase_date) : '',
                 // Editable identifiers: UID (seat covers) and Serial Number (PPF/EV).
                 new_uid: warranty.uid || pd.uid || '',
                 serial_number: pd.serialNumber || warranty.uid || ''

@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Download, FileText, ExternalLink, XCircle, Loader2, Pencil, Save, X, CheckCircle2, AlertTriangle, ZoomIn, RefreshCw, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn, getWarrantyExpiration, formatToIST } from "@/lib/utils";
+import { cn, getWarrantyExpiration, formatToIST, formatToISTDateISO } from "@/lib/utils";
 import { useState, useEffect, createContext, useContext } from "react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -103,7 +103,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                 registration_number: warranty.registration_number || pd.carRegistration || '',
                 product_name: pd.product || pd.productName || '',
                 warranty_type: warranty.warranty_type || '',
-                purchase_date: warranty.purchase_date ? new Date(warranty.purchase_date).toISOString().split('T')[0] : '',
+                purchase_date: warranty.purchase_date ? formatToISTDateISO(warranty.purchase_date) : '',
                 // Editable identifiers: UID (seat covers) and Serial Number (PPF/EV).
                 new_uid: warranty.uid || pd.uid || '',
                 serial_number: pd.serialNumber || warranty.uid || ''
