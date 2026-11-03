@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, MapPin, Phone, Mail, Store, ShieldCheck, Sofa } from "lucide-react";
 import EVProductsForm from "@/components/warranty/EVProductsForm";
 import SeatCoverForm from "@/components/warranty/SeatCoverForm";
+import { NoBillNoWarrantyDialog } from "@/components/warranty/NoBillNoWarrantyDialog";
 import api, { getErrorMessage } from "@/lib/api";
 import AutoformLoadingScreen from "@/components/ui/AutoformLoadingScreen";
 import { usePublicBrand } from "@/components/layouts/PublicLayout";
@@ -35,6 +36,7 @@ const ConnectStorePage = () => {
     // The store's brand: its loader and logo. Unknown for the first moment, while the store is looked up.
     const [brand, setBrand] = useState<string | null>(null);
     const layout = usePublicBrand();
+    const [billNoticeOpen, setBillNoticeOpen] = useState(true);
 
     useEffect(() => {
         const fetchStoreDetails = async () => {
@@ -123,6 +125,8 @@ const ConnectStorePage = () => {
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">
+            <NoBillNoWarrantyDialog open={billNoticeOpen} onClose={() => setBillNoticeOpen(false)} />
+
             {/* Store Info Card */}
             <Card className="border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50/50 overflow-hidden">
                 <CardContent className="p-6">

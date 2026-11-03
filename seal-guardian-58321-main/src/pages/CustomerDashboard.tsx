@@ -14,6 +14,7 @@ import api from "@/lib/api";
 import { cn, getWarrantyExpiration, formatToIST } from "@/lib/utils";
 import EVProductsForm from "@/components/warranty/EVProductsForm";
 import SeatCoverForm from "@/components/warranty/SeatCoverForm";
+import { NoBillNoWarrantyDialog } from "@/components/warranty/NoBillNoWarrantyDialog";
 import { getWarrantyFormComponent, getEditFormProps } from "@/lib/warrantyFormRegistry";
 import {
     Pagination,
@@ -38,6 +39,8 @@ const CustomerDashboard = () => {
     const [loadingWarranties, setLoadingWarranties] = useState(false);
     const [editingWarranty, setEditingWarranty] = useState<any>(null);
     const [creatingWarranty, setCreatingWarranty] = useState<'seat-cover' | 'ppf' | null>(null);
+    // The form picked, waiting behind the No Bill = No Warranty notice.
+    const [pendingWarranty, setPendingWarranty] = useState<'seat-cover' | 'ppf' | null>(null);
     const [warrantyPagination, setWarrantyPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, limit: 30, hasNextPage: false, hasPrevPage: false });
 
     // Stats State
@@ -498,7 +501,7 @@ const CustomerDashboard = () => {
             {/* New Warranty Actions */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
                 <button
-                    onClick={() => setCreatingWarranty('seat-cover')}
+                    onClick={() => setPendingWarranty('seat-cover')}
                     className="relative group flex items-center gap-4 md:gap-6 p-5 md:p-8 min-h-[160px] md:min-h-[180px] rounded-2xl md:rounded-3xl border border-red-200/50 bg-gradient-to-r from-white via-white to-red-50/30 hover:to-red-50/60 transition-all duration-500 active:scale-[0.98] shadow-lg hover:shadow-2xl hover:shadow-red-500/15 overflow-hidden"
                 >
                     {/* Background Decorations */}
@@ -538,7 +541,7 @@ const CustomerDashboard = () => {
                 </button>
 
                 <button
-                    onClick={() => setCreatingWarranty('ppf')}
+                    onClick={() => setPendingWarranty('ppf')}
                     className="relative group flex items-center gap-4 md:gap-6 p-5 md:p-8 min-h-[160px] md:min-h-[180px] rounded-2xl md:rounded-3xl border border-blue-200/50 bg-gradient-to-r from-white via-white to-blue-50/30 hover:to-blue-50/60 transition-all duration-500 active:scale-[0.98] shadow-lg hover:shadow-2xl hover:shadow-blue-500/15 overflow-hidden"
                 >
                     {/* Background Decorations */}
@@ -737,6 +740,14 @@ const CustomerDashboard = () => {
                 isOpen={!!specSheetData}
                 onClose={() => setSpecSheetData(null)}
                 warranty={specSheetData}
+            />
+
+            <NoBillNoWarrantyDialog
+                open={!!pendingWarranty}
+                onClose={() => {
+                    setCreatingWarranty(pendingWarranty);
+                    setPendingWarranty(null);
+                }}
             />
 
             {/* Create Warranty Dialogs */}

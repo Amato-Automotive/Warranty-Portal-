@@ -5,10 +5,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import SeatCoverForm from "@/components/warranty/SeatCoverForm";
 import EVProductsForm from "@/components/warranty/EVProductsForm";
+import { NoBillNoWarrantyDialog } from "@/components/warranty/NoBillNoWarrantyDialog";
 
 const Warranty = () => {
   const { user, loading } = useAuth();
   const [activeTab, setActiveTab] = useState("seat-cover");
+  const [billNoticeOpen, setBillNoticeOpen] = useState(true);
 
   if (loading) {
     return <div>Loading...</div>;
@@ -23,6 +25,7 @@ const Warranty = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/30">
       <Header />
+      <NoBillNoWarrantyDialog open={user.role === "customer" && billNoticeOpen} onClose={() => setBillNoticeOpen(false)} />
 
       <main className="container mx-auto px-4 py-8">
         <div className="text-center mb-8">
