@@ -68,6 +68,8 @@ router.put('/admin/:id/program/live', ...write, SchemeController.adminSellMoreLi
 router.get('/admin/:id/sell-more', ...read, SchemeController.adminSellMore);
 router.get('/admin/:id/sell-more/stores/:storeId', ...read, SchemeController.adminSellMoreStore);
 router.put('/admin/:id/sell-more/month', ...write, SchemeController.adminSellMoreMonth);
+router.get('/admin/:id/sell-more/targets', ...read, SchemeController.adminSellMoreTargets);
+router.put('/admin/:id/sell-more/targets', ...write, SchemeController.adminSellMoreTargetsSave);
 router.put('/admin/:id/sell-more/reward', ...write, SchemeController.adminSellMoreReward);
 router.get('/admin/:id/buy-more', ...read, SchemeController.adminBuyMore);
 router.put('/admin/:id/buy-more/invoices/:invoiceId', ...write, SchemeController.adminBuyMoreInvoice);

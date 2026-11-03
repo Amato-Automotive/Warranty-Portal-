@@ -15,7 +15,7 @@ import {
     stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth, pointsByProduct, roundPoints, tierOf,
     type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
-import { addSets, earned, eligibility, invoiceProblems, isOffer, isSellMore, noSets, optionOf, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
+import { addSets, earned, eligibility, invoiceProblems, isOffer, isSellMore, noSets, optionOf, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -713,20 +713,21 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
         months: [
             ...e.months.map(m => {
                 const r = rewards?.get(m.key);
+                const d = adminMonth(scheme, rows, months.find(x => x.key === m.key)!, months, monthTerms);
                 return {
                     key: m.key, label: m.label, warranties: m.warranties, points: m.points, future: false,
+                    /* Its target and how far along it is, on the store's own points. */
+                    target: storeScaleTarget(d.target, d.plain.points, d.calc.points, d.tier_obj?.times ?? 1),
+                    pct: d.target ? Math.floor((d.calc.points / d.target) * 100) : null,
                     days: m.days.filter(d => d.warranties > 0).map(({ no_series: _n, ...d }) => d),
                     series: seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on),
-                    /* Requests open once the calculated points reach the admin's target; the store never sees the number. */
-                    can_request: (() => {
-                        const d = adminMonth(scheme, rows, months.find(x => x.key === m.key)!, months, monthTerms);
-                        return d.target !== null && d.calc.points >= d.target;
-                    })(),
+                    /* Requests open once the calculated points reach the target. */
+                    can_request: d.target !== null && d.calc.points >= d.target,
                     reward: r ? { status: r.status, note: r.note, requested_at: r.requested_at, sent_at: r.sent_at } : null,
                 };
             }),
             ...periodsOf(scheme.starts_on, scheme.ends_on, 'month').filter(m => !shown.has(m.key)).map(m => ({
-                key: m.key, label: m.label, warranties: 0, points: 0, future: true, days: [], series: [], can_request: false, reward: null,
+                key: m.key, label: m.label, warranties: 0, points: 0, future: true, target: null, pct: null, days: [], series: [], can_request: false, reward: null,
             })),
         ],
     };
@@ -1150,6 +1151,69 @@ export class SchemeController {
         } catch (error: any) {
             console.error('[Schemes] sell more store:', error);
             res.status(500).json({ error: 'Could not load the store' });
+        }
+    }
+
+    /** For the edit form: every store a target can be set for, Option 1 first, with its targets by month. */
+    static async adminSellMoreTargets(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const [parts]: any = await db.execute('SELECT store_id, terms FROM scheme_participants WHERE scheme_id = ?', [scheme.id]);
+            const optionFor = new Map<string, string | null>(parts.map((p: any) => [String(p.store_id), optionOf(json<any>(p.terms, {}))]));
+            const stores = (await allFranchises()).filter((f: any) => optionFor.get(f.id) !== 'buy_more');
+            const [rows]: any = await db.execute('SELECT store_id, month, target FROM scheme_store_months WHERE scheme_id = ? AND target IS NOT NULL', [scheme.id]);
+            const targets = new Map<string, Record<string, number>>();
+            for (const r of rows) targets.set(String(r.store_id), { ...(targets.get(String(r.store_id)) ?? {}), [r.month]: Number(r.target) });
+            const sofar = sellMoreMonths(scheme);
+            res.json({
+                success: true,
+                months: periodsOf(scheme.starts_on, scheme.ends_on, 'month').map(m => ({ key: m.key, label: m.label })),
+                current: sofar[sofar.length - 1].key,
+                stores: stores
+                    .map((f: any) => ({ store_id: f.id, store_name: f.name, store_code: f.code, city: f.city, state: f.state, option: optionFor.get(f.id) ?? null, targets: targets.get(f.id) ?? {} }))
+                    .sort((a: any, b: any) => Number(Boolean(b.option)) - Number(Boolean(a.option)) || a.store_name.localeCompare(b.store_name)),
+            });
+        } catch (error: any) {
+            console.error('[Schemes] targets:', error);
+            res.status(500).json({ error: 'Could not load the stores' });
+        }
+    }
+
+    /** Save targets typed in the edit form: { month: { storeId: number or blank } }. A blank clears the target. */
+    static async adminSellMoreTargetsSave(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const months = new Set(periodsOf(scheme.starts_on, scheme.ends_on, 'month').map(m => m.key));
+            const [parts]: any = await db.execute('SELECT store_id, terms FROM scheme_participants WHERE scheme_id = ?', [scheme.id]);
+            const optionFor = new Map<string, string | null>(parts.map((p: any) => [String(p.store_id), optionOf(json<any>(p.terms, {}))]));
+            const allowed = new Set((await allFranchises()).map((f: any) => f.id as string).filter((id: string) => optionFor.get(id) !== 'buy_more'));
+
+            const changes: { store: string; month: string; target: number | null }[] = [];
+            for (const [month, forMonth] of Object.entries((req.body?.targets ?? {}) as Record<string, Record<string, unknown>>)) {
+                if (!months.has(month)) return res.status(400).json({ error: 'That month is not in the program' });
+                for (const [store, raw] of Object.entries(forMonth ?? {})) {
+                    if (!allowed.has(store)) return res.status(400).json({ error: "A target can't be set for one of these stores" });
+                    const blank = raw === null || String(raw).trim() === '';
+                    const n = Number(raw);
+                    if (!blank && (!Number.isFinite(n) || n <= 0 || n > 1000000)) return res.status(400).json({ error: 'A target should be a number above 0' });
+                    changes.push({ store, month, target: blank ? null : Math.round(n * 100) / 100 });
+                }
+            }
+            const by = (req as any).user?.id ?? null;
+            for (const c of changes) {
+                await db.execute(
+                    `INSERT INTO scheme_store_months (scheme_id, store_id, month, target, updated_by) VALUES (?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE target = VALUES(target), updated_by = VALUES(updated_by)`,
+                    [scheme.id, c.store, c.month, c.target, by]
+                );
+            }
+            if (changes.length) log(req, 'SCHEME_TARGETS_SET', scheme, { changes });
+            res.json({ success: true, saved: changes.length });
+        } catch (error: any) {
+            console.error('[Schemes] targets save:', error);
+            res.status(500).json({ error: 'Could not save the targets' });
         }
     }
 

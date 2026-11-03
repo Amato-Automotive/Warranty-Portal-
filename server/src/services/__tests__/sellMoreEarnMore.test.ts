@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { earned, eligibility, invoiceProblems, isSellMore, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
+import { earned, eligibility, invoiceProblems, isSellMore, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, storeScaleTarget, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
 import { periodsOf } from '../schemeTargets.js';
 
 const rule = {
@@ -72,6 +72,13 @@ test('a month is asked for once, after its target is reached, with points in it'
     assert.ok(redeemProblem('sell_more', { points: 0, can_request: true }, false));
     assert.ok(redeemProblem('sell_more', open, true));
     assert.equal(redeemProblem('sell_more', open, false), null);
+});
+
+test('a target is shown on the store\'s own scale', () => {
+    assert.equal(storeScaleTarget(null, 10, 10, 1), null);
+    assert.equal(storeScaleTarget(40, 31, 31, 1), 40);
+    assert.equal(storeScaleTarget(80, 42.75, 85.5, 2), 40);
+    assert.equal(storeScaleTarget(80, 0, 0, 2), 40);
 });
 
 test('a category carries on from the nearest earlier month', () => {

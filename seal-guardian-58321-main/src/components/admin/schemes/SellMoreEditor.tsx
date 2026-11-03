@@ -8,13 +8,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Loader2, Upload, X } from "lucide-react";
 import { formatDay, type PointsRule, type Scheme } from "@/lib/schemes";
 import { PointsRuleEditor, useWarrantyProducts } from "./PointsRuleEditor";
+import { StoreTargetsEditor, type TargetEdits } from "./StoreTargetsEditor";
 
 /**
  * The edit form for the Sell More Earn More program. The way it runs is
  * hardcoded, so only its words and its points are edited here: what each series
  * earns, which products are in it, and what each store type earns series by
- * series. Stores see only the first type's points. A store is put in a type on
- * the scheme's page.
+ * series, and each store's Option 1 target. Stores see only the first type's
+ * points. A store is put in a type on the scheme's page.
  */
 /** One banner: pick an image and it uploads, with a preview and a way to remove it. */
 function BannerBox({ label, url, onChange, onBusy }: { label: string; url: string; onChange: (u: string) => void; onBusy: (on: boolean) => void }) {
@@ -69,6 +70,7 @@ export function SellMoreEditor({ open, scheme, onClose, onSaved }: {
     const busy = (on: boolean) => setUploading(n => n + (on ? 1 : -1));
     const [rule, setRule] = useState<PointsRule>({ series: [], tiers: [] });
     const [saving, setSaving] = useState(false);
+    const [targets, setTargets] = useState<TargetEdits>({});
     const products = useWarrantyProducts();
 
     useEffect(() => {
@@ -76,6 +78,7 @@ export function SellMoreEditor({ open, scheme, onClose, onSaved }: {
         setSummary(scheme.summary ?? "");
         setTerms(scheme.terms ?? "");
         setBanner(scheme.banner_url ?? "");
+        setTargets({});
         setOption1(scheme.settings.option_banners?.option1 ?? "");
         setOption2(scheme.settings.option_banners?.option2 ?? "");
         setRule(scheme.settings.points);
@@ -98,8 +101,11 @@ export function SellMoreEditor({ open, scheme, onClose, onSaved }: {
     const save = async () => {
         const bad = rule.tiers.slice(1).flatMap(t => rule.series.filter(s => !(rateOf(t, s) > 0)).map(s => `${s.name || "A series"} for ${t.name}`));
         if (bad.length) return toast({ title: "Give every series its points", description: bad[0], variant: "destructive" });
+        const badTarget = Object.values(targets).flatMap(m => Object.values(m)).some(v => v.trim() !== "" && !(Number(v) > 0));
+        if (badTarget) return toast({ title: "A target should be a number above 0", variant: "destructive" });
         setSaving(true);
         try {
+            if (Object.values(targets).some(m => Object.keys(m).length)) await api.put(`/schemes/admin/${scheme.id}/sell-more/targets`, { targets });
             const r = await api.put(`/schemes/admin/${scheme.id}`, { ...scheme, summary, terms, banner_url: banner, settings: { ...scheme.settings, points: rule, option_banners: { option1, option2 } } });
             toast({ title: "Saved" });
             onSaved(r.data.scheme);
@@ -170,6 +176,8 @@ export function SellMoreEditor({ open, scheme, onClose, onSaved }: {
                         </table>
                     </div>
                 </section>
+
+                <StoreTargetsEditor schemeId={scheme.id} open={open} edits={targets} onEdits={setTargets} />
 
                 <DialogFooter className="gap-2">
                     <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>

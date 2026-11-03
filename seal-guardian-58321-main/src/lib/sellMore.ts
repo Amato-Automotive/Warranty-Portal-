@@ -6,7 +6,7 @@ export const SELL_MORE_SCHEME_ID = "22dc9530-8c7e-4438-9230-4f7aa31d3e3d";
 export interface MonthReward { status: "requested" | "sent"; note: string | null; requested_at: string; sent_at: string | null }
 export interface SellMoreDay { date: string; warranties: number; points: number; no_series?: number; store_points?: number }
 export interface SeriesEarned { name: string; warranties: number; points: number }
-export interface SellMoreMonth { key: string; label: string; warranties: number; points: number; future: boolean; can_request: boolean; series: SeriesEarned[]; days: SellMoreDay[]; reward: MonthReward | null }
+export interface SellMoreMonth { key: string; label: string; warranties: number; points: number; future: boolean; can_request: boolean; target: number | null; pct: number | null; series: SeriesEarned[]; days: SellMoreDay[]; reward: MonthReward | null }
 
 /** What a store sees: its choice and its plain points. Never its store type or calculated score. */
 export interface StoreSellMore {

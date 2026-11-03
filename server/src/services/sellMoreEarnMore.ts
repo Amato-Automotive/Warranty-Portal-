@@ -115,6 +115,17 @@ export function seriesInMonth(rows: WarrantyRow[], rule: PointsRule, month: stri
     });
 }
 
+/**
+ * A target as the store sees it. The admin's target is in calculated points but
+ * the store sees plain points, so it is shown on the store's own scale: the same
+ * share of the way there, whatever the store's category. With no warranties yet
+ * the category's multiplier gives the scale.
+ */
+export function storeScaleTarget(target: number | null, plain: number, calculated: number, times: number): number | null {
+    if (target === null) return null;
+    return roundPoints(target * (calculated > 0 ? plain / calculated : 1 / (times || 1)));
+}
+
 /** Why a store can't ask for one month's reward, or null when it can. It opens once the store reaches that month's target. */
 export function redeemProblem(option: SellMoreOption | null, month: { points: number; can_request?: boolean } | null, alreadyAsked: boolean): string | null {
     if (option !== 'sell_more') return 'Choose this option first';

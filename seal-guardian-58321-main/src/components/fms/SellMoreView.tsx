@@ -31,9 +31,10 @@ const terms = (tr: T, option: "sell_more" | "buy_more") => option === "buy_more"
 ] : [
     tr("Program period: 1 Nov 2026 to 31 Mar 2027.", "प्रोग्राम अवधि: 1 नवंबर 2026 से 31 मार्च 2027।"),
     tr("A franchise can choose only one option: Sell More or Buy More. Once chosen, it can't be changed.", "फ्रैंचाइज़ी केवल एक विकल्प चुन सकती है: Sell More या Buy More। एक बार चुनने के बाद इसे बदला नहीं जा सकता।"),
-    tr("Option 1 earns points on every customer warranty registration. There are no sales targets.", "विकल्प 1 में हर ग्राहक वारंटी रजिस्ट्रेशन पर पॉइंट मिलते हैं। कोई सेल्स टारगेट नहीं है।"),
+    tr("Option 1 earns points on every customer warranty registration.", "विकल्प 1 में हर ग्राहक वारंटी रजिस्ट्रेशन पर पॉइंट मिलते हैं।"),
+    tr("Head office sets your target each month. You can see your progress on this page.", "हेड ऑफिस हर महीने आपका टारगेट तय करता है। आप अपनी प्रगति इसी पेज पर देख सकते हैं।"),
     tr("Your points are counted every month. You can see them day by day, month by month and in total.", "आपके पॉइंट हर महीने गिने जाते हैं। आप इन्हें दिन, महीने और कुल के हिसाब से देख सकते हैं।"),
-    tr("Option 1 points can be redeemed for free 2-row Velora seat covers. The request button opens on this page once you're eligible, once for each month.", "विकल्प 1 के पॉइंट मुफ़्त 2-रो Velora सीट कवर के लिए रिडीम किए जा सकते हैं। पात्र होने पर इसी पेज पर रिक्वेस्ट बटन खुलेगा, हर महीने एक बार।"),
+    tr("Option 1 points can be redeemed for free 2-row Velora seat covers. The request button opens on this page once you reach your target, once for each month.", "विकल्प 1 के पॉइंट मुफ़्त 2-रो Velora सीट कवर के लिए रिडीम किए जा सकते हैं। टारगेट पूरा होने पर इसी पेज पर रिक्वेस्ट बटन खुलेगा, हर महीने एक बार।"),
     tr("Head office works out your reward and sends it to you.", "हेड ऑफिस आपका रिवॉर्ड तय करके आपको भेजेगा।"),
     tr("Points don't carry forward to the next month (Option 1 only).", "पॉइंट अगले महीने में नहीं जुड़ेंगे (केवल विकल्प 1)।"),
     tr("Rewards and free sets as per eligibility.", "रिवॉर्ड और मुफ़्त सेट पात्रता के अनुसार।"),
@@ -105,7 +106,6 @@ function ChooseOption({ scheme, reload }: { scheme: SellMoreScheme; reload: () =
                     </div>
                     <ul className="space-y-2 text-sm text-slate-700">
                         <li className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />{tr("Points on every customer warranty registration", "हर ग्राहक वारंटी रजिस्ट्रेशन पर पॉइंट")}</li>
-                        <li className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />{tr("No sales targets", "कोई सेल्स टारगेट नहीं")}</li>
                         <li className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />{tr("No bulk purchase requirements", "बल्क खरीद की ज़रूरत नहीं")}</li>
                         <li className="flex gap-2"><Gift className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />{tr("Redeem points for free 2-row Velora seat covers", "पॉइंट से मुफ़्त 2-रो Velora सीट कवर")}</li>
                     </ul>
@@ -209,6 +209,20 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                             {note && ` · ${note.daysLeft} ${note.daysLeft === 1 ? t("day left") : t("days left")}`}
                             {note && !note.isLastMonth && ` · ${tr("points start again next month", "अगले महीने पॉइंट फिर से शुरू होंगे")}`}
                         </p>
+                        {month.target !== null && month.pct !== null && (
+                            <div className="mt-4 w-full max-w-md space-y-1.5">
+                                <p className="flex justify-between gap-3 text-sm font-semibold">
+                                    <span>{tr("Target", "टारगेट")}: {points(month.target)}</span>
+                                    <span className="tabular-nums">{month.pct}%</span>
+                                </p>
+                                <div className="h-2.5 overflow-hidden rounded-full bg-slate-700">
+                                    <div className={cn("h-full rounded-full transition-all", month.pct >= 100 ? "bg-emerald-400" : "bg-orange-400")} style={{ width: `${Math.min(100, month.pct)}%` }} />
+                                </div>
+                                <p className={cn("text-sm font-semibold", month.pct >= 100 ? "text-emerald-300" : "text-orange-200")}>
+                                    {month.pct >= 100 ? tr("Target reached", "टारगेट पूरा") : tr(`${points(Math.max(0, month.target - month.points))} more points to reach your target`, `टारगेट के लिए ${points(Math.max(0, month.target - month.points))} पॉइंट और`)}
+                                </p>
+                            </div>
+                        )}
                     </div>
                     <div className="flex flex-col gap-2 sm:items-end">
                         {month.reward?.status === "sent" ? (
@@ -237,6 +251,7 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                             className={cn("w-36 shrink-0 rounded-2xl p-4 text-left", m.future ? "border border-dashed border-slate-200 opacity-60" : m.key === month?.key ? "border-2 border-orange-500 bg-orange-50" : "border border-slate-200 hover:border-slate-400")}>
                             <span className="block text-xs font-bold text-slate-500">{m.label}</span>
                             <b className="mt-1 block text-2xl tabular-nums text-slate-900">{m.future ? "—" : points(m.points)}</b>
+                            {m.target !== null && <span className="block text-xs font-semibold text-slate-600">{tr("Target", "टारगेट")} {points(m.target)}</span>}
                             <span className={cn("block text-xs", m.reward?.status === "sent" ? "font-semibold text-emerald-700" : m.reward ? "font-semibold text-amber-700" : "text-slate-500")}>
                                 {m.future ? tr("Not started", "शुरू नहीं हुआ") : m.reward?.status === "sent" ? tr("Reward sent", "रिवॉर्ड भेजा गया") : m.reward ? tr("Requested", "रिक्वेस्ट की गई") : `${m.warranties.toLocaleString("en-IN")} ${tr("warranties", "वारंटी")}`}
                             </span>
