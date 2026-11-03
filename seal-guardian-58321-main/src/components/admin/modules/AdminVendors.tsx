@@ -83,6 +83,8 @@ export const AdminVendors = () => {
     const [cityFilter, setCityFilter] = useState("all");
     // 'all', 'none' (no ASM yet) or an ASM id.
     const [asmFilter, setAsmFilter] = useState("all");
+    // 'all', or the store's own brand: AF, AC or AFAC. Exact, so the three add up to All.
+    const [brandFilter, setBrandFilter] = useState("all");
 
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
@@ -134,7 +136,7 @@ export const AdminVendors = () => {
     // Reset pagination
     useEffect(() => {
         setCurrentPage(1);
-    }, [filter, search, leaderboardMode, stateFilter, cityFilter, asmFilter]);
+    }, [filter, search, leaderboardMode, stateFilter, cityFilter, asmFilter, brandFilter]);
 
     const fetchVendors = async (silent = false) => {
         if (!silent) setLoading(true);
@@ -390,7 +392,28 @@ export const AdminVendors = () => {
         new Map(vendors.filter((v) => v.asm_id).map((v) => [v.asm_id, v.asm_name || 'Unknown ASM'] as [string, string])).entries()
     ).sort((a, b) => a[1].localeCompare(b[1]));
 
-    const filteredVendors = vendors
+    const brandCount = (b: string) => vendors.filter((v) => v.franchise_allowed_brands === b).length;
+
+    // The status tabs count within the chosen brand, so each count matches the list it opens.
+    const brandVendors = brandFilter === 'all'
+        ? vendors
+        : vendors.filter((v) => v.franchise_allowed_brands === brandFilter);
+
+    const brandSelect = (triggerHeight: string) => (
+        <Select value={brandFilter} onValueChange={setBrandFilter}>
+            <SelectTrigger aria-label="Brand" className={`${triggerHeight} sm:w-40 text-xs font-bold ${brandFilter !== 'all' ? 'text-orange-600 border-orange-200 bg-orange-50' : 'bg-white border-orange-100'}`}>
+                <SelectValue placeholder="All Brands" />
+            </SelectTrigger>
+            <SelectContent className="rounded-2xl border-orange-100">
+                <SelectItem value="all" className="text-xs font-bold">All Brands ({vendors.length})</SelectItem>
+                <SelectItem value="AF" className="text-xs font-bold">AF ({brandCount('AF')})</SelectItem>
+                <SelectItem value="AC" className="text-xs font-bold">AC ({brandCount('AC')})</SelectItem>
+                <SelectItem value="AFAC" className="text-xs font-bold">AF+AC ({brandCount('AFAC')})</SelectItem>
+            </SelectContent>
+        </Select>
+    );
+
+    const filteredVendors = brandVendors
         .filter((vendor) => {
             if (asmFilter === 'none') return !vendor.asm_id;
             if (asmFilter !== 'all') return vendor.asm_id === asmFilter;
@@ -479,6 +502,8 @@ export const AdminVendors = () => {
                                 onChange={(e) => setSearch(e.target.value)}
                             />
                         </div>
+
+                        {brandSelect('h-10')}
 
                         <Popover>
                             <PopoverTrigger asChild>
@@ -651,6 +676,7 @@ export const AdminVendors = () => {
 
 
                 <div className="flex flex-col sm:flex-row w-full md:w-auto gap-2 md:shrink-0">
+                    {brandSelect('h-11 sm:h-10')}
                     <Select value={asmFilter} onValueChange={setAsmFilter}>
                         <SelectTrigger className={`h-11 sm:h-10 sm:w-44 text-xs font-bold ${asmFilter !== 'all' ? 'text-orange-600 border-orange-200 bg-orange-50' : 'bg-white border-orange-100'}`}>
                             <SelectValue placeholder="All ASMs" />
@@ -753,31 +779,31 @@ export const AdminVendors = () => {
                         <TabsTrigger value="all" className="gap-2">
                             All
                             <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.length}
+                                {brandVendors.length}
                             </Badge>
                         </TabsTrigger>
                         <TabsTrigger value="approved" className="gap-2 data-[state=active]:bg-green-50 data-[state=active]:text-green-700">
                             Approved
                             <Badge variant="secondary" className="bg-green-100/50 text-green-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => v.is_verified && v.is_active !== false).length}
+                                {brandVendors.filter(v => v.is_verified && v.is_active !== false).length}
                             </Badge>
                         </TabsTrigger>
                         <TabsTrigger value="pending" className="gap-2 data-[state=active]:bg-amber-50 data-[state=active]:text-amber-700">
                             Pending
                             <Badge variant="secondary" className="bg-amber-100/50 text-amber-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => !v.is_verified && !v.verified_at).length}
+                                {brandVendors.filter(v => !v.is_verified && !v.verified_at).length}
                             </Badge>
                         </TabsTrigger>
                         <TabsTrigger value="inactive" className="gap-2 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-700">
                             Inactive
                             <Badge variant="secondary" className="bg-slate-200/70 text-slate-600 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => v.is_verified && v.is_active === false).length}
+                                {brandVendors.filter(v => v.is_verified && v.is_active === false).length}
                             </Badge>
                         </TabsTrigger>
                         <TabsTrigger value="disapproved" className="gap-2 data-[state=active]:bg-red-50 data-[state=active]:text-red-700">
                             Rejected
                             <Badge variant="secondary" className="bg-red-100/50 text-red-700 border-none px-1.5 py-0 h-4 text-[10px] font-bold">
-                                {vendors.filter(v => !v.is_verified && v.verified_at).length}
+                                {brandVendors.filter(v => !v.is_verified && v.verified_at).length}
                             </Badge>
                         </TabsTrigger>
                     </TabsList>
