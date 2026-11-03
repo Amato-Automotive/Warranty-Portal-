@@ -58,7 +58,7 @@ const NoticeBody = ({ onClose }: { onClose: () => void }) => {
 
             <div className="space-y-5 bg-white px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
                 <DialogTitle className="nb-rise text-center text-[clamp(1.35rem,6.4vw,1.75rem)] font-black leading-tight tracking-tight text-slate-900">
-                    No Bill, No Warranty
+                    No Bill = No Warranty
                 </DialogTitle>
 
                 <div className="nb-rise-2">
