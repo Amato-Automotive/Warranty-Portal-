@@ -142,6 +142,30 @@ export function sheetStatus(status: string): ClaimStatus {
     return 'production';
 }
 
+/** How the sheet spells a material, so a typing slip still reads as the name it means. */
+const materialSpelling = (v: string) => clean(v).toUpperCase()
+    .replace(/\bLUC[A-Z]*[ZS][A-Z]*\b/g, 'LUCENZO')
+    .replace(/\bSIG\b|\bSIG[A-Z]*TURE\b/g, 'SIGNATURE')
+    .replace(/\bVEL+ORA\b/g, 'VELORA')
+    .replace(/\bNAP+A\b/g, 'NAPA')
+    .replace(/\bMFD\b/g, 'MDF');
+
+/**
+ * The material a row's remarks name, from the admin's list: the longest name
+ * found, so LUCENZO PRO + is not read as Lucenzo. "OLD LUCENZO" is Lucenzo. No
+ * name found is null; perforation and the like are the work, not a material.
+ */
+export function materialFromRemarks(remarks: unknown, list: string[]): string | null {
+    const text = materialSpelling(String(remarks ?? ''));
+    if (!text) return null;
+    const names = list.map(name => ({ name, spelt: materialSpelling(name) })).filter(x => x.spelt).sort((a, b) => b.spelt.length - a.spelt.length);
+    for (const { name, spelt } of names) {
+        const words = spelt.split(' ').map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+        if (new RegExp(`(?<![A-Z0-9])${words}(?![A-Z0-9])`).test(text)) return name;
+    }
+    return null;
+}
+
 /** One sheet row as a claim, or why it is left out. */
 export function readSheetRow(r: SheetRow, row: number): SheetClaim | { skip: string } {
     const altNo = get(r, 'ALT NO');

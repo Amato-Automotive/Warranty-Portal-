@@ -1,6 +1,7 @@
 import db from '../config/database.js';
 import { readSheet, readServiceAccount } from './googleSheets.js';
-import { readSheetRow, rowsFromGrid, type SheetClaim } from './claimSheet.js';
+import { materialFromRemarks, readSheetRow, rowsFromGrid, type SheetClaim } from './claimSheet.js';
+import { parseMaterials } from './claimFlow.js';
 
 /**
  * Keeps the plant's production sheets and the portal's claims in step.
@@ -87,14 +88,16 @@ export async function syncSource(source: SheetSource, apply: boolean): Promise<S
                     JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.sheet_key')) AS k
                FROM warranty_claims WHERE raised_via = 'sheet'`);
         const existing = new Map<string, any>(had.map((x: any) => [x.k, x]));
+        const [listed]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claim_materials'");
+        const materials = parseMaterials(listed[0]?.setting_value);
 
         const conn = apply ? await (db as any).getConnection() : null;
         try {
             if (conn) await conn.beginTransaction();
             for (const c of claims) {
                 const old = existing.get(c.key);
-                // The sheet has no material, so what the plant chose here stays.
-                const material = old ? parse(old.vehicle)?.material : null;
+                // What is on the claim stays, as the plant may have chosen it; otherwise the remarks say.
+                const material = (old ? parse(old.vehicle)?.material : null) || materialFromRemarks(c.decision?.item, materials);
                 if (material) (c as any).vehicle = { ...c.vehicle, material };
                 const fields = [c.kind, c.store_id, c.problem, c.description, json(c.vehicle), json(c.snapshot), c.status, json(c.decision), json(c.plan), json(c.dispatch), json(c.hold)];
                 if (old) {

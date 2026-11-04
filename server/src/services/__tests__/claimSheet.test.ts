@@ -1,11 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readSheetRow, sheetProblem, sheetStatus, sheetChargeable } from '../claimSheet.js';
+import { materialFromRemarks, readSheetRow, sheetProblem, sheetStatus, sheetChargeable } from '../claimSheet.js';
 
 const row = (p: Record<string, string | null> = {}) => ({
     'DATE': '2026-06-10', 'MODE': 'MAIL', 'STATUS': 'WIP', ' DEPOT NAME': 'JANAK DEPOT', 'PARTY NAME ': 'FOCUS COCHIN', 'EDD': '2026-06-25',
     'DESIGN ': 'Q2', 'MINOR': 'BLACK', 'MAJOR': 'RED', 'REMARKS': 'FRONT LEFT SIDE', 'VEHICLE': 'GLANZA SPL 22 SAB', 'REASON': 'PHYSICAL DAMAGE',
     'ALT NO': 'Y259', 'FOC': null, 'DIS.DATE': null, 'DOCKET NO.': null, 'HOLD REASON ': null, ...p,
+});
+
+test('the material comes from the remarks, whatever its spelling', () => {
+    const list = ['Signature', 'Lucenzo', 'Lucenzo Pro', 'Lucenzo Pro +', 'Emporio', 'Doble', 'Velora'];
+    const read = (t: string) => materialFromRemarks(t, list);
+    assert.equal(read('LUCENZO, REAR HEAD'), 'Lucenzo');
+    assert.equal(read('OLD LUCENZO,DRIVER SEAT'), 'Lucenzo');
+    assert.equal(read('LUCENZO PRO,DRIVER BACK'), 'Lucenzo Pro');
+    assert.equal(read('LUCENZO PRO +,REAR BACK'), 'Lucenzo Pro +');
+    assert.equal(read('LUCENZO PRO+ REAR BACK'), 'Lucenzo Pro +');
+    for (const slip of ['LUCEZNO', 'LUCEZNNO', 'LUCEZNZO']) assert.equal(read(`${slip} A4 PERFO`), 'Lucenzo');
+    assert.equal(read('SIG,1 PIECE FRONT ARMREST'), 'Signature');
+    assert.equal(read('SIGANTURE DRIVER SEAT'), 'Signature');
+    assert.equal(read('VELLORA, DRIVER BACK'), 'Velora');
+    assert.equal(read('EMPORIO DRIVER SEAT AND BACK'), 'Emporio');
+    // Not materials, or not on the list.
+    for (const none of ['A1 PERFO DRIVER SEAT', 'LEGACY', 'CRYSTA TYPE, MIDDLE ROW', 'DRIVER BACK', 'NAPA DRIVER SEAT', 'DESIGNATURE', '']) assert.equal(read(none), null);
+    assert.equal(materialFromRemarks('NAPPA, 1 PIECE', ['Napa']), 'Napa');
+    assert.equal(materialFromRemarks('MFD, DRIVER SIDE SEAT', ['MDF']), 'MDF');
+    assert.equal(materialFromRemarks('MDF/ DRIVER SIDE SEAT', ['MDF']), 'MDF');
+    assert.equal(materialFromRemarks('LUCENZO', []), null);
 });
 
 test('the sheet\'s reasons, however they are spelt, to the issue they mean', () => {

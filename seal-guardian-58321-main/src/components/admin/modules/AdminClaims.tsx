@@ -274,12 +274,12 @@ const QuickFill = ({ label, title, fields, onSave }: {
 };
 const Empty = () => <span className="text-gray-400">—</span>;
 
-/** The material as a field to change: starts from what the claim has, else what its design says. */
+/** The material as a field to change: starts from what the claim has, else what its decision or design says. */
 const materialField = (c: Claim, list: string[]) => {
     const now = c.vehicle?.material ?? '';
     return {
         key: 'material', label: 'Material', need: true,
-        value: now || guessMaterial(c.snapshot?.product_name, list),
+        value: now || guessMaterial(c.decision?.item, list) || guessMaterial(c.snapshot?.product_name, list),
         options: [['', 'Choose the material'], ...(now && !list.includes(now) ? [now] : []).concat(list).map(m => [m, m])] as [string, string][],
     };
 };
