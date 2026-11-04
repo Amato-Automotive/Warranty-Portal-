@@ -69,6 +69,16 @@ test('dates as a Google sheet shows them, day first', async () => {
     assert.equal(sheetDate('46323'), '2026-10-28');
     assert.equal(sheetDate('31/02/2026'), null);
     assert.equal(sheetDate('DISPATCHED'), null);
+    // The live sheet shows no year.
+    const nov = new Date('2026-11-04T00:00:00Z');
+    assert.equal(sheetDate('11-Mar', nov), '2026-03-11');
+    assert.equal(sheetDate('10-June', nov), '2026-06-10');
+    assert.equal(sheetDate('4-Nov', nov), '2026-11-04');
+    assert.equal(sheetDate('2-Dec', nov), '2026-12-02');
+    assert.equal(sheetDate('20-Dec', nov), '2025-12-20');
+    assert.equal(sheetDate('15-Oct', new Date('2027-01-10T00:00:00Z')), '2026-10-15');
+    assert.equal(sheetDate('31-Feb', nov), null);
+    assert.equal(sheetDate('12-Foo', nov), null);
     assert.equal(sheetDate(''), null);
 });
 

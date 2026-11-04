@@ -42,7 +42,7 @@ const ymd = (y: number, m: number, d: number) => {
  * with the month in words ("28-Oct-2026", "28 Oct 26"), or a spreadsheet's day
  * number (46323). Anything else is no date.
  */
-export function sheetDate(v: unknown): string | null {
+export function sheetDate(v: unknown, now: Date = new Date()): string | null {
     const s = clean(v);
     if (!s) return null;
     let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -51,6 +51,16 @@ export function sheetDate(v: unknown): string | null {
     if (m) return ymd(+m[3], +m[2], +m[1]);
     m = s.match(/^(\d{1,2})[\s\-/.]*([A-Za-z]{3})[A-Za-z]*[\s\-/.,]*(\d{2}|\d{4})$/);
     if (m && MONTHS.includes(m[2].toUpperCase())) return ymd(+m[3], MONTHS.indexOf(m[2].toUpperCase()) + 1, +m[1]);
+    // The live sheet shows "11-Mar" or "10-June" with no year: this year, unless
+    // that is more than a month ahead, when it was last year's.
+    m = s.match(/^(\d{1,2})[\s\-/.]*([A-Za-z]{3})[A-Za-z]*$/);
+    if (m && MONTHS.includes(m[2].toUpperCase())) {
+        const month = MONTHS.indexOf(m[2].toUpperCase()) + 1;
+        const year = now.getUTCFullYear();
+        const soon = now.getTime() + 31 * 86_400_000;
+        const later = Date.UTC(year, month - 1, +m[1]) > soon;
+        return ymd(later ? year - 1 : year, month, +m[1]);
+    }
     if (/^\d{5}(\.\d+)?$/.test(s)) {
         const t = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(s)) * 86_400_000);
         return ymd(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate());
