@@ -33,8 +33,10 @@ export interface Claim {
     store_phone?: string | null;
     raised_by_role: 'customer' | 'vendor' | 'admin';
     raised_via: string;
-    /** The claim's brand: its store's, else its product's (admin list and detail). */
-    brand?: 'AF' | 'AC' | 'AFAC' | null;
+    /** The brands of its design, its linked store or distributor, and its depot (admin list and detail). */
+    product_brand?: 'AF' | 'AC' | 'AFAC' | null;
+    store_brand?: 'AF' | 'AC' | 'AFAC' | null;
+    depot_brand?: 'AF' | 'AC' | 'AFAC' | null;
     problem: string;
     problem_text: string;
     description: string | null;

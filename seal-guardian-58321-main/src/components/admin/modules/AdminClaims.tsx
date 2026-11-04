@@ -299,9 +299,9 @@ const canSetMaterial = (c: Claim, list: string[]) => c.snapshot?.product_type ==
  * opens the claim on the right with the step each person's rights allow.
  * Anyone with only Warranty Claims read (and the depots) sees it all, read-only.
  */
-/** A claim's brand (its store's, else its product's), as a small tag: AF, AC or AFAC. */
-const BrandTag = ({ c }: { c: { brand?: string } }) => c.brand ? (
-    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", c.brand === 'AC' ? "bg-violet-100 text-violet-800" : c.brand === 'AFAC' ? "bg-amber-100 text-amber-800" : "bg-sky-100 text-sky-800")}>{c.brand}</span>
+/** A design's or a store's brand beside its name, as a small tag: AF, AC or AFAC. */
+const BrandTag = ({ b }: { b?: string | null }) => b ? (
+    <span className={cn("ml-1.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold", b === 'AC' ? "bg-violet-100 text-violet-800" : b === 'AFAC' ? "bg-amber-100 text-amber-800" : "bg-sky-100 text-sky-800")}>{b}</span>
 ) : null;
 
 /** Where a claim came from: the production sheet, or raised in the portal. */
@@ -583,12 +583,12 @@ export const AdminClaims = () => {
                                             <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700"><Eye className="h-4 w-4" /></span>
                                             <span className="min-w-0 flex-1">
                                                 <span className="flex items-start justify-between gap-2">
-                                                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-500">{c.claim_no} · {day(c.created_at)} <SourceTag c={c} /><BrandTag c={c} /></span>
+                                                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-500">{c.claim_no} · {day(c.created_at)} <SourceTag c={c} /></span>
                                                     <ClaimStatusPill status={c.status} who="admin" />
                                                 </span>
-                                                <span className="mt-1 block font-bold text-gray-900">{c.snapshot?.customer_name} · {c.snapshot?.product_name}</span>
+                                                <span className="mt-1 block font-bold text-gray-900">{c.snapshot?.customer_name} · {c.snapshot?.product_name}<BrandTag b={c.product_brand} /></span>
                                                 <span className="block text-sm text-gray-600">{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</span>
-                                                <span className="block text-xs text-gray-500">{[c.snapshot?.depot, storeOf(c), [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number)].filter(Boolean).join(' · ')}</span>
+                                                <span className="block text-xs text-gray-500">{[c.snapshot?.depot, storeOf(c), [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number)].filter(Boolean).join(' · ')}<BrandTag b={c.store_brand} /></span>
                                                 {c.plan?.alteration_no && <span className="mt-1 block text-xs font-semibold text-indigo-700">Alt. no. {c.plan.alteration_no}</span>}
                                                 {c.dispatch && <span className="mt-1 block text-xs font-semibold text-sky-700">Docket {c.dispatch.docket}</span>}
                                                 {c.change_request && <span className="mt-1 block text-xs font-semibold text-amber-700">Change asked</span>}
@@ -619,16 +619,15 @@ export const AdminClaims = () => {
                                                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                                                         <button onClick={e => { e.stopPropagation(); setOpen(c.id); }} className="font-bold text-gray-900 underline-offset-2 hover:text-orange-700 hover:underline">{c.claim_no}</button>
                                                         <SourceTag c={c} />
-                                                        <BrandTag c={c} />
                                                     </span>
                                                 </td>
                                                 <td className={cell}>{day(c.created_at)}</td>
-                                                <td className={cell}>{c.snapshot?.depot || <Empty />}</td>
-                                                <td className={cell}>{storeOf(c) ?? <Empty />}</td>
+                                                <td className={cell}>{c.snapshot?.depot ? <>{c.snapshot.depot}<BrandTag b={c.depot_brand} /></> : <Empty />}</td>
+                                                <td className={cell}>{storeOf(c) ? <>{storeOf(c)}<BrandTag b={c.store_brand} /></> : <Empty />}</td>
                                                 <td className={cell}>{c.snapshot?.customer_name || <Empty />}</td>
                                                 <td className={cell}>{c.snapshot?.customer_phone || <Empty />}</td>
                                                 <td className={cell}>{c.snapshot?.customer_email || <Empty />}</td>
-                                                <td className={cell}>{c.snapshot?.product_name || <Empty />}</td>
+                                                <td className={cell}>{c.snapshot?.product_name ? <>{c.snapshot.product_name}<BrandTag b={c.product_brand} /></> : <Empty />}</td>
                                                 <td className={cell}>{canSetMaterial(c, materials)
                                                     ? detailCell(c, c.vehicle?.material || <Empty />, 'Material', [materialField(c, materials)], true)
                                                     : c.vehicle?.material || <Empty />}</td>
@@ -749,7 +748,6 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 <div className="flex flex-wrap items-center gap-2">
                                     <span className="rounded-md bg-gray-900 px-2 py-0.5 text-xs font-bold tracking-wide text-white">{c.claim_no}</span>
                                     <SourceTag c={c} />
-                                    <BrandTag c={c} />
                                     <span className="text-xs font-bold uppercase tracking-wider text-gray-500">{c.kind === 'alteration' ? 'Alteration' : 'Warranty claim'}</span>
                                     <ClaimStatusPill status={c.status} who="admin" />
                                 </div>
@@ -767,16 +765,15 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                         <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-[repeat(auto-fit,minmax(170px,1fr))]">
                             {([
                                 // Who: depot, store, brand. A sheet row has no customer or warranty, so those are left out.
-                                ...(c.snapshot?.depot ? [['Depot', c.snapshot.depot] as [string, string]] : []),
-                                ['Store', [storeOf(c), c.raised_via === 'sheet' ? null : c.store_city].filter(Boolean).join(', ')],
-                                ...(c.raised_via === 'sheet' && c.store_name ? [['Portal store', [c.store_name, c.store_city].filter(Boolean).join(', ')] as [string, string]] : []),
-                                ['Brand', c.brand],
+                                ...(c.snapshot?.depot ? [['Depot', <>{c.snapshot.depot}<BrandTag b={c.depot_brand} /></>] as [string, React.ReactNode]] : []),
+                                ['Store', <>{[storeOf(c), c.raised_via === 'sheet' ? null : c.store_city].filter(Boolean).join(', ') || '—'}{c.raised_via !== 'sheet' && <BrandTag b={c.store_brand} />}</>],
+                                ...(c.raised_via === 'sheet' && c.store_name ? [['Portal store', <>{[c.store_name, c.store_city].filter(Boolean).join(', ')}<BrandTag b={c.store_brand} /></>] as [string, React.ReactNode]] : []),
                                 // What: the product (or design), the vehicle, the plant's numbers.
                                 ...(c.plan?.alteration_no ? [['Alteration no.', c.plan.alteration_no] as [string, string]] : []),
                                 ...(c.snapshot?.mode ? [['Mode', c.snapshot.mode] as [string, string]] : []),
                                 ['Requested', `${c.raised_via === 'sheet' ? 'From the sheet' : c.raised_by_role === 'customer' ? 'By the customer' : c.raised_by_role === 'vendor' ? 'By the store' : 'By the plant'} · ${day(c.created_at)}`],
                                 ['Waiting for', c.waiting_on],
-                            ] as [string, string | null | undefined][]).map(([k, v]) => (
+                            ] as [string, React.ReactNode][]).map(([k, v]) => (
                                 <div key={k} className="min-w-0 bg-white px-3 py-2">
                                     <dt className="text-[11px] font-bold uppercase tracking-wider text-gray-500">{k}</dt>
                                     <dd className={cn("text-sm font-semibold break-words", k === 'Waiting for' ? "text-orange-800" : "text-gray-900")}>{v || '—'}</dd>
@@ -796,7 +793,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 ]} />
                             )}
                             <InfoRows title="Product" rows={[
-                                ['Design', c.snapshot?.product_name],
+                                ['Design', c.snapshot?.product_name ? <>{c.snapshot.product_name}<BrandTag b={c.product_brand} /></> : null],
                                 ['Material', has('edit') && canSetMaterial(c, materials) ? (
                                     <QuickFill label={c.vehicle?.material || <Empty />} title={`Material · ${c.claim_no}`}
                                         fields={[materialField(c, materials), { key: 'note', label: 'Reason for the change (needed)', value: '', need: true }]}
