@@ -299,9 +299,9 @@ const canSetMaterial = (c: Claim, list: string[]) => c.snapshot?.product_type ==
  * opens the claim on the right with the step each person's rights allow.
  * Anyone with only Warranty Claims read (and the depots) sees it all, read-only.
  */
-/** A claim's brand (its product's, else its store's), as a small tag. */
+/** A claim's brand (its store's, else its product's), as a small tag: AF, AC or AFAC. */
 const BrandTag = ({ c }: { c: { brand?: string } }) => c.brand ? (
-    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", c.brand === 'AC' ? "bg-violet-100 text-violet-800" : "bg-sky-100 text-sky-800")}>{c.brand === 'AC' ? 'Autocruze' : 'Autoform'}</span>
+    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", c.brand === 'AC' ? "bg-violet-100 text-violet-800" : c.brand === 'AFAC' ? "bg-amber-100 text-amber-800" : "bg-sky-100 text-sky-800")}>{c.brand}</span>
 ) : null;
 
 /** Where a claim came from: the production sheet, or raised in the portal. */
@@ -547,8 +547,9 @@ export const AdminClaims = () => {
                     <StorePicker stores={stores} value={store} onChange={setStore} />
                     <select value={brand} onChange={e => setBrand(e.target.value)} aria-label="Brand" className={cn(FILTER, "md:w-40", brand && "border-orange-400")}>
                         <option value="">All brands</option>
-                        <option value="AF">Autoform</option>
-                        <option value="AC">Autocruze</option>
+                        <option value="AF">AF</option>
+                        <option value="AC">AC</option>
+                        <option value="AFAC">AFAC</option>
                     </select>
                     <select value={charge} onChange={e => setCharge(e.target.value)} aria-label="Charge" className={cn(FILTER, "md:w-44", charge && "border-orange-400")}>
                         <option value="">FOC and chargeable</option>
@@ -769,7 +770,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 ...(c.snapshot?.depot ? [['Depot', c.snapshot.depot] as [string, string]] : []),
                                 ['Store', [storeOf(c), c.raised_via === 'sheet' ? null : c.store_city].filter(Boolean).join(', ')],
                                 ...(c.raised_via === 'sheet' && c.store_name ? [['Portal store', [c.store_name, c.store_city].filter(Boolean).join(', ')] as [string, string]] : []),
-                                ['Brand', c.brand === 'AC' ? 'Autocruze' : c.brand ? 'Autoform' : null],
+                                ['Brand', c.brand],
                                 // What: the product (or design), the vehicle, the plant's numbers.
                                 ...(c.plan?.alteration_no ? [['Alteration no.', c.plan.alteration_no] as [string, string]] : []),
                                 ...(c.snapshot?.mode ? [['Mode', c.snapshot.mode] as [string, string]] : []),

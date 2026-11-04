@@ -1,6 +1,6 @@
 import db from '../config/database.js';
 import { readSheet, readServiceAccount } from './googleSheets.js';
-import { materialFromRemarks, readSheetRow, rowsFromGrid, type SheetClaim } from './claimSheet.js';
+import { designBrand, materialFromRemarks, readSheetRow, rowsFromGrid, type SheetClaim } from './claimSheet.js';
 import { parseMaterials } from './claimFlow.js';
 
 /**
@@ -72,13 +72,14 @@ export async function syncSource(source: SheetSource, apply: boolean): Promise<S
         const claims: (SheetClaim & { store_id: string | null })[] = [];
         // One alteration no. can cover two parts on the same day: the second is "#2", in sheet order.
         const seen = new Map<string, number>();
+        const [products]: any = await db.execute('SELECT name, brand FROM products');
         for (const r of rows) {
             const c = readSheetRow(r, Number(r._row));
             if ('skip' in c) { report.skipped.push(c.skip); continue; }
             const n = (seen.get(c.key) ?? 0) + 1;
             seen.set(c.key, n);
             const key = n > 1 ? `${c.key}#${n}` : c.key;
-            claims.push({ ...c, key, snapshot: { ...c.snapshot, sheet_key: key, sheet_source: source.id, sheet_name: source.name }, store_id: storeOf(c.store_name) });
+            claims.push({ ...c, key, snapshot: { ...c.snapshot, sheet_key: key, sheet_source: source.id, sheet_name: source.name, design_brand: designBrand(c.snapshot.product_name, products) }, store_id: storeOf(c.store_name) });
         }
         report.claims = claims.length;
         report.store_found = claims.filter(c => c.store_id).length;

@@ -168,6 +168,32 @@ export function materialFromRemarks(remarks: unknown, list: string[]): string | 
     return null;
 }
 
+/** A sheet design or a warranty product by its name alone: no U-, finish, age or material words, however it is spelt. */
+const designKey = (v: unknown) => clean(v).toUpperCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/^U[\s-]+/, '')
+    .replace(/^USPORT/, 'SPORT')
+    .replace(/\bS(PORTZ|PROTZ|POTZ|PORTS)\b/g, 'SPORTS')
+    .replace(/\bPLUS\b/g, '+')
+    .replace(/\b(OLD|PERFO|OEM|OE|CUSTOM|DG|SERIES|SIGNATURE|EMPORIO|DOBLE|UNICO)\b/g, ' ')
+    .replace(/[^A-Z0-9+]+/g, '');
+
+/**
+ * The brand a sheet design belongs to, from the warranty products. Every U-
+ * design is Autoform. A row with no real design ("SAME AS PIC"), or one not on
+ * the list, has none, and two products of different brands under one name say
+ * nothing either.
+ */
+export function designBrand(design: unknown, products: { name: string; brand?: string | null }[]): 'AF' | 'AC' | 'AFAC' | null {
+    const text = clean(design).toUpperCase();
+    if (!text || /\b(SAME AS|AS PER|ATTACH|IMAGE|PIC)\b|^SEAT COVER$/.test(text)) return null;
+    if (/^U[\s-]|^USPORT/.test(text)) return 'AF';
+    const key = designKey(text);
+    if (!key) return null;
+    const brands = new Set(products.filter(p => designKey(p.name) === key).map(p => (p.brand === 'AC' || p.brand === 'AFAC' ? p.brand : 'AF')));
+    return brands.size === 1 ? [...brands][0] as 'AF' | 'AC' | 'AFAC' : null;
+}
+
 /** One sheet row as a claim, or why it is left out. */
 export function readSheetRow(r: SheetRow, row: number): SheetClaim | { skip: string } {
     const altNo = get(r, 'ALT NO');

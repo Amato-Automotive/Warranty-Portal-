@@ -195,15 +195,16 @@ async function distributorStoreIds(userId: string): Promise<string[]> {
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 /** Everything a claim is searched by, as one text: numbers, names, the car, the colours, the issue, the plant's columns. */
 /**
- * A claim's brand: its store's (an AC store is Autocruze; AF and AFAC are
- * Autoform), else, with no store, its product's (a product on the list by the
- * same name). Needs `vd` joined on the claim's store.
+ * A claim's brand: its store's (AF, AC, or AFAC for both), else, with no store,
+ * its product's: for a sheet row what the sync read from its design, otherwise a
+ * product on the list by the same name. Neither, and it has none. Needs `vd`
+ * joined on the claim's store.
  */
 const CLAIM_BRAND = `COALESCE(
-    CASE WHEN vd.allowed_brands = 'AC' THEN 'AC' WHEN vd.allowed_brands IN ('AF', 'AFAC') THEN 'AF' END,
-    (SELECT CASE WHEN p.brand = 'AC' THEN 'AC' ELSE 'AF' END FROM products p
-      WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.product_name')))) LIMIT 1),
-    'AF')`;
+    CASE vd.allowed_brands WHEN 'AC' THEN 'AC' WHEN 'AF' THEN 'AF' WHEN 'AFAC' THEN 'AFAC' END,
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.design_brand')), 'null'),
+    (SELECT CASE p.brand WHEN 'AC' THEN 'AC' WHEN 'AFAC' THEN 'AFAC' ELSE 'AF' END FROM products p
+      WHERE c.raised_via <> 'sheet' AND LOWER(TRIM(p.name)) = LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.product_name')))) LIMIT 1))`;
 
 const SEARCH_TEXT = `CONCAT_WS(' ', c.claim_no, c.warranty_uid, vd.store_name, c.problem, c.description,
     JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_name')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_phone')),
@@ -560,7 +561,7 @@ export default class ClaimsController {
             } else if (store) { where.push("c.store_id = ? AND c.raised_via <> 'sheet'"); params.push(store); }
             // The depot a sheet row came through (the sheet's DEPOT NAME).
             if (depot) { where.push("JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.depot')) = ?"); params.push(depot); }
-            if (brand === 'AF' || brand === 'AC') { where.push(`${CLAIM_BRAND} = ?`); params.push(brand); }
+            if (brand === 'AF' || brand === 'AC' || brand === 'AFAC') { where.push(`${CLAIM_BRAND} = ?`); params.push(brand); }
             if (DATE_ONLY.test(from)) { where.push('DATE(c.created_at) >= ?'); params.push(from); }
             if (DATE_ONLY.test(to)) { where.push('DATE(c.created_at) <= ?'); params.push(to); }
             if (charge === 'foc' || charge === 'chargeable') {
@@ -621,7 +622,7 @@ export default class ClaimsController {
             const out = view(c, who, can === 'view');
             const [[b]]: any = await db.execute(
                 `SELECT ${CLAIM_BRAND} AS brand FROM warranty_claims c LEFT JOIN vendor_details vd ON vd.id = c.store_id WHERE c.id = ?`, [c.id]);
-            out.brand = b?.brand ?? 'AF';
+            out.brand = b?.brand ?? null;
             out.store_name = s[0]?.store_name ?? null;
             out.store_city = s[0]?.city ?? null;
             out.store_phone = s[0]?.phone ?? null;

@@ -1,11 +1,40 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { materialFromRemarks, readSheetRow, sheetProblem, sheetStatus, sheetChargeable } from '../claimSheet.js';
+import { designBrand, materialFromRemarks, readSheetRow, sheetProblem, sheetStatus, sheetChargeable } from '../claimSheet.js';
 
 const row = (p: Record<string, string | null> = {}) => ({
     'DATE': '2026-06-10', 'MODE': 'MAIL', 'STATUS': 'WIP', ' DEPOT NAME': 'JANAK DEPOT', 'PARTY NAME ': 'FOCUS COCHIN', 'EDD': '2026-06-25',
     'DESIGN ': 'Q2', 'MINOR': 'BLACK', 'MAJOR': 'RED', 'REMARKS': 'FRONT LEFT SIDE', 'VEHICLE': 'GLANZA SPL 22 SAB', 'REASON': 'PHYSICAL DAMAGE',
     'ALT NO': 'Y259', 'FOC': null, 'DIS.DATE': null, 'DOCKET NO.': null, 'HOLD REASON ': null, ...p,
+});
+
+test('a sheet design takes its brand from the warranty products', () => {
+    const products = [
+        { name: 'AMAZE', brand: 'AC' }, { name: 'AMAZE+', brand: 'AF' }, { name: 'AMAZE DUO', brand: 'AC' }, { name: 'AMAZE DUO +', brand: 'AF' },
+        { name: 'D3', brand: 'AF' }, { name: 'D3 (Signature)', brand: 'AF' }, { name: 'INSPIRE', brand: 'AC' }, { name: 'SPECTRA (SERIES)', brand: 'AC' },
+        { name: 'U-Sports (Series)', brand: 'AF' }, { name: 'U-FOCUS', brand: 'AF' }, { name: 'LE SERIES (Signature)', brand: 'AF' }, { name: 'H-CROSS', brand: null },
+        { name: 'BOTH ONE', brand: 'AFAC' }, { name: 'CLASH', brand: 'AF' }, { name: 'CLASH (Signature)', brand: 'AC' },
+    ];
+    const read = (d: string) => designBrand(d, products);
+    // Every U- design is Autoform, whatever it says after.
+    for (const d of ['U-SPORTZ PERFO', 'U SPORTZ OE', 'U-AMAZE', 'U-AMAZE DUO PLUS', 'U-SPECTRA OE', 'U-ZEST', 'USPORTZ OE EMPORIO', 'u-zest']) assert.equal(read(d), 'AF', d);
+    // Read through its spelling to the product.
+    assert.equal(read('AMAZE PLUS'), 'AF');
+    assert.equal(read('AMAZE DUO PLUS'), 'AF');
+    assert.equal(read('OLD AMAZE PLUS'), 'AF');
+    assert.equal(read('AMAZE'), 'AC');
+    assert.equal(read('AMAZE DUO'), 'AC');
+    assert.equal(read('D3 PERFO'), 'AF');
+    assert.equal(read('D3 OLD PERFO'), 'AF');
+    assert.equal(read('D3PERFO'), null);
+    assert.equal(read('INSPIRE PERFO'), 'AC');
+    assert.equal(read('SPORTZ PERFO'), 'AF');
+    assert.equal(read('FOCUS'), 'AF');
+    assert.equal(read('SIGNATURE LE'), 'AF');
+    assert.equal(read('H-CROSS'), 'AF');
+    assert.equal(read('BOTH ONE'), 'AFAC');
+    // No real design, not on the list, or two brands under one name: no brand.
+    for (const d of ['SAME AS PIC', 'AS PER PIC', 'DESIGN AS PER PIC', 'SAME AS ATTACH IMAGE', 'Seat cover', '', 'THSP03', 'CLASH']) assert.equal(read(d), null, d);
 });
 
 test('the material comes from the remarks, whatever its spelling', () => {
