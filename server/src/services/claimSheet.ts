@@ -145,6 +145,8 @@ export function sheetStatus(status: string): ClaimStatus {
 /** How the sheet spells a material, so a typing slip still reads as the name it means. */
 const materialSpelling = (v: string) => clean(v).toUpperCase()
     .replace(/\bLUC[A-Z]*[ZS][A-Z]*\b/g, 'LUCENZO')
+    // The plant writes the same material as LUCENZO or OLD LUCENZO.
+    .replace(/\bOLD\s+LUCENZO\b/g, 'LUCENZO')
     .replace(/\bSIG\b|\bSIG[A-Z]*TURE\b/g, 'SIGNATURE')
     .replace(/\bVEL+ORA\b/g, 'VELORA')
     .replace(/\bNAP+A\b/g, 'NAPA')

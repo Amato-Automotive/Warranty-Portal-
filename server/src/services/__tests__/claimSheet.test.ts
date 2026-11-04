@@ -24,6 +24,13 @@ test('the material comes from the remarks, whatever its spelling', () => {
     // Not materials, or not on the list.
     for (const none of ['A1 PERFO DRIVER SEAT', 'LEGACY', 'CRYSTA TYPE, MIDDLE ROW', 'DRIVER BACK', 'NAPA DRIVER SEAT', 'DESIGNATURE', '']) assert.equal(read(none), null);
     assert.equal(materialFromRemarks('NAPPA, 1 PIECE', ['Napa']), 'Napa');
+    // The list may call it Old Lucenzo: both ways of writing it read as that, and Pro stays Pro.
+    const renamed = ['Old Lucenzo', 'Lucenzo Pro', 'Lucenzo Pro +'];
+    assert.equal(materialFromRemarks('LUCENZO, REAR HEAD', renamed), 'Old Lucenzo');
+    assert.equal(materialFromRemarks('OLD LUCENZO,DRIVER SEAT', renamed), 'Old Lucenzo');
+    assert.equal(materialFromRemarks('LUCEZNO A4 PERFO', renamed), 'Old Lucenzo');
+    assert.equal(materialFromRemarks('LUCENZO PRO,DRIVER BACK', renamed), 'Lucenzo Pro');
+    assert.equal(materialFromRemarks('LUCENZO PRO +,REAR BACK', renamed), 'Lucenzo Pro +');
     assert.equal(materialFromRemarks('MFD, DRIVER SIDE SEAT', ['MDF']), 'MDF');
     assert.equal(materialFromRemarks('MDF/ DRIVER SIDE SEAT', ['MDF']), 'MDF');
     assert.equal(materialFromRemarks('LUCENZO', []), null);

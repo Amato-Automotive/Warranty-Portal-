@@ -471,7 +471,7 @@ export const AdminClaims = () => {
         return <QuickFill label={shown ?? <Add />} title={`${f.label} · ${c.claim_no}`}
             fields={[
                 {
-                    key, label: f.label, type: f.type, value: now || (key === 'dispatch_date' ? today() : ''), need: true,
+                    key, label: f.label, type: f.type, value: now, need: true,
                     ...(key === 'courier' ? { options: [['', 'Choose'], ...withCurrent(couriers, now).map(n => [n, n])] as [string, string][] } : {}),
                 },
                 ...(now ? [{ key: 'note', label: 'Reason for the change (needed)', value: '', need: true }] : []),
@@ -662,7 +662,6 @@ export const AdminClaims = () => {
 /* ─── One claim, on the right ────────────────────────────────────────────── */
 
 type Choice = 'approve' | 'hold' | 'reject' | 'ask_more';
-const today = () => new Date().toISOString().slice(0, 10);
 const Field = ({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) => (
     <label className={cn("block space-y-1.5 text-sm font-semibold", className)}>{label}{children}</label>
 );
@@ -690,7 +689,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
             choice: '', outcome: '', charge: c.kind === 'alteration' ? 'chargeable' : 'foc', item: '', remarks: '',
             reason: '', hold_reason: '', note: '',
             alteration_no: c.plan?.alteration_no ?? '',
-            dispatch_date: c.dispatch?.date ?? today(), docket: c.dispatch?.docket ?? '', courier: c.dispatch?.courier ?? '',
+            dispatch_date: c.dispatch?.date ?? '', docket: c.dispatch?.docket ?? '', courier: c.dispatch?.courier ?? '',
             e_problem: c.problem, e_description: c.description ?? '', ...decisionStart(c),
             e_alteration_no: c.plan?.alteration_no ?? '',
             e_dispatch_date: c.dispatch?.date ?? '', e_docket: c.dispatch?.docket ?? '', e_courier: c.dispatch?.courier ?? '',

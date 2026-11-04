@@ -96,8 +96,10 @@ export async function syncSource(source: SheetSource, apply: boolean): Promise<S
             if (conn) await conn.beginTransaction();
             for (const c of claims) {
                 const old = existing.get(c.key);
-                // What is on the claim stays, as the plant may have chosen it; otherwise the remarks say.
-                const material = (old ? parse(old.vehicle)?.material : null) || materialFromRemarks(c.decision?.item, materials);
+                // What is on the claim stays, as the plant may have chosen it, while the list still has it
+                // (a renamed material then follows the list); otherwise the remarks say.
+                const had = old ? parse(old.vehicle)?.material : null;
+                const material = (had && materials.includes(had) ? had : null) || materialFromRemarks(c.decision?.item, materials) || had;
                 if (material) (c as any).vehicle = { ...c.vehicle, material };
                 const fields = [c.kind, c.store_id, c.problem, c.description, json(c.vehicle), json(c.snapshot), c.status, json(c.decision), json(c.plan), json(c.dispatch), json(c.hold)];
                 if (old) {
