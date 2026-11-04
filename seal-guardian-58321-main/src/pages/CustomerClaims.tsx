@@ -1,3 +1,4 @@
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ChevronLeft, Loader2, Plus, ShieldCheck } from "lucide-react";
@@ -75,7 +76,7 @@ const CustomerClaims = () => {
                         <div className="min-w-0">
                             <p className="text-xs font-bold text-gray-500">{c.claim_no}{c.kind === 'alteration' ? ' · Alteration' : ''}</p>
                             <p className="font-bold text-gray-900">{c.snapshot?.product_name} · {c.problem_text}</p>
-                            <p className="text-sm text-gray-500">{c.snapshot?.registration_number} · {day(c.created_at)}</p>
+                            <p className="text-sm text-gray-500">{[vehicleNumberOf(c.snapshot?.registration_number), day(c.created_at)].filter(Boolean).join(' · ')}</p>
                             {c.plan?.edd && ['production', 'ready'].includes(c.status) && <p className="mt-1 text-xs font-semibold text-indigo-700">Expected by {day(c.plan.edd)}</p>}
                             {c.status === 'consent' && <p className="mt-1 text-xs font-semibold text-purple-700">Your agreement is needed</p>}
                             {c.change_request && <p className="mt-1 text-xs font-semibold text-amber-700">Change asked · waiting for the plant</p>}
@@ -154,7 +155,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
                     <span className="font-bold text-gray-900">{x.product_name}</span>
                     <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", x.covered ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600")}>{x.covered ? 'Covered' : x.claimable ? 'Alteration only' : 'Not covered'}</span>
                 </span>
-                <span className="block text-sm text-gray-600">{[x.car, x.registration_number].filter(Boolean).join(' · ')}</span>
+                <span className="block text-sm text-gray-600">{[x.car, vehicleNumberOf(x.registration_number)].filter(Boolean).join(' · ')}</span>
                 <span className="block text-xs text-gray-500">UID {x.uid} · {x.warranty_type}</span>
                 <span className={cn("block text-xs font-semibold", x.covered ? "text-emerald-700" : "text-gray-500")}>
                     {x.covered ? `Covered till ${day(x.cover_end)}` : x.why}

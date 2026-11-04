@@ -1,3 +1,4 @@
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useEffect, useMemo, useState } from "react";
 import { Camera, Check, ChevronDown, FileText, Loader2, Play, Truck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -270,7 +271,7 @@ export const WarrantySections = ({ w, children }: { w: ClaimWarranty; children?:
             ['Warranty', w.warranty_type],
             ['UID', w.uid],
             ['Vehicle', w.car],
-            ['Car number', w.registration_number],
+            ['Car number', vehicleNumberOf(w.registration_number)],
             ['Fitted at', w.fitted_store],
             ['Cover', w.covered ? `Covered till ${day(w.cover_end)}` : w.why],
         ]}>{children}</InfoRows>
@@ -340,7 +341,7 @@ export const ClaimSummary = ({ c }: { c: Claim }) => {
     const s = c.snapshot;
     return (
         <div className="space-y-0.5 text-sm text-gray-600">
-            <p>{[s?.customer_name, s?.car, s?.registration_number].filter(Boolean).join(' · ')}</p>
+            <p>{[s?.customer_name, s?.car, vehicleNumberOf(s?.registration_number)].filter(Boolean).join(' · ')}</p>
             <p>{[s?.product_name, `UID ${c.warranty_uid}`, s?.warranty_type, s?.cover_end ? `covered till ${day(s.cover_end)}` : null].filter(Boolean).join(' · ')}</p>
         </div>
     );

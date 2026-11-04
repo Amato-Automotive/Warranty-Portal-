@@ -1,3 +1,4 @@
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useState } from "react";
 import { AlertTriangle, Check, CheckCircle2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -153,7 +154,8 @@ export const CompareTable = ({ c, who }: { c: Claim; who: Who }) => {
             { k: 'Major colour', left: null, right: c.vehicle?.major_colour },
             { k: 'Minor colour', left: null, right: c.vehicle?.minor_colour },
         ] : []),
-        { k: 'Car number', left: r?.registration_number, right: s?.registration_number },
+        ...(vehicleNumberOf(r?.registration_number) || vehicleNumberOf(s?.registration_number)
+            ? [{ k: 'Car number', left: vehicleNumberOf(r?.registration_number), right: vehicleNumberOf(s?.registration_number) }] : []),
         ...(inside ? [{ k: 'Customer', left: [r?.customer_name, r?.customer_phone].filter(Boolean).join(' · '), right: [s?.customer_name, s?.customer_phone].filter(Boolean).join(' · ') }] : []),
         ...(who === 'admin' && r?.customer_address ? [{ k: 'Address', left: r.customer_address, right: null }] : []),
         { k: 'Date', left: [r?.fitted_on ? `Fitted ${day(r.fitted_on)}` : null, who === 'admin' && r?.registered_on ? `registered ${day(r.registered_on)}` : null,

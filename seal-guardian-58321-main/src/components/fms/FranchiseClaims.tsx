@@ -1,3 +1,4 @@
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Eye, Loader2, Phone, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -172,7 +173,7 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
             <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0 space-y-0.5">
                     <p className="text-base sm:text-lg font-extrabold text-gray-900">{[s?.customer_name, s?.product_name].filter(Boolean).join(' · ')}</p>
-                    <p className="text-sm text-gray-600">{[s?.car, s?.registration_number, `UID ${c.warranty_uid}`].filter(Boolean).join(' · ')}</p>
+                    <p className="text-sm text-gray-600">{[s?.car, vehicleNumberOf(s?.registration_number), `UID ${c.warranty_uid}`].filter(Boolean).join(' · ')}</p>
                     {c.counts && (
                         <p className="text-xs font-semibold text-blue-800">
                             {c.counts.on_warranty > 1 ? `Claim ${c.counts.on_warranty} on this warranty` : '1st claim on this warranty'} · {c.counts.approved_before} approved before
@@ -316,7 +317,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
             <span className="min-w-0 flex-1 text-sm">
                 <span className="block font-bold text-gray-900">{x.customer_name}</span>
                 <span className="block font-semibold text-gray-800">{x.product_name}</span>
-                <span className="block text-gray-600">{[x.registration_number, x.customer_phone, `UID ${x.uid}`].filter(Boolean).join(' · ')}</span>
+                <span className="block text-gray-600">{[vehicleNumberOf(x.registration_number), x.customer_phone, `UID ${x.uid}`].filter(Boolean).join(' · ')}</span>
                 <span className={cn("block text-xs font-semibold", x.covered ? "text-emerald-700" : "text-gray-500")}>{x.covered ? `Covered till ${day(x.cover_end)}` : x.claimable ? `${x.why} · alteration only` : x.why}{x.fitted_store ? ` · fitted by ${x.fitted_store}` : ''}</span>
             </span>
         </label>

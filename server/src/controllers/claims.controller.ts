@@ -157,7 +157,7 @@ async function registrationFor(c: any, actor: Actor) {
         rolls: Array.isArray(d.rolls) ? d.rolls.map((r: any) => ({ serial: r.serial, sqft: r.sqft, area: r.installArea })) : null,
         customer_name: w.customer_name, customer_phone: w.customer_phone, customer_email: w.customer_email,
         customer_address: w.customer_address || d.customerAddress || null,
-        car: [w.car_make, w.car_model, w.car_year].filter(Boolean).join(' ') || null, car_colour: w.car_colour || null,
+        car: [w.car_make, w.car_model].filter(Boolean).join(' ') || null, car_colour: w.car_colour || null,
         registration_number: w.registration_number || d.carRegistration || null,
         warranty_type: w.warranty_type, fitted_on: fittedOn, registered_on: w.created_at,
         approved_on: w.validated_at || w.vendor_approved_at || null,
@@ -195,14 +195,15 @@ async function distributorStoreIds(userId: string): Promise<string[]> {
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 /** Everything a claim is searched by, as one text: numbers, names, the car, the colours, the issue, the plant's columns. */
 /**
- * A claim's brand: its product's (a product on the list by the same name),
- * else its store's (an AC store is Autocruze; AF and AFAC are Autoform).
- * Needs `vd` joined on the claim's store.
+ * A claim's brand: its store's (an AC store is Autocruze; AF and AFAC are
+ * Autoform), else, with no store, its product's (a product on the list by the
+ * same name). Needs `vd` joined on the claim's store.
  */
 const CLAIM_BRAND = `COALESCE(
+    CASE WHEN vd.allowed_brands = 'AC' THEN 'AC' WHEN vd.allowed_brands IN ('AF', 'AFAC') THEN 'AF' END,
     (SELECT CASE WHEN p.brand = 'AC' THEN 'AC' ELSE 'AF' END FROM products p
       WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.product_name')))) LIMIT 1),
-    CASE WHEN vd.allowed_brands = 'AC' THEN 'AC' ELSE 'AF' END)`;
+    'AF')`;
 
 const SEARCH_TEXT = `CONCAT_WS(' ', c.claim_no, c.warranty_uid, vd.store_name, c.problem, c.description,
     JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_name')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_phone')),

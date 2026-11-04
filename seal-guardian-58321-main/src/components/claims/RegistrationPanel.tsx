@@ -1,3 +1,4 @@
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, FileText, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -67,7 +68,7 @@ export const RegistrationPanel = ({ c, who }: { c: Claim; who: 'admin' | 'store'
                 <Row label="Warranty" value={`${r.warranty_type}${r.cover_end ? ` · till ${day(r.cover_end)}` : ''}`} />
                 <Row label="UID" value={r.uid} />
                 <Row label="Car" value={[r.car, r.car_colour].filter(Boolean).join(' · ')} />
-                <Row label="Car number" value={r.registration_number} />
+                <Row label="Car number" value={vehicleNumberOf(r.registration_number)} />
                 <Row label="Customer" value={[r.customer_name, r.customer_phone].filter(Boolean).join(' · ')} />
                 <Row label="Fitted on" value={day(r.fitted_on)} />
                 <Row label="Fitted by" value={[r.fitted_store, r.fitted_city].filter(Boolean).join(', ') + (r.installer ? ` · ${r.installer}` : '')} />

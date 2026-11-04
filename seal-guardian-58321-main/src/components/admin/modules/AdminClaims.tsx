@@ -1,3 +1,4 @@
+import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useEffect, useState } from "react";
 import { ChevronLeft, Eye, FileSpreadsheet, Layers, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -586,7 +587,7 @@ export const AdminClaims = () => {
                                                 </span>
                                                 <span className="mt-1 block font-bold text-gray-900">{c.snapshot?.customer_name} · {c.snapshot?.product_name}</span>
                                                 <span className="block text-sm text-gray-600">{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</span>
-                                                <span className="block text-xs text-gray-500">{[c.snapshot?.depot, storeOf(c), [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || c.snapshot?.registration_number].filter(Boolean).join(' · ')}</span>
+                                                <span className="block text-xs text-gray-500">{[c.snapshot?.depot, storeOf(c), [c.vehicle?.make, c.vehicle?.model].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number)].filter(Boolean).join(' · ')}</span>
                                                 {c.plan?.alteration_no && <span className="mt-1 block text-xs font-semibold text-indigo-700">Alt. no. {c.plan.alteration_no}</span>}
                                                 {c.dispatch && <span className="mt-1 block text-xs font-semibold text-sky-700">Docket {c.dispatch.docket}</span>}
                                                 {c.change_request && <span className="mt-1 block text-xs font-semibold text-amber-700">Change asked</span>}
@@ -630,7 +631,7 @@ export const AdminClaims = () => {
                                                 <td className={cell}>{canSetMaterial(c, materials)
                                                     ? detailCell(c, c.vehicle?.material || <Empty />, 'Material', [materialField(c, materials)], true)
                                                     : c.vehicle?.material || <Empty />}</td>
-                                                <td className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || c.snapshot?.registration_number || <Empty />, 'Car',
+                                                <td className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number) || <Empty />, 'Car',
                                                     [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }, { key: 'vehicle_year', label: 'Year', value: c.vehicle?.year ? String(c.vehicle.year) : '' }])}</td>
                                                 <td className={cell}>{detailCell(c, c.vehicle?.major_colour || <Empty />, 'Major colour', [{ key: 'major_colour', label: 'Major colour', value: c.vehicle?.major_colour ?? '', need: true }], true)}</td>
                                                 <td className={cell}>{detailCell(c, c.vehicle?.minor_colour || <Empty />, 'Minor colour', [{ key: 'minor_colour', label: 'Minor colour', value: c.vehicle?.minor_colour ?? '' }], true)}</td>
@@ -803,7 +804,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 ['UID', c.warranty_uid],
                                 ['Warranty', [c.snapshot?.warranty_type, c.snapshot?.cover_end ? `covered till ${day(c.snapshot.cover_end)}` : null].filter(Boolean).join(' · ')],
                                 ['Vehicle', vehicleText(c.vehicle)],
-                                ['Car number', c.snapshot?.registration_number],
+                                ['Car number', vehicleNumberOf(c.snapshot?.registration_number)],
                             ]} />
                         </div>
                         <div className="px-4 pt-4 sm:px-6"><StageDates c={c} who="admin" /></div>
