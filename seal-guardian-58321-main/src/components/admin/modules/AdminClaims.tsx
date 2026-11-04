@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Eye, FileSpreadsheet, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
+import { ChevronLeft, Eye, FileSpreadsheet, Layers, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,10 +10,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn, formatToIST } from "@/lib/utils";
-import { decisionText, day, forgetClaimsLive, HOLD_REASONS, PROBLEMS, REJECT_REASONS, vehicleText, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
+import { ClaimNameList } from "@/components/admin/modules/ClaimNameList";
+import { decisionText, day, DEFAULT_COURIERS, forgetClaimsLive, guessMaterial, useClaimCouriers, HOLD_REASONS, useClaimMaterials, PROBLEMS, REJECT_REASONS, vehicleText, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
 import { ChangeRequestBox } from "@/components/claims/ClaimChange";
 import { CompareTable, StageDates } from "@/components/claims/ClaimView";
-import { ClaimStatusPill, ClaimSummary, ClaimTimeline, MediaGrid, ChoiceRow, ProblemPicker, VehicleFields, EMPTY_VEHICLE, vehicleValueOf, type VehicleValue } from "@/components/claims/ClaimParts";
+import { ClaimStatusPill, ClaimSummary, ClaimTimeline, MediaGrid, ChoiceRow, InfoRows, ProblemPicker, VehicleFields, EMPTY_VEHICLE, vehicleValueOf, type VehicleValue } from "@/components/claims/ClaimParts";
 import { PlantTeam } from "@/components/admin/claims/PlantTeam";
 import { SheetSync } from "@/components/admin/claims/SheetSync";
 
@@ -273,6 +274,25 @@ const QuickFill = ({ label, title, fields, onSave }: {
 };
 const Empty = () => <span className="text-gray-400">—</span>;
 
+/** The material as a field to change: starts from what the claim has, else what its design says. */
+const materialField = (c: Claim, list: string[]) => {
+    const now = c.vehicle?.material ?? '';
+    return {
+        key: 'material', label: 'Material', need: true,
+        value: now || guessMaterial(c.snapshot?.product_name, list),
+        options: [['', 'Choose the material'], ...(now && !list.includes(now) ? [now] : []).concat(list).map(m => [m, m])] as [string, string][],
+    };
+};
+/** A list to choose from that keeps a name already on the claim, even one no longer listed. */
+const withCurrent = (list: string[], now: string) => (now && !list.includes(now) ? [now, ...list] : list);
+const CourierSelect = ({ value, onChange, options, className }: { value: string; onChange: (v: string) => void; options: string[]; className: string }) => (
+    <select value={value} onChange={e => onChange(e.target.value)} className={className}>
+        <option value="">Choose</option>
+        {withCurrent(options, value).map(n => <option key={n} value={n}>{n}</option>)}
+    </select>
+);
+const canSetMaterial = (c: Claim, list: string[]) => c.snapshot?.product_type === 'seat-cover' && list.length > 0 && Boolean(c.vehicle);
+
 /**
  * The plant (MFU): every claim as a sheet, and a pencil on each row that
  * opens the claim on the right with the step each person's rights allow.
@@ -297,7 +317,9 @@ export const AdminClaims = () => {
     const { toast } = useToast();
     const { user } = useAuth() as any;
     // The team is run by super admins, who alone can change admin access.
-    const [tab, setTab] = useState<'claims' | 'team' | 'sheets'>('claims');
+    const [tab, setTab] = useState<'claims' | 'team' | 'sheets' | 'materials' | 'couriers'>('claims');
+    const materials = useClaimMaterials(tab);
+    const couriers = useClaimCouriers(tab);
     const [claims, setClaims] = useState<(Claim & { store_name?: string })[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [rights, setRights] = useState<PlantRight[] | null>(null);
@@ -382,6 +404,17 @@ export const AdminClaims = () => {
         }
     };
 
+    if (tab === 'materials' || tab === 'couriers') return (
+        <div className="space-y-4">
+            <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" aria-label="Back to claims" onClick={() => setTab('claims')}><ChevronLeft className="h-5 w-5" /></Button>
+                <h1 className="text-xl font-extrabold text-gray-900">{tab === 'materials' ? 'Materials' : 'Couriers / Transporters'}</h1>
+            </div>
+            {tab === 'materials'
+                ? <ClaimNameList key="materials" settingKey="claim_materials" what="Material" />
+                : <ClaimNameList key="couriers" settingKey="claim_couriers" what="Courier / Transporter" start={DEFAULT_COURIERS} />}
+        </div>
+    );
     if (tab === 'team') return (
         <div className="space-y-5">
             <div className="flex items-center gap-2">
@@ -437,7 +470,10 @@ export const AdminClaims = () => {
         if (!can(c, 'dispatch_info')) return shown ?? (needs(c, 'dispatch') ? <Add /> : <Empty />);
         return <QuickFill label={shown ?? <Add />} title={`${f.label} · ${c.claim_no}`}
             fields={[
-                { key, label: f.label, type: f.type, value: now || (key === 'dispatch_date' ? today() : ''), need: true },
+                {
+                    key, label: f.label, type: f.type, value: now || (key === 'dispatch_date' ? today() : ''), need: true,
+                    ...(key === 'courier' ? { options: [['', 'Choose'], ...withCurrent(couriers, now).map(n => [n, n])] as [string, string][] } : {}),
+                },
                 ...(now ? [{ key: 'note', label: 'Reason for the change (needed)', value: '', need: true }] : []),
             ]}
             onSave={v => quick(c, 'dispatch_info', v, `${f.label} saved`)} />;
@@ -470,6 +506,12 @@ export const AdminClaims = () => {
                     )}
                     <Button variant="outline" size="icon" onClick={() => load()} disabled={refreshing} title="Refresh" aria-label="Refresh" className="h-11 w-11 rounded-xl">
                         <RefreshCw className={cn("h-5 w-5", refreshing && "animate-spin")} />
+                    </Button>
+                    <Button variant="outline" size="icon" title="Couriers / Transporters" aria-label="Couriers / Transporters" onClick={() => setTab('couriers')} className="h-11 w-11 rounded-xl">
+                        <Truck className="h-5 w-5" />
+                    </Button>
+                    <Button variant="outline" size="icon" title="Materials" aria-label="Materials" onClick={() => setTab('materials')} className="h-11 w-11 rounded-xl">
+                        <Layers className="h-5 w-5" />
                     </Button>
                     <Button variant="outline" size="icon" title="Sheet sync" aria-label="Sheet sync" onClick={() => setTab('sheets')} className="h-11 w-11 rounded-xl">
                         <FileSpreadsheet className="h-5 w-5" />
@@ -557,7 +599,7 @@ export const AdminClaims = () => {
                                 <table className="w-full border-collapse text-sm">
                                     <thead className="sticky top-0 z-10 bg-gray-100 text-left text-xs font-bold text-gray-700">
                                         <tr>
-                                            {['S.No.', 'Status', 'Claim no.', 'Date', 'Depot', 'Store', 'Customer', 'Car', 'Product', 'Major colour', 'Minor colour', 'Issue', 'Decision', 'Alteration no.', 'Dispatch date', 'Docket no.', 'Courier / Transporter'].map(h => (
+                                            {['S.No.', 'Status', 'Claim no.', 'Date', 'Depot', 'Store', 'Customer', 'Phone', 'Email', 'Design', 'Material', 'Car', 'Major colour', 'Minor colour', 'Issue', 'Decision', 'Alteration no.', 'Dispatch date', 'Docket no.', 'Courier / Transporter'].map(h => (
                                                 <th key={h} className="px-3 py-2.5 border border-gray-300 whitespace-nowrap">{h}</th>
                                             ))}
                                         </tr>
@@ -581,10 +623,15 @@ export const AdminClaims = () => {
                                                 <td className={cell}>{day(c.created_at)}</td>
                                                 <td className={cell}>{c.snapshot?.depot || <Empty />}</td>
                                                 <td className={cell}>{storeOf(c) ?? <Empty />}</td>
-                                                <td className={cell}>{c.snapshot?.customer_name}</td>
+                                                <td className={cell}>{c.snapshot?.customer_name || <Empty />}</td>
+                                                <td className={cell}>{c.snapshot?.customer_phone || <Empty />}</td>
+                                                <td className={cell}>{c.snapshot?.customer_email || <Empty />}</td>
+                                                <td className={cell}>{c.snapshot?.product_name || <Empty />}</td>
+                                                <td className={cell}>{canSetMaterial(c, materials)
+                                                    ? detailCell(c, c.vehicle?.material || <Empty />, 'Material', [materialField(c, materials)], true)
+                                                    : c.vehicle?.material || <Empty />}</td>
                                                 <td className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || c.snapshot?.registration_number || <Empty />, 'Car',
                                                     [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }, { key: 'vehicle_year', label: 'Year', value: c.vehicle?.year ? String(c.vehicle.year) : '' }])}</td>
-                                                <td className={cell}>{c.snapshot?.product_name}</td>
                                                 <td className={cell}>{detailCell(c, c.vehicle?.major_colour || <Empty />, 'Major colour', [{ key: 'major_colour', label: 'Major colour', value: c.vehicle?.major_colour ?? '', need: true }], true)}</td>
                                                 <td className={cell}>{detailCell(c, c.vehicle?.minor_colour || <Empty />, 'Minor colour', [{ key: 'minor_colour', label: 'Minor colour', value: c.vehicle?.minor_colour ?? '' }], true)}</td>
                                                 <td className={cell}>{detailCell(c, <>{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</>, 'Issue', [{ key: 'problem', label: 'Issue', value: c.problem, need: true, options: PROBLEM_OPTIONS }])}</td>
@@ -631,6 +678,8 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
     const [vehicle, setVehicle] = useState<VehicleValue>(EMPTY_VEHICLE);
     // A decision taken again, starting from the one that stands.
     const [rd, setRd] = useState<Record<string, string>>({});
+    const materials = useClaimMaterials();
+    const couriers = useClaimCouriers();
 
     const load = () => api.get(`/claims/${id}`).then(r => setC(r.data.claim)).catch(e => toast({ variant: "destructive", title: "Could not load", description: getErrorMessage(e, "") }));
     useEffect(() => { load(); }, [id]);
@@ -714,18 +763,14 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 ))}
                             </div>
                         </div>
-                        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-3 lg:grid-cols-5">
+                        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-[repeat(auto-fit,minmax(170px,1fr))]">
                             {([
                                 // Who: depot, store, brand. A sheet row has no customer or warranty, so those are left out.
                                 ...(c.snapshot?.depot ? [['Depot', c.snapshot.depot] as [string, string]] : []),
                                 ['Store', [storeOf(c), c.raised_via === 'sheet' ? null : c.store_city].filter(Boolean).join(', ')],
                                 ...(c.raised_via === 'sheet' && c.store_name ? [['Portal store', [c.store_name, c.store_city].filter(Boolean).join(', ')] as [string, string]] : []),
                                 ['Brand', c.brand === 'AC' ? 'Autocruze' : c.brand ? 'Autoform' : null],
-                                ...(c.raised_via === 'sheet' ? [] : [['Customer', [c.snapshot?.customer_name, c.snapshot?.registration_number].filter(Boolean).join(' · ')] as [string, string]]),
                                 // What: the product (or design), the vehicle, the plant's numbers.
-                                [c.raised_via === 'sheet' ? 'Design' : 'Product', [c.snapshot?.product_name, c.warranty_uid ? `UID ${c.warranty_uid}` : null].filter(Boolean).join(' · ')],
-                                ['Vehicle', vehicleText(c.vehicle)],
-                                ...(c.raised_via === 'sheet' ? [] : [['Warranty', [c.snapshot?.warranty_type, c.snapshot?.cover_end ? `covered till ${day(c.snapshot.cover_end)}` : null].filter(Boolean).join(' · ')] as [string, string]]),
                                 ...(c.plan?.alteration_no ? [['Alteration no.', c.plan.alteration_no] as [string, string]] : []),
                                 ...(c.snapshot?.mode ? [['Mode', c.snapshot.mode] as [string, string]] : []),
                                 ['Requested', `${c.raised_via === 'sheet' ? 'From the sheet' : c.raised_by_role === 'customer' ? 'By the customer' : c.raised_by_role === 'vendor' ? 'By the store' : 'By the plant'} · ${day(c.created_at)}`],
@@ -740,6 +785,28 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                     </header>
 
                     <div className="flex-1 overflow-y-auto">
+                        {/* A sheet row has no customer or warranty, so it shows the product alone. */}
+                        <div className={cn("grid gap-3 px-4 pt-4 sm:px-6", c.raised_via !== 'sheet' && "md:grid-cols-2")}>
+                            {c.raised_via !== 'sheet' && (
+                                <InfoRows title="Customer" rows={[
+                                    ['Name', c.snapshot?.customer_name],
+                                    ['Phone', c.snapshot?.customer_phone],
+                                    ['Email', c.snapshot?.customer_email || r?.customer_email],
+                                ]} />
+                            )}
+                            <InfoRows title="Product" rows={[
+                                ['Design', c.snapshot?.product_name],
+                                ['Material', has('edit') && canSetMaterial(c, materials) ? (
+                                    <QuickFill label={c.vehicle?.material || <Empty />} title={`Material · ${c.claim_no}`}
+                                        fields={[materialField(c, materials), { key: 'note', label: 'Reason for the change (needed)', value: '', need: true }]}
+                                        onSave={async v => { await act('edit', v, 'Material changed'); return true; }} />
+                                ) : c.vehicle?.material],
+                                ['UID', c.warranty_uid],
+                                ['Warranty', [c.snapshot?.warranty_type, c.snapshot?.cover_end ? `covered till ${day(c.snapshot.cover_end)}` : null].filter(Boolean).join(' · ')],
+                                ['Vehicle', vehicleText(c.vehicle)],
+                                ['Car number', c.snapshot?.registration_number],
+                            ]} />
+                        </div>
                         <div className="px-4 pt-4 sm:px-6"><StageDates c={c} who="admin" /></div>
                         <div className="grid gap-4 p-4 sm:p-6 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:items-start">
                             <div className="min-w-0 space-y-4">
@@ -821,7 +888,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                     <div className="grid gap-3 sm:grid-cols-2">
                                         <Field label="Dispatch date"><Input type="date" value={f.dispatch_date} onChange={e => set('dispatch_date')(e.target.value)} className="h-12 bg-white text-base font-semibold" /></Field>
                                         <Field label="Docket no."><Input value={f.docket} onChange={e => set('docket')(e.target.value)} className="h-12 bg-white text-base font-semibold" /></Field>
-                                        <Field label="Courier / Transporter name (optional)" className="sm:col-span-2"><Input value={f.courier} onChange={e => set('courier')(e.target.value)} className="h-12 bg-white text-base font-semibold" /></Field>
+                                        <Field label="Courier / Transporter name (optional)" className="sm:col-span-2"><CourierSelect value={f.courier} onChange={set('courier')} options={couriers} className="h-12 w-full rounded-md border border-input bg-white px-3 text-base font-semibold" /></Field>
                                     </div>
                                 )}
                                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
@@ -937,7 +1004,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                         <div className="grid gap-3 sm:grid-cols-3">
                                             <Field label="Dispatch date"><Input type="date" value={f.e_dispatch_date} onChange={e => set('e_dispatch_date')(e.target.value)} className="h-11 font-normal" /></Field>
                                             <Field label="Docket no."><Input value={f.e_docket} onChange={e => set('e_docket')(e.target.value)} className="h-11 font-normal" /></Field>
-                                            <Field label="Courier / Transporter"><Input value={f.e_courier} onChange={e => set('e_courier')(e.target.value)} className="h-11 font-normal" /></Field>
+                                            <Field label="Courier / Transporter"><CourierSelect value={f.e_courier} onChange={set('e_courier')} options={couriers} className={SELECT} /></Field>
                                         </div>
                                     )}
                                     <Field label="Reason for the change (needed)"><Input value={f.e_reason} onChange={e => set('e_reason')(e.target.value)} className="h-11 font-normal" /></Field>

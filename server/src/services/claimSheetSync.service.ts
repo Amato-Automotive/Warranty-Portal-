@@ -92,8 +92,11 @@ export async function syncSource(source: SheetSource, apply: boolean): Promise<S
         try {
             if (conn) await conn.beginTransaction();
             for (const c of claims) {
-                const fields = [c.kind, c.store_id, c.problem, c.description, json(c.vehicle), json(c.snapshot), c.status, json(c.decision), json(c.plan), json(c.dispatch), json(c.hold)];
                 const old = existing.get(c.key);
+                // The sheet has no material, so what the plant chose here stays.
+                const material = old ? parse(old.vehicle)?.material : null;
+                if (material) (c as any).vehicle = { ...c.vehicle, material };
+                const fields = [c.kind, c.store_id, c.problem, c.description, json(c.vehicle), json(c.snapshot), c.status, json(c.decision), json(c.plan), json(c.dispatch), json(c.hold)];
                 if (old) {
                     const was = [old.kind, old.store_id ? String(old.store_id) : null, old.problem, old.description, old.vehicle, old.snapshot, old.status, old.decision, old.plan_info, old.dispatch, old.hold_info];
                     if (fields.every((f, i) => stable(f) === stable(was[i]))) { report.unchanged++; continue; }

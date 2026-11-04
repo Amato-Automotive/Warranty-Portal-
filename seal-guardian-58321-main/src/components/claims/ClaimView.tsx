@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { LabeledPhotos } from "@/components/claims/RegistrationPanel";
 import { MediaGrid, mediaItems } from "@/components/claims/ClaimParts";
 import { DownloadAll } from "@/components/claims/PhotoViewer";
-import { decisionText, day, HOLD_REASONS, REJECT_REASONS, STATUS, trackerSteps, vehicleText, type Claim } from "@/lib/claims";
+import { guessMaterial, useClaimMaterials, decisionText, day, HOLD_REASONS, REJECT_REASONS, STATUS, trackerSteps, vehicleText, type Claim } from "@/lib/claims";
 
 type Who = 'store' | 'customer' | 'admin';
 
@@ -139,9 +139,15 @@ export const CompareTable = ({ c, who }: { c: Claim; who: Who }) => {
     // The colours have rows of their own.
     const claimCar = c.vehicle ? vehicleText({ ...c.vehicle, major_colour: null, minor_colour: null }) : null;
     const carDiffers = Boolean(r?.car && c.vehicle?.model && !r.car.toLowerCase().includes(c.vehicle.model.toLowerCase()));
+    // A registration records no material, so that side is the one its design names.
+    const materials = useClaimMaterials();
+    const registeredMaterial = guessMaterial(r?.product_name, materials);
+    const showMaterial = Boolean(c.vehicle?.material) || (s?.product_type === 'seat-cover' && materials.length > 0);
+    const materialDiffers = Boolean(registeredMaterial && c.vehicle?.material && registeredMaterial !== c.vehicle.material);
     const storeDiffers = Boolean(r?.fitted_store && c.store_name && r.fitted_store !== c.store_name);
     const rows: { k: string; left: React.ReactNode; right: React.ReactNode; diff?: boolean }[] = [
         { k: 'Product', left: r?.product_name, right: s?.product_name },
+        ...(showMaterial ? [{ k: 'Material', left: registeredMaterial, right: c.vehicle?.material, diff: materialDiffers }] : []),
         { k: 'Vehicle', left: [r?.car, r?.car_colour].filter(Boolean).join(' · '), right: claimCar, diff: carDiffers },
         ...(c.vehicle?.major_colour || c.vehicle?.minor_colour ? [
             { k: 'Major colour', left: null, right: c.vehicle?.major_colour },

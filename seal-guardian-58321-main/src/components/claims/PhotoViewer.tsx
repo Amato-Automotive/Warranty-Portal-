@@ -67,7 +67,7 @@ export const PhotoViewer = ({ items, start, onClose }: { items: ViewItem[]; star
 
     return (
         <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
-            <DialogContent className="flex h-[92vh] w-[96vw] max-w-6xl flex-col gap-0 overflow-hidden border-0 bg-gray-950 p-0 text-white sm:rounded-2xl [&>button]:text-white">
+            <DialogContent className="flex h-[92dvh] w-[96vw] max-w-6xl flex-col gap-0 overflow-hidden border-0 bg-gray-950 p-0 text-white sm:rounded-2xl sm:p-0 [&>button]:text-white">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-4 py-3 pr-14">
                     <DialogTitle className="text-sm font-bold text-white">{it.label} <span className="font-normal text-white/60">· {i + 1} of {items.length}</span></DialogTitle>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -85,14 +85,14 @@ export const PhotoViewer = ({ items, start, onClose }: { items: ViewItem[]; star
                     </div>
                 </div>
 
-                <div className="relative flex-1 overflow-auto">
-                    <div className="flex min-h-full min-w-full items-center justify-center p-4">
+                <div className="relative min-h-0 flex-1">
+                    <div className="absolute inset-0 flex items-center justify-center overflow-auto p-4">
                         {isPhoto(it.url) ? (
                             <img src={it.url} alt={it.label} draggable={false}
                                 style={{ transform: `rotate(${turn}deg) scale(${zoom})`, transition: 'transform .2s ease' }}
-                                className="max-h-[75vh] max-w-full select-none object-contain" />
+                                className="max-h-full max-w-full select-none object-contain" />
                         ) : isVideo(it.url) ? (
-                            <video src={it.url} controls className="max-h-[75vh] max-w-full" />
+                            <video src={it.url} controls className="max-h-full max-w-full" />
                         ) : (
                             <a href={it.url} target="_blank" rel="noreferrer" className="flex flex-col items-center gap-2 rounded-xl bg-white/10 px-8 py-6 text-sm font-bold text-white no-underline">
                                 <FileText className="h-10 w-10" />Open the file

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    applyClaimAction, actionsFor, coverage, warrantyYears, problemsFor, kindOf, readVehicle, readProblem, waitingOn,
+    applyClaimAction, actionsFor, coverage, warrantyYears, problemsFor, kindOf, readVehicle, readProblem, waitingOn, parseMaterials, readMaterial,
     type FlowClaim, type Who,
 } from '../claimFlow.js';
 
@@ -12,6 +12,32 @@ const claim = (p: Partial<FlowClaim> = {}): FlowClaim => ({
 });
 const ok = (r: ReturnType<typeof applyClaimAction>) => { if ('error' in r) throw new Error(r.error); return r.claim; };
 const err = (r: ReturnType<typeof applyClaimAction>) => ('error' in r ? r.error : 'no error');
+
+test('a seat cover chooses its material from the list; other products and an empty list do not', () => {
+    const list = ['Amaze', 'Signature'];
+    assert.deepEqual(readMaterial({ material: 'Signature' }, 'seat-cover', list), { material: 'Signature' });
+    assert.deepEqual(readMaterial({}, 'seat-cover', list), { error: 'Choose the material' });
+    assert.deepEqual(readMaterial({ material: 'Other' }, 'seat-cover', list), { error: 'Choose the material' });
+    assert.deepEqual(readMaterial({}, 'ev-products', list), { material: null });
+    assert.deepEqual(readMaterial({}, 'seat-cover', []), { material: null });
+    assert.deepEqual(readMaterial({ material: 'Old' }, 'seat-cover', list, 'Old'), { material: 'Old' });
+});
+
+test('the saved list of materials reads safely', () => {
+    assert.deepEqual(parseMaterials('["Amaze"," Signature ",""]'), ['Amaze', 'Signature']);
+    assert.deepEqual(parseMaterials('not json'), []);
+    assert.deepEqual(parseMaterials(undefined), []);
+});
+
+test('the store corrects the material and it shows in the changes; a vehicle correction keeps it', () => {
+    const base = claim({ vehicle: { make: 'Hyundai', model: 'Creta', airbags: 'with', major_colour: 'Black', material: 'Amaze' } });
+    const r = applyClaimAction(base, 'verify', { actor: 'vendor' }, { material: 'Signature' });
+    assert.equal(ok(r).vehicle?.material, 'Signature');
+    assert.ok(!('error' in r) && r.changes.includes('Material: Amaze → Signature'));
+    const kept = applyClaimAction(base, 'verify', { actor: 'vendor' }, { vehicle_model: 'Venue' });
+    assert.equal(ok(kept).vehicle?.model, 'Venue');
+    assert.equal(ok(kept).vehicle?.material, 'Amaze');
+});
 
 const store: Who = { actor: 'vendor' };
 const customer: Who = { actor: 'customer' };

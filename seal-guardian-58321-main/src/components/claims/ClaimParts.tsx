@@ -8,7 +8,7 @@ import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
 import { PhotoViewer } from "@/components/claims/PhotoViewer";
 import {
     PROBLEMS, NEEDS_DESCRIPTION, STATUS, NOT_COVERED_LINE, AIRBAGS, trackerSteps, isPhoto, isVideo, day, vehicleText,
-    type Claim, type ClaimHistory, type ClaimStatus, type Vehicle,
+    type Claim, type ClaimHistory, type ClaimStatus, type ClaimWarranty, type Vehicle,
 } from "@/lib/claims";
 
 type Who = 'admin' | 'store' | 'customer';
@@ -63,7 +63,7 @@ export const FilePicker = ({ files, onChange, max = 5, accept = "image/*", label
                     </div>
                 ))}
                 {files.length < max && (
-                    <label className="aspect-square rounded-xl border-2 border-dashed border-gray-300 bg-white flex flex-col items-center justify-center gap-1 text-xs font-semibold text-gray-600 cursor-pointer hover:border-orange-400">
+                    <label className="relative aspect-square rounded-xl border-2 border-dashed border-gray-300 bg-white flex flex-col items-center justify-center gap-1 text-xs font-semibold text-gray-600 cursor-pointer hover:border-orange-400">
                         <Camera className="h-5 w-5" />{label}
                         <input type="file" accept={accept} multiple className="sr-only"
                             onChange={e => { const picked = Array.from(e.target.files ?? []); e.target.value = ''; onChange([...files, ...picked].slice(0, max)); }} />
@@ -230,6 +230,50 @@ export const VehiclePhoto = ({ files, onChange, required }: { files: File[]; onC
     <div className="space-y-1.5">
         <p className="text-sm font-semibold">Photo of the vehicle{required ? ' *' : ' (optional)'}</p>
         <FilePicker files={files} onChange={onChange} max={1} label="Add photo" hint="The whole vehicle from the front, with the number plate showing." />
+    </div>
+);
+
+/** The seat cover's material, from the admin's list. Shown only when there is a list to choose from. */
+export const MaterialPicker = ({ options, value, onChange }: { options: string[]; value: string; onChange: (v: string) => void }) => {
+    const all = value && !options.includes(value) ? [value, ...options] : options;
+    return (
+        <label className="block space-y-1.5 text-sm font-semibold">Material *
+            <select value={value} onChange={e => onChange(e.target.value)} className="h-12 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold">
+                <option value="">Choose the material</option>
+                {all.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+        </label>
+    );
+};
+
+export const InfoRows = ({ title, rows, children }: { title: string; rows: [string, React.ReactNode][]; children?: React.ReactNode }) => (
+    <section className="min-w-0 space-y-3 rounded-xl border border-gray-200 p-4">
+        <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">{title}</h3>
+        <dl className="grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
+            {rows.filter(([, v]) => v).map(([k, v]) => (
+                <div key={k} className="contents">
+                    <dt className="text-gray-500">{k}</dt>
+                    <dd className="break-words font-semibold text-gray-900">{v}</dd>
+                </div>
+            ))}
+        </dl>
+        {children}
+    </section>
+);
+
+/** The chosen warranty: who it belongs to, then the product and whatever is chosen about it. */
+export const WarrantySections = ({ w, children }: { w: ClaimWarranty; children?: React.ReactNode }) => (
+    <div className="grid gap-3 md:grid-cols-2">
+        <InfoRows title="Customer" rows={[['Name', w.customer_name], ['Phone', w.customer_phone], ['Email', w.customer_email]]} />
+        <InfoRows title="Product" rows={[
+            ['Design', w.product_name],
+            ['Warranty', w.warranty_type],
+            ['UID', w.uid],
+            ['Vehicle', w.car],
+            ['Car number', w.registration_number],
+            ['Fitted at', w.fitted_store],
+            ['Cover', w.covered ? `Covered till ${day(w.cover_end)}` : w.why],
+        ]}>{children}</InfoRows>
     </div>
 );
 

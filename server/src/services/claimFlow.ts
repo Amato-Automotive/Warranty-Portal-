@@ -47,6 +47,8 @@ export const OLD_PART_ENABLED = false;
 /** The car, and for a seat cover its airbags (with, side airbags only, without) and the cover's colours. */
 export interface Vehicle {
     make: string; model: string; airbags: 'with' | 'sab' | 'without' | null;
+    /** The seat cover's material, from the admin's list. */
+    material?: string | null;
     /** The model year, when given. */
     year?: number | null;
     major_colour?: string | null; minor_colour?: string | null;
@@ -237,6 +239,28 @@ export function readVehicle(input: ClaimInput, productType: string | null | unde
     return { make, model, year, airbags, major_colour: major, minor_colour: text(input.minor_colour, 40) || null };
 }
 
+/** The admin's list of materials, as saved. */
+export function parseMaterials(value: unknown): string[] {
+    try {
+        const list = JSON.parse(String(value ?? '[]'));
+        return Array.isArray(list) ? list.map(x => String(x).trim()).filter(Boolean) : [];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * The material chosen on a claim. Seat covers must choose one from the list;
+ * other products, or an empty list, have none to choose. What the claim already
+ * has stays allowed, in case it has since left the list.
+ */
+export function readMaterial(input: ClaimInput, productType: string | null | undefined, list: string[], current?: string | null): { material: string | null } | { error: string } {
+    if (!asksAirbags(productType) || !list.length) return { material: current ?? null };
+    const chosen = text(input.material, 60);
+    if (!chosen || !(list.includes(chosen) || chosen === current)) return { error: 'Choose the material' };
+    return { material: chosen };
+}
+
 /** A new claim's issue and description, or why they are not complete. */
 export function readProblem(input: ClaimInput, covered: boolean): { problem: string; description: string | null } | { error: string } {
     const problem = String(input.problem ?? '');
@@ -270,7 +294,14 @@ function correctDetails(c: FlowClaim, input: ClaimInput): { patch: Partial<Claim
         if (vehicleText(v) !== vehicleText(c.vehicle)) {
             changes.push(`Vehicle: ${vehicleText(c.vehicle)} → ${vehicleText(v)}`);
             // A correction keeps the vehicle's photo.
-            patch.vehicle = { ...v, photo: c.vehicle?.photo ?? null };
+            patch.vehicle = { ...v, photo: c.vehicle?.photo ?? null, material: c.vehicle?.material ?? null };
+        }
+    }
+    if (input.material !== undefined && (patch.vehicle ?? c.vehicle)) {
+        const material = text(input.material, 60) || null;
+        if (material !== (c.vehicle?.material ?? null)) {
+            changes.push(`Material: ${c.vehicle?.material || '(none)'} → ${material || '(none)'}`);
+            patch.vehicle = { ...(patch.vehicle ?? c.vehicle)!, material };
         }
     }
     if (input.problem !== undefined && input.problem !== c.problem) {

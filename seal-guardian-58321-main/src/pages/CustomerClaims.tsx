@@ -6,11 +6,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { decisionText, day, NEEDS_DESCRIPTION, type Claim, type ClaimWarranty } from "@/lib/claims";
+import { decisionText, day, guessMaterial, NEEDS_DESCRIPTION, useClaimMaterials, type Claim, type ClaimWarranty } from "@/lib/claims";
 import { CompareTable, StageDates, StatusHero } from "@/components/claims/ClaimView";
 import { ChangeRequestBox, ClaimChange } from "@/components/claims/ClaimChange";
 import {
-    ClaimStatusPill, ClaimTimeline, ConsentBox, EMPTY_VEHICLE, FilePicker, FormStep, VehiclePhoto, MobileActionBar, ProblemPicker,
+    ClaimStatusPill, ClaimTimeline, ConsentBox, EMPTY_VEHICLE, FilePicker, FormStep, VehiclePhoto, MaterialPicker, WarrantySections, MobileActionBar, ProblemPicker,
     StepJump, VehicleFields, claimForm, missingForRequest, type VehicleValue,
 } from "@/components/claims/ClaimParts";
 
@@ -107,6 +107,10 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
     const [picking, setPicking] = useState(!uid);
 
     const w = warranties.find(x => x.uid === uid);
+    const materials = useClaimMaterials();
+    const [material, setMaterial] = useState('');
+    const asksMaterial = w?.product_type === 'seat-cover' && materials.length > 0;
+    useEffect(() => { setMaterial(guessMaterial(w?.product_name, materials)); }, [uid, materials]);
     const options = w ? w.problems : [];
     useEffect(() => { setProblem(options.length === 1 ? options[0] : ''); }, [uid]);
     useEffect(() => { setStoreId(w?.store_id ?? ''); setChanging(!w?.store_id); }, [uid]);
@@ -119,11 +123,12 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
         if (!w) return toast({ variant: "destructive", title: "Choose the product" });
         const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: photos.length, needYear: true });
         if (missing) return toast({ variant: "destructive", title: missing });
+        if (asksMaterial && !material) return toast({ variant: "destructive", title: "Choose the material" });
         if (!vehiclePhoto.length) return toast({ variant: "destructive", title: "Add a photo of the vehicle" });
         if (!storeId) return toast({ variant: "destructive", title: "Choose the store to check it" });
         setSending(true);
         try {
-            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId, ...vehicle }, { media: photos, vehicle_photo: vehiclePhoto });
+            const fd = await claimForm({ warranty_uid: w.uid, problem, description, store_id: storeId, ...vehicle, ...(asksMaterial ? { material } : {}) }, { media: photos, vehicle_photo: vehiclePhoto });
             const r = await api.post('/claims', fd);
             toast({ title: `Claim ${r.data.claim.claim_no} requested`, description: 'The store will check it and call you.' });
             onDone(r.data.claim);
@@ -170,7 +175,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
                     <button type="button" onClick={() => setPicking(true)} className="h-10 rounded-lg px-3 text-sm font-semibold text-orange-700 hover:bg-orange-50">Change</button>
                 )}>
                 {!warranties.length && <p className="text-sm text-gray-500">No warranties on your account yet.</p>}
-                {w && !picking ? row(w) : warranties.map(row)}
+                {w && !picking ? <WarrantySections w={w}>{asksMaterial && <MaterialPicker options={materials} value={material} onChange={setMaterial} />}</WarrantySections> : warranties.map(row)}
             </FormStep>
 
             {w && (

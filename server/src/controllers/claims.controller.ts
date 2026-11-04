@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { APP_URL, UPLOADS_BASE_DIR, urlToDiskPath } from '../config/localUpload.js';
 import {
-    applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags,
+    applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags, parseMaterials, readMaterial,
     STATUS_TEXT, REJECT_REASONS, HOLD_REASONS, PROBLEMS, PLANT_RIGHTS, OLD_PART_ENABLED,
     type Actor, type ClaimAction, type ClaimStatus, type FlowClaim, type PlantRight, type Who,
 } from '../services/claimFlow.js';
@@ -79,7 +79,7 @@ function snapshotOf(w: any) {
     return {
         product_type: w.product_type,
         product_name: d.productName || d.product || w.product_type,
-        customer_name: w.customer_name, customer_phone: w.customer_phone,
+        customer_name: w.customer_name, customer_phone: w.customer_phone, customer_email: w.customer_email || null,
         car: [w.car_make, w.car_model].filter(Boolean).join(' ') || null,
         registration_number: w.registration_number || d.carRegistration || null,
         warranty_type: w.warranty_type, cover_start: cov.start, cover_end: cov.end,
@@ -211,6 +211,7 @@ const SEARCH_TEXT = `CONCAT_WS(' ', c.claim_no, c.warranty_uid, vd.store_name, c
     JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.car')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.foc_note')),
     JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.make')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.model')),
     JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.major_colour')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.minor_colour')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.material')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_email')),
     JSON_UNQUOTE(JSON_EXTRACT(c.decision, '$.item')), JSON_UNQUOTE(JSON_EXTRACT(c.plan_info, '$.alteration_no')),
     JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.docket')), JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.courier')))`;
 
@@ -220,6 +221,12 @@ async function claimsLive(): Promise<boolean> {
     return r[0]?.setting_value === 'true';
 }
 const NOT_LIVE = 'Warranty claims are not open yet';
+
+/** The materials a seat cover claim chooses from (Admin › Claims › Materials). */
+async function claimMaterials(): Promise<string[]> {
+    const [r]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claim_materials'");
+    return parseMaterials(r[0]?.setting_value);
+}
 
 async function loadClaim(id: unknown) {
     const [rows]: any = await db.execute('SELECT * FROM warranty_claims WHERE id = ?', [Number(id) || 0]);
@@ -330,14 +337,16 @@ async function save(c: any) {
 }
 
 /** The claim's own fields from what was sent, checked against its warranty. */
-function readNew(w: any, b: any): { problem: string; description: string | null; vehicle: any } | { error: string } {
+function readNew(w: any, b: any, materials: string[]): { problem: string; description: string | null; vehicle: any } | { error: string } {
     if (w.status !== 'validated') return { error: 'Warranty is not approved yet' };
     const cov = coverage(w);
     const p = readProblem(b, cov.covered);
     if ('error' in p) return p;
     const vehicle = readVehicle(b, w.product_type);
     if ('error' in vehicle) return vehicle;
-    return { ...p, vehicle };
+    const m = readMaterial(b, w.product_type, materials);
+    if ('error' in m) return m;
+    return { ...p, vehicle: { ...vehicle, material: m.material } };
 }
 
 /** Creates a claim on a warranty; the caller has checked who may raise it. */
@@ -390,7 +399,7 @@ export default class ClaimsController {
             const [ws]: any = await db.execute('SELECT * FROM warranty_registrations WHERE uid = ? AND user_id = ? LIMIT 1', [String(b.warranty_uid ?? ''), req.user!.id]);
             const w = ws[0];
             if (!w) return bad(res, 'Warranty not found on your account', 404);
-            const fields = readNew(w, b);
+            const fields = readNew(w, b, await claimMaterials());
             if ('error' in fields) return bad(res, fields.error);
             const media = filesOf(req, 'media');
             if (!media.some(isPhoto)) return bad(res, 'Add at least one photo of the problem');
@@ -496,7 +505,7 @@ export default class ClaimsController {
             const [ws]: any = await db.execute('SELECT * FROM warranty_registrations WHERE uid = ? LIMIT 1', [String(b.warranty_uid ?? '')]);
             const w = ws[0];
             if (!w) return bad(res, 'Warranty not found', 404);
-            const fields = readNew(w, b);
+            const fields = readNew(w, b, await claimMaterials());
             if ('error' in fields) return bad(res, fields.error);
             const media = filesOf(req, 'media');
             if (!media.some(isPhoto)) return bad(res, 'Add at least one photo of the problem');
@@ -682,6 +691,16 @@ export default class ClaimsController {
             const action = String(req.body?.action ?? '') as ClaimAction;
             const input = { ...req.body, photos: filesOf(req, 'photos') };
             delete input.action;
+            if (action === 'verify') {
+                const m = readMaterial(input, c.product_type, await claimMaterials(), c.vehicle?.material);
+                if ('error' in m) return bad(res, m.error);
+                if (m.material) input.material = m.material; else delete input.material;
+            }
+            // The plant changes it in the list or on the claim; a change must still be from the list.
+            if (action === 'edit' && input.material !== undefined) {
+                const m = readMaterial(input, c.product_type, await claimMaterials(), c.vehicle?.material);
+                if ('error' in m) return bad(res, m.error);
+            }
             const r = applyClaimAction({ ...c, trail: c.trail ?? [] }, action, who, input);
             if ('error' in r) return bad(res, r.error);
             const next: any = r.claim;

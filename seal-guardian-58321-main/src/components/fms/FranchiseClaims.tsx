@@ -6,10 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { decisionText, day, NEEDS_DESCRIPTION, PROBLEMS, type Claim, type ClaimStatus, type ClaimWarranty } from "@/lib/claims";
+import { decisionText, day, guessMaterial, NEEDS_DESCRIPTION, PROBLEMS, useClaimMaterials, type Claim, type ClaimStatus, type ClaimWarranty } from "@/lib/claims";
 import {
     ChipRow, ClaimStatusPill, ClaimTimeline, ConsentBox, FormStep, VehiclePhoto, EMPTY_VEHICLE, FilePicker, MediaGrid,
-    MobileActionBar, ProblemPicker, STEP_ID, StepJump, VehicleFields, claimForm, missingForRequest, vehicleValueOf, type VehicleValue,
+    MaterialPicker, MobileActionBar, ProblemPicker, STEP_ID, StepJump, VehicleFields, WarrantySections, claimForm, missingForRequest, vehicleValueOf, type VehicleValue,
 } from "@/components/claims/ClaimParts";
 import { CompareTable, StageDates, StatusHero } from "@/components/claims/ClaimView";
 import { ChangeRequestBox, ClaimChange } from "@/components/claims/ClaimChange";
@@ -128,6 +128,10 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
     const [vehicle, setVehicle] = useState<VehicleValue>(vehicleOf(claim));
     const [problem, setProblem] = useState(claim.problem);
     const [description, setDescription] = useState(claim.description ?? '');
+    const materials = useClaimMaterials();
+    const [material, setMaterial] = useState('');
+    const asksMaterial = claim.snapshot?.product_type === 'seat-cover' && materials.length > 0;
+    useEffect(() => { setMaterial(claim.vehicle?.material || guessMaterial(claim.snapshot?.product_name, materials)); }, [claim.id, materials]);
 
     useEffect(() => {
         api.get(`/claims/${claim.id}`).then(r => {
@@ -220,6 +224,7 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
                             <VehicleFields value={vehicle} onChange={setVehicle} airbags={airbags} registered={c.snapshot?.car} plant />
                             {!c.vehicle?.photo && <VehiclePhoto files={vehiclePhoto} onChange={setVehiclePhoto} />}
                         </div>
+                        {asksMaterial && <MaterialPicker options={materials} value={material} onChange={setMaterial} />}
                         <div className="space-y-1.5">
                             <p className="text-sm font-semibold">Issue (correct it if needed)</p>
                             <ProblemPicker options={Object.keys(PROBLEMS)} value={problem} onChange={setProblem} />
@@ -233,7 +238,7 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
                             <Textarea value={note} onChange={e => setNote(e.target.value)} rows={3} className="font-normal" placeholder="What you saw, how big the problem is, what is needed" />
                         </label>
                         <Button disabled={busy} className="h-12 w-full sm:w-auto rounded-xl bg-orange-700 hover:bg-orange-800 font-bold px-6"
-                            onClick={() => step({ action: 'verify', note, problem, description, ...vehicle }, 'Verified and sent to the plant', photos)}>
+                            onClick={() => step({ action: 'verify', note, problem, description, ...vehicle, ...(asksMaterial ? { material } : {}) }, 'Verified and sent to the plant', photos)}>
                             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Verified, send to the plant'}
                         </Button>
                     </section>
@@ -288,6 +293,10 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
     const [vehiclePhoto, setVehiclePhoto] = useState<File[]>([]);
     const [remarks, setRemarks] = useState('');
     const [sending, setSending] = useState(false);
+    const materials = useClaimMaterials();
+    const [material, setMaterial] = useState('');
+    const asksMaterial = w?.product_type === 'seat-cover' && materials.length > 0;
+    useEffect(() => { setMaterial(guessMaterial(w?.product_name, materials)); }, [w, materials]);
 
     const options = w ? w.problems : [];
     useEffect(() => { setProblem(options.length === 1 ? options[0] : ''); setVehicle(EMPTY_VEHICLE); }, [w]);
@@ -305,7 +314,8 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
             w?.uid === x.uid ? "border-2 border-orange-600" : "border-gray-200")}>
             <input type="radio" name="sw" disabled={!x.claimable} checked={w?.uid === x.uid} onChange={() => setW(x)} className="mt-1 h-4 w-4 accent-orange-600" />
             <span className="min-w-0 flex-1 text-sm">
-                <span className="block font-bold text-gray-900">{x.customer_name} · {x.product_name}</span>
+                <span className="block font-bold text-gray-900">{x.customer_name}</span>
+                <span className="block font-semibold text-gray-800">{x.product_name}</span>
                 <span className="block text-gray-600">{[x.registration_number, x.customer_phone, `UID ${x.uid}`].filter(Boolean).join(' · ')}</span>
                 <span className={cn("block text-xs font-semibold", x.covered ? "text-emerald-700" : "text-gray-500")}>{x.covered ? `Covered till ${day(x.cover_end)}` : x.claimable ? `${x.why} · alteration only` : x.why}{x.fitted_store ? ` · fitted by ${x.fitted_store}` : ''}</span>
             </span>
@@ -328,9 +338,10 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
         if (!w) return;
         const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: media.filter(f => f.type.startsWith('image/')).length });
         if (missing) return toast({ variant: "destructive", title: missing });
+        if (asksMaterial && !material) return toast({ variant: "destructive", title: "Choose the material" });
         setSending(true);
         try {
-            const fd = await claimForm({ warranty_uid: w.uid, problem, description, remarks, ...vehicle }, { media, vehicle_photo: vehiclePhoto });
+            const fd = await claimForm({ warranty_uid: w.uid, problem, description, remarks, ...vehicle, ...(asksMaterial ? { material } : {}) }, { media, vehicle_photo: vehiclePhoto });
             const r = await api.post('/claims/store', fd);
             toast({ title: `Claim ${r.data.claim.claim_no} sent to the plant`, description: 'The customer is told too.' });
             onDone(r.data.claim);
@@ -359,7 +370,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
             <FormStep n={1} title="Warranty" done={!!w}
                 action={w && <button type="button" onClick={() => setW(null)} className="h-10 rounded-lg px-3 text-sm font-semibold text-orange-700 hover:bg-orange-50">Change</button>}>
                 {/* Once a warranty is chosen the list folds away, so the form is right below it on a phone. */}
-                {w ? pickRow(w) : <>
+                {w ? <WarrantySections w={w}>{asksMaterial && <MaterialPicker options={materials} value={material} onChange={setMaterial} />}</WarrantySections> : <>
                     <form onSubmit={e => { e.preventDefault(); if (q.trim().length >= 4) search(); }} className="flex flex-col gap-2 sm:flex-row">
                         <Input value={q} onChange={e => { setQ(e.target.value); setFound(null); }} className="h-12 flex-1 rounded-xl" aria-label="Customer name, phone, UID or car number"
                             placeholder="Customer name, phone, UID or car number" />

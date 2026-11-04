@@ -40,7 +40,7 @@ export const ModuleLayout = ({ title, description, children, actions, onNavigate
         <div className="flex-1 min-h-0 flex flex-col min-w-0 relative bg-[#fffaf5]">
             <main
                 className={cn(
-                    "flex-1 min-h-0 bg-white md:border border-orange-100 rounded-none md:rounded-[40px] shadow-none md:shadow-[0_15px_50px_rgba(0,0,0,0.03)] relative md:mr-6 md:my-6 md:ml-6 flex flex-col overflow-hidden m-0"
+                    "flex-1 min-h-0 bg-white md:border border-orange-100 rounded-none md:rounded-[40px] shadow-none md:shadow-[0_15px_50px_rgba(0,0,0,0.03)] relative md:mr-6 md:my-6 md:ml-6 flex flex-col overflow-hidden supports-[overflow:clip]:overflow-clip m-0"
                 )}
             >
                 <div id="main-dashboard-content-area" className="flex-1 w-full h-full overflow-y-auto custom-scrollbar flex flex-col">

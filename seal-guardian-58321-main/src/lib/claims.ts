@@ -20,7 +20,7 @@ export interface ClaimHistory {
     by_role: 'customer' | 'vendor' | 'admin'; by_name?: string | null; undone?: boolean;
 }
 
-export interface Vehicle { make: string; model: string; year?: number | null; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null; photo?: string | null }
+export interface Vehicle { material?: string | null; make: string; model: string; year?: number | null; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null; photo?: string | null }
 
 export interface Claim {
     id: number;
@@ -41,7 +41,7 @@ export interface Claim {
     vehicle: Vehicle | null;
     media: string[] | null;
     snapshot: {
-        product_type: string; product_name: string; customer_name: string; customer_phone: string;
+        customer_email?: string | null; product_type: string; product_name: string; customer_name: string; customer_phone: string;
         car: string | null; registration_number: string | null; warranty_type: string; cover_start: string | null; cover_end: string | null; fitted_store: string | null;
         /** A row brought in from the plant's production sheet: its depot, row and FOC note. */
         source?: string; depot?: string | null; sheet_row?: number; foc_note?: string | null; mode?: string | null;
@@ -90,7 +90,7 @@ export interface Registration {
 
 /** A warranty as the claim screens list it. */
 export interface ClaimWarranty {
-    uid: string; product_type: string; product_name: string; customer_name: string; customer_phone: string;
+    uid: string; product_type: string; product_name: string; customer_name: string; customer_phone: string; customer_email?: string | null;
     car: string | null; registration_number: string | null; warranty_type: string; cover_start: string | null; cover_end: string | null;
     fitted_store: string | null; status: string; store_id: string | null; covered: boolean; why: string | null;
     /** Approved: something can be raised on it (out of warranty, only an alteration). */
@@ -218,6 +218,47 @@ export function useClaimsLive(): boolean {
 }
 /** After the plant switches it, the next read asks again. */
 export const forgetClaimsLive = () => { liveOnce = null; };
+
+/** A list of names the admin keeps, as saved. */
+export function parseNames(value: unknown): string[] {
+    try {
+        const list = JSON.parse(String(value ?? '[]'));
+        return Array.isArray(list) ? list.map(x => String(x).trim()).filter(Boolean) : [];
+    } catch {
+        return [];
+    }
+}
+
+/** The materials to choose from, read fresh for each form, and again when `refresh` changes. */
+export function useClaimMaterials(refresh?: unknown): string[] {
+    const [list, setList] = useState<string[]>([]);
+    useEffect(() => {
+        let alive = true;
+        api.get('/settings/public/claim_materials').then(r => { if (alive) setList(parseNames(r.data?.value)); }).catch(() => {});
+        return () => { alive = false; };
+    }, [refresh]);
+    return list;
+}
+
+/** The couriers until the admin saves a list of their own. */
+export const DEFAULT_COURIERS = ['TRACKON COURIER', 'SHREE MARUTI COURIER', 'SHREE MAHAVIR COURIER', 'JETLINE COURIER'] as const;
+
+/** The couriers and transporters to choose from, read again when `refresh` changes. */
+export function useClaimCouriers(refresh?: unknown): string[] {
+    const [list, setList] = useState<string[]>([...DEFAULT_COURIERS]);
+    useEffect(() => {
+        let alive = true;
+        api.get('/settings/public/claim_couriers').then(r => { if (alive) setList(parseNames(r.data?.value)); }).catch(() => {});
+        return () => { alive = false; };
+    }, [refresh]);
+    return list;
+}
+
+/** The material a design's name mentions: D5 (Signature) is Signature. The longest name wins; none, and it is left to choose. */
+export function guessMaterial(design: string | null | undefined, list: string[]): string {
+    const name = String(design ?? '').toLowerCase();
+    return [...list].sort((a, b) => b.length - a.length).find(m => name.includes(m.toLowerCase())) ?? '';
+}
 
 export const isPhoto = (url: string) => /\.(jpe?g|png|webp|heic|heif)(\?|$)/i.test(url);
 export const isVideo = (url: string) => /\.(mp4|mov|webm|3gp|m4v)(\?|$)/i.test(url);
