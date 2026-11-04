@@ -82,6 +82,8 @@ export interface EVFormData {
 }
 
 interface EVProductsFormProps {
+  /** A customer editing its own warranty: what was uploaded before isn't shown, and is kept unless replaced. */
+  hideExisting?: boolean;
   /** The store's brand, when the form already knows its store (the QR page). */
   brand?: string | null;
   initialData?: any;
@@ -114,7 +116,7 @@ interface EVProductsFormProps {
   installers?: any[];
 }
 
-const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEditing, isPublic, vendorDirect, embedded, storeDetails, installers, brand }: EVProductsFormProps) => {
+const EVProductsForm = ({ hideExisting, initialData, warrantyId, onSuccess, isUniversal, isEditing, isPublic, vendorDirect, embedded, storeDetails, installers, brand }: EVProductsFormProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -735,6 +737,7 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
                   onSubmit={() => handleSubmit()}
                   loading={loading}
                   existingPhotos={isEditing && initialData?.product_details?.photos ? initialData.product_details.photos : undefined}
+                  hideExisting={hideExisting}
                 />
               </div>
             )}
@@ -798,7 +801,7 @@ const EVProductsForm = ({ initialData, warrantyId, onSuccess, isUniversal, isEdi
           { label: "Front with number plate", file: formData.frontRegPhoto, url: initialData?.product_details?.photos?.frontReg },
           { label: "Back with number plate", file: formData.backRegPhoto, url: initialData?.product_details?.photos?.backReg },
           { label: "Invoice", file: formData.warrantyPhoto, url: initialData?.product_details?.photos?.warranty },
-        ]}
+        ].filter(p => !hideExisting || p.file)}
       />
     </div>
   );

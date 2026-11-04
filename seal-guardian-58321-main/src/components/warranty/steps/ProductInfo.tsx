@@ -29,6 +29,8 @@ interface ProductInfoProps {
   onSubmit: () => void;
   loading: boolean;
   existingPhotos?: any;
+  /** The photos already uploaded still count, but aren't shown. */
+  hideExisting?: boolean;
 }
 
 /**
@@ -189,7 +191,7 @@ const PhotoField = ({
   );
 };
 
-const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, existingPhotos, brand }: ProductInfoProps) => {
+const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, existingPhotos, hideExisting, brand }: ProductInfoProps) => {
   const { toast } = useToast();
   const [products, setProducts] = useState<any[]>([]);
   const [termsModalOpen, setTermsModalOpen] = useState(false);
@@ -539,7 +541,7 @@ const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, exis
               key={field}
               field={field}
               label={label}
-              existingUrl={existingPhotos?.[photoKey]}
+              existingUrl={hideExisting ? undefined : existingPhotos?.[photoKey]}
               file={formData[field] as File | null}
               onChange={handleFileChange}
               loading={loading}

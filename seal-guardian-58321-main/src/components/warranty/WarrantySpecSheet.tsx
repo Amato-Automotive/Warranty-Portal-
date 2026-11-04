@@ -25,6 +25,8 @@ interface WarrantySpecSheetProps {
     warranty: any;
     isMobile?: boolean;
     isAdmin?: boolean;
+    /** The customer's own view: no invoice or photos. */
+    hideDocuments?: boolean;
     onRefresh?: () => void;
     onApprove?: (uid: string) => Promise<void> | void;
     onReject?: (uid: string) => Promise<void> | void;
@@ -69,7 +71,7 @@ const SpecRow = ({ label, value, mono = false, editField }: { label: string, val
     );
 };
 
-export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefresh, onApprove, onReject, onMoveToPending, processingWarranty }: WarrantySpecSheetProps) => {
+export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, hideDocuments, onRefresh, onApprove, onReject, onMoveToPending, processingWarranty }: WarrantySpecSheetProps) => {
     const { toast } = useToast();
     const [isEditing, setIsEditing] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -450,7 +452,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                         )}
 
                         {/* Documents & Photos Section - Seat Cover */}
-                        {warranty.product_type === 'seat-cover' && (
+                        {!hideDocuments && warranty.product_type === 'seat-cover' && (
                             <div className="space-y-2">
                                 <h4 className="text-xs font-bold text-orange-500 uppercase tracking-widest mb-2 pl-1 flex items-center gap-2">
                                     <div className="w-1 h-4 bg-gradient-to-b from-orange-500 to-orange-400 rounded-full" />
@@ -508,7 +510,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, onRefres
                         )}
 
                         {/* Documents & Photos Section - EV/PPF */}
-                        {warranty.product_type === 'ev-products' && (
+                        {!hideDocuments && warranty.product_type === 'ev-products' && (
                             <div className="space-y-2">
                                 <h4 className="text-xs font-bold text-orange-500 uppercase tracking-widest mb-2 pl-1 flex items-center gap-2">
                                     <div className="w-1 h-4 bg-gradient-to-b from-orange-500 to-orange-400 rounded-full" />

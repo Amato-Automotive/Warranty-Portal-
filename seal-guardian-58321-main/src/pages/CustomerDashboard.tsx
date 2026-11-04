@@ -184,6 +184,7 @@ const CustomerDashboard = () => {
                     </Button>
                     <FormComponent
                         {...formProps}
+                        hideExisting={isEditing}
                     />
                 </div>
             </div>
@@ -740,6 +741,7 @@ const CustomerDashboard = () => {
                 isOpen={!!specSheetData}
                 onClose={() => setSpecSheetData(null)}
                 warranty={specSheetData}
+                hideDocuments
             />
 
             <NoBillNoWarrantyDialog
@@ -799,7 +801,7 @@ const CustomerDashboard = () => {
                             fetchWarranties();
                             fetchStats();
                         });
-                        return <FormComponent {...formProps} />;
+                        return <FormComponent {...formProps} hideExisting />;
                     })()}
                 </DialogContent>
             </Dialog>

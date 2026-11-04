@@ -70,6 +70,8 @@ const extractUidFromQrValue = (value: string) => {
 };
 
 interface SeatCoverFormProps {
+  /** A customer editing its own warranty: what was uploaded before isn't shown, and is kept unless replaced. */
+  hideExisting?: boolean;
   initialData?: any;
   warrantyId?: string;
   onSuccess?: (result?: any) => void;
@@ -94,7 +96,7 @@ interface SeatCoverFormProps {
   installers?: any[];
 }
 
-const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic, vendorDirect, storeDetails, installers, products: initialProducts, brand }: SeatCoverFormProps) => {
+const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEditing, isPublic, vendorDirect, storeDetails, installers, products: initialProducts, brand }: SeatCoverFormProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -1819,7 +1821,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
                   <Label htmlFor="invoiceFile" className="text-sm font-medium text-slate-700 shrink-0">
                     Proof of Purchase (GST Invoice) <span className="text-destructive">*</span>
                   </Label>
-                  {isEditing && initialData?.product_details?.invoiceFileName && (
+                  {isEditing && !hideExisting && initialData?.product_details?.invoiceFileName && (
                     <button
                       type="button"
                       onClick={() => setShowExistingInvoice(true)}
@@ -1882,7 +1884,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
                 onChange={(file) => handleCameraCapture(file, 'mrpLabelFile')}
                 selectedIcon={<Tag className="h-6 w-6" />}
                 sampleImageUrl="/images/warranty/uid-ref-01.jpeg"
-                existingImageUrl={isEditing && initialData?.product_details?.photos?.mrpLabel ? initialData.product_details.photos.mrpLabel : null}
+                existingImageUrl={isEditing && !hideExisting && initialData?.product_details?.photos?.mrpLabel ? initialData.product_details.photos.mrpLabel : null}
               />
 
               {/* Fitted Seat Cover Photo */}
@@ -1897,7 +1899,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
                 onChange={(file) => handleCameraCapture(file, 'seatCoverPhoto')}
                 selectedIcon={<Armchair className="h-6 w-6" />}
                 sampleImageUrl="https://res.cloudinary.com/dmwt4rg4m/image/upload/v1775217073/Seat_Cover_Fitted_jfgizq.jpg"
-                existingImageUrl={isEditing && initialData?.product_details?.photos?.seatCover ? initialData.product_details.photos.seatCover : null}
+                existingImageUrl={isEditing && !hideExisting && initialData?.product_details?.photos?.seatCover ? initialData.product_details.photos.seatCover : null}
               />
 
 
@@ -2013,7 +2015,7 @@ const SeatCoverForm = ({ initialData, warrantyId, onSuccess, isEditing, isPublic
           },
           { label: "MRP sticker / Taffeta label", file: formData.mrpLabelFile, url: initialData?.product_details?.photos?.mrpLabel },
           { label: "Seat cover fitted", file: formData.seatCoverPhoto, url: initialData?.product_details?.photos?.seatCover },
-        ]}
+        ].filter(p => !hideExisting || p.file)}
       />
     </div>
   );
