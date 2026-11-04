@@ -15,7 +15,7 @@ import {
     stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth, pointsByProduct, roundPoints, tierOf,
     type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
-import { addSets, earned, eligibility, invoiceProblems, isOffer, isSellMore, noSets, optionOf, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
+import { addSets, earned, eligibility, groupOf, inAudience, invoiceProblems, isOffer, isSellMore, noSets, optionAllowed, optionOf, readAudience, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -583,12 +583,28 @@ async function storeTargets(scheme: Scheme, storeId: string) {
 /* ─── Sell More Earn More ─────────────────────────────────────────────────── */
 
 /**
- * Live, every franchise can see it and choose. Paused, which is how it starts,
- * only the scheme's own list of stores can: the test store, so it can be tried
- * on the live site without any real store seeing it.
+ * The program: live, the stores in its audience can see it. Paused, which is how
+ * it starts, only the scheme's own list of stores can: the test store, so it can
+ * be tried on the live site without any real store seeing it. Distributors see
+ * no other scheme; those are for franchises.
  */
-const canSee = (scheme: Scheme, store: NonNullable<Awaited<ReturnType<typeof myStore>>>) =>
-    isSellMore(scheme.id) && scheme.settings.live ? store.is_franchise : isEligible(scheme.eligibility, store);
+const canSee = (scheme: Scheme, store: NonNullable<Awaited<ReturnType<typeof myStore>>>) => {
+    if (!isSellMore(scheme.id)) return store.is_franchise && isEligible(scheme.eligibility, store);
+    return scheme.settings.live ? inAudience(store, readAudience(scheme.settings.audience)) : isEligible(scheme.eligibility, store);
+};
+
+/** Every verified store the program could be open to, franchises and distributors alike. */
+async function programStores() {
+    const [rows]: any = await db.execute(
+        `SELECT vd.id, vd.store_code, vd.store_name, vd.city, vd.state, vd.is_franchise, vd.is_distributor, COALESCE(vd.allowed_brands, 'AF') AS allowed_brands
+           FROM vendor_details vd JOIN vendor_verification vv ON vv.user_id = vd.user_id AND vv.is_verified = 1
+          WHERE vd.is_franchise = 1 OR vd.is_distributor = 1 ORDER BY vd.store_name`
+    );
+    return rows.map((r: any) => ({
+        id: String(r.id), code: r.store_code ?? null, name: String(r.store_name ?? '').trim(), city: r.city ?? null, state: r.state ?? null,
+        is_franchise: Boolean(r.is_franchise), allowed_brands: r.allowed_brands,
+    }));
+}
 
 /** The scheme's months up to this one (just its first before it starts). */
 function sellMoreMonths(scheme: Scheme) {
@@ -1273,6 +1289,21 @@ export class SchemeController {
         }
     }
 
+    /** Which groups and single stores the program is open to. */
+    static async adminSellMoreAudience(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const audience = readAudience(req.body);
+            await db.execute('UPDATE schemes SET settings = ? WHERE id = ?', [JSON.stringify({ ...scheme.settings, audience }), scheme.id]);
+            log(req, 'SCHEME_AUDIENCE_SET', scheme, { was: readAudience(scheme.settings.audience), now: audience });
+            res.json({ success: true });
+        } catch (error: any) {
+            console.error('[Schemes] audience:', error);
+            res.status(500).json({ error: 'Could not save' });
+        }
+    }
+
     /** The whole program at a glance: what's waiting, who chose what, and the totals. */
     static async adminSellMoreProgram(req: Request, res: Response) {
         try {
@@ -1280,7 +1311,9 @@ export class SchemeController {
             if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
             const [parts]: any = await db.execute('SELECT store_id, terms FROM scheme_participants WHERE scheme_id = ?', [scheme.id]);
             const optionFor = new Map<string, string | null>(parts.map((p: any) => [String(p.store_id), optionOf(json<any>(p.terms, {}))]));
-            const franchises = await allFranchises();
+            const audience = readAudience(scheme.settings.audience);
+            const everyone = await programStores();
+            const franchises = everyone.filter((s: any) => inAudience(s, audience));
             const months = sellMoreMonths(scheme);
             const current = months[months.length - 1];
             const sell = franchises.filter((f: any) => optionFor.get(f.id) === 'sell_more').map((f: any) => f.id as string);
@@ -1302,7 +1335,9 @@ export class SchemeController {
             res.json({
                 success: true,
                 live: scheme.settings.live === true,
-                preview_stores: franchises.filter((f: any) => (scheme.eligibility.store_ids ?? []).includes(f.id)).map((f: any) => f.name),
+                preview_stores: everyone.filter((f: any) => (scheme.eligibility.store_ids ?? []).includes(f.id)).map((f: any) => f.name),
+                audience,
+                stores: everyone.map((s: any) => ({ id: s.id, name: s.name, code: s.code, city: s.city, state: s.state, group: groupOf(s), option: optionFor.get(s.id) ?? null })),
                 month_label: current.label,
                 franchises: franchises.length, option1: sell.length,
                 option2: franchises.filter((f: any) => optionFor.get(f.id) === 'buy_more').length,
@@ -2251,7 +2286,7 @@ export class SchemeController {
                 return res.status(404).json({ error: 'Scheme not found' });
             }
             if (isSellMore(scheme.id)) {
-                return res.json({ success: true, scheme: sellMoreVisible(scheme), joined: true, can_submit: false, sell_more: await sellMoreForStore(scheme, store.id) });
+                return res.json({ success: true, scheme: sellMoreVisible(scheme), joined: true, can_submit: false, sell_more: { ...(await sellMoreForStore(scheme, store.id)), only_option: store.is_franchise ? null : 'buy_more' } });
             }
             if (scheme.settings.run === 'targets') {
                 const { eligibility: _e, ...visible } = scheme;
@@ -2335,7 +2370,7 @@ export class SchemeController {
                 return res.status(404).json({ error: 'Scheme not found' });
             }
             if (scheme.state === 'closed') return res.status(400).json({ error: 'This scheme has closed' });
-            if (req.body?.option !== 'sell_more' && req.body?.option !== 'buy_more') return res.status(400).json({ error: 'Choose an option' });
+            if (!optionAllowed(req.body?.option, store)) return res.status(400).json({ error: 'Choose an option' });
             if (req.body?.accept_terms !== true) return res.status(400).json({ error: 'Accept the terms to choose' });
             await db.execute('INSERT IGNORE INTO scheme_participants (scheme_id, store_id) VALUES (?, ?)', [scheme.id, store.id]);
             /* Only a store with no option yet is written, so a second choice can't replace the first. */

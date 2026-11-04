@@ -65,6 +65,7 @@ router.post('/admin/:id/targets/import', ...write, SchemeController.adminTargetI
 // Sell More Earn More: the stores that opted, their points and reward requests.
 router.get('/admin/:id/program', ...read, SchemeController.adminSellMoreProgram);
 router.put('/admin/:id/program/live', ...write, SchemeController.adminSellMoreLive);
+router.put('/admin/:id/program/audience', ...write, SchemeController.adminSellMoreAudience);
 router.get('/admin/:id/sell-more', ...read, SchemeController.adminSellMore);
 router.get('/admin/:id/sell-more/stores/:storeId', ...read, SchemeController.adminSellMoreStore);
 router.put('/admin/:id/sell-more/month', ...write, SchemeController.adminSellMoreMonth);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { earned, eligibility, invoiceProblems, isSellMore, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, storeScaleTarget, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
+import { earned, eligibility, groupOf, inAudience, invoiceProblems, isSellMore, optionAllowed, readAudience, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, storeScaleTarget, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
 import { periodsOf } from '../schemeTargets.js';
 
 const rule = {
@@ -146,6 +146,30 @@ test('an invoice needs a file, its number, a date in the program and sets', () =
     assert.equal(run({ invoice_date: '2026-10-31' }).length, 1);
     assert.equal(run({ invoice_date: '2026-11-04' }).length, 1);
     assert.equal(run({ sets: noSets() }).length, 1);
+});
+
+test('a store belongs to one group, and being a franchise comes first', () => {
+    assert.equal(groupOf({ is_franchise: 1, allowed_brands: 'AC' }), 'AC');
+    assert.equal(groupOf({ is_franchise: 1, allowed_brands: 'AFAC' }), 'AFAC');
+    assert.equal(groupOf({ is_franchise: 1, allowed_brands: null }), 'AF');
+    assert.equal(groupOf({ is_franchise: 0, allowed_brands: 'AF' }), 'distributors');
+});
+
+test('the audience: every group by default, then groups, then single stores', () => {
+    const store = { id: 's1', is_franchise: 1, allowed_brands: 'AC' };
+    assert.equal(inAudience(store, readAudience(undefined)), true);
+    assert.equal(inAudience(store, readAudience({ groups: { AC: false } })), false);
+    assert.equal(inAudience(store, readAudience({ groups: { AC: false }, include: ['s1'] })), true);
+    assert.equal(inAudience(store, readAudience({ exclude: ['s1'] })), false);
+    assert.deepEqual(readAudience({ include: ['s1', 's1', ''], exclude: ['s1'] }).include, []);
+    assert.equal(inAudience({ id: 'd', is_franchise: 0 }, readAudience({ groups: { distributors: false } })), false);
+});
+
+test('distributors only get Buy More Get More', () => {
+    assert.equal(optionAllowed('buy_more', { is_franchise: 0 }), true);
+    assert.equal(optionAllowed('sell_more', { is_franchise: 0 }), false);
+    assert.equal(optionAllowed('sell_more', { is_franchise: 1 }), true);
+    assert.equal(optionAllowed('other', { is_franchise: 1 }), false);
 });
 
 test('only the one scheme runs this way', () => {

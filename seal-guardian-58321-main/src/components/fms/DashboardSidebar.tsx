@@ -1,3 +1,4 @@
+import { useDistributorHasScheme } from "@/lib/useDistributorHasScheme";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { brandLook } from "@/lib/brand";
@@ -217,6 +218,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
     const look = brandLook(user?.brand);
     const { notifications } = useNotifications();
     const { isDistributor, isFranchise } = useB2BCart();
+    const distributorScheme = useDistributorHasScheme(isDistributor && !isFranchise);
     const navigate = useNavigate();
 
     const getBadgeCount = (type: string | string[]) => {
@@ -245,7 +247,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
         let items = group.items;
 
         if (isDistributor && !isFranchise) {
-            const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets', 'feedback'];
+            const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback'];
             items = items.filter(item => !franchiseOnly.includes(item.id));
         }
 

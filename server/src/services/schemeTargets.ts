@@ -68,8 +68,10 @@ export interface SchemeSettings {
     show: TargetVisibility;
     /* Sell More Earn More: a banner for each option. */
     option_banners?: { option1?: string; option2?: string };
-    /* Sell More Earn More: open to every franchise. Off, only the scheme's own stores see it. */
+    /* Sell More Earn More: open to its audience. Off, only the scheme's own stores see it. */
     live?: boolean;
+    /* Sell More Earn More: which groups and single stores it is open to. Read with readAudience. */
+    audience?: unknown;
 }
 
 export const DEFAULT_SETTINGS: SchemeSettings = {
@@ -285,6 +287,7 @@ export function readSettings(raw: unknown): SchemeSettings {
             to_next: s.show?.to_next ?? d.show.to_next,
         },
         ...(s.live === true ? { live: true } : {}),
+        ...(s.audience && typeof s.audience === 'object' ? { audience: s.audience } : {}),
         ...(s.option_banners ? {
             option_banners: {
                 ...(String(s.option_banners.option1 ?? '').trim() ? { option1: String(s.option_banners.option1).trim().slice(0, 500) } : {}),

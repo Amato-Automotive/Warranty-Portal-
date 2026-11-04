@@ -69,7 +69,7 @@ function Banner({ url, title, small }: { url: string; title: string; small?: boo
 
 type SellMoreScheme = { id: string; title: string; terms?: string | null; state: string; banner_url?: string | null; settings?: { option_banners?: { option1?: string; option2?: string } } };
 
-function ChooseOption({ scheme, reload }: { scheme: SellMoreScheme; reload: () => Promise<unknown> }) {
+function ChooseOption({ scheme, only, reload }: { scheme: SellMoreScheme; only: boolean; reload: () => Promise<unknown> }) {
     const { toast } = useToast();
     const { t, tr } = useLanguage();
     const [choosing, setChoosing] = useState<"sell_more" | "buy_more" | null>(null);
@@ -94,8 +94,8 @@ function ChooseOption({ scheme, reload }: { scheme: SellMoreScheme; reload: () =
 
     return (
         <>
-            <div className="grid gap-4 md:grid-cols-2">
-                <section className="flex flex-col gap-4 rounded-3xl border-2 border-orange-300 bg-white p-5 sm:p-6">
+            <div className={cn("grid gap-4", !only && "md:grid-cols-2")}>
+                {!only && <section className="flex flex-col gap-4 rounded-3xl border-2 border-orange-300 bg-white p-5 sm:p-6">
                     {scheme.settings?.option_banners?.option1 && <Banner small url={scheme.settings.option_banners.option1} title="Sell More Earn More" />}
                     <div className="flex items-center gap-3">
                         <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-100 text-orange-700"><Trophy className="h-6 w-6" /></span>
@@ -112,14 +112,14 @@ function ChooseOption({ scheme, reload }: { scheme: SellMoreScheme; reload: () =
                     <Button className="mt-auto h-11 bg-orange-500 font-bold hover:bg-orange-600" disabled={scheme.state === "closed"} onClick={() => pick("sell_more")}>
                         {tr("Choose Option 1", "विकल्प 1 चुनें")}
                     </Button>
-                </section>
+                </section>}
 
                 <section className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
                     {scheme.settings?.option_banners?.option2 && <Banner small url={scheme.settings.option_banners.option2} title="Buy More Get More" />}
                     <div className="flex items-center gap-3">
                         <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-700"><ShoppingCart className="h-6 w-6" /></span>
                         <div>
-                            <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-blue-700">{tr("Option 2", "विकल्प 2")}</p>
+                            {!only && <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-blue-700">{tr("Option 2", "विकल्प 2")}</p>}
                             <h2 className="text-xl font-black text-slate-900">Buy More Get More</h2>
                         </div>
                     </div>
@@ -128,7 +128,7 @@ function ChooseOption({ scheme, reload }: { scheme: SellMoreScheme; reload: () =
                         <li className="flex gap-2"><Gift className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />{tr("Premium mix: 4 Velora, 1 Doble, 1 Signature, 1 Emporio, get 1 set of 2-row Amaze free", "प्रीमियम मिक्स: 4 Velora, 1 Doble, 1 Signature, 1 Emporio, 1 सेट 2-रो Amaze मुफ़्त")}</li>
                     </ul>
                     <Button className="mt-auto h-11 bg-blue-600 font-bold hover:bg-blue-700" disabled={scheme.state === "closed"} onClick={() => pick("buy_more")}>
-                        {tr("Choose Option 2", "विकल्प 2 चुनें")}
+                        {only ? tr("Join Buy More Get More", "Buy More Get More से जुड़ें") : tr("Choose Option 2", "विकल्प 2 चुनें")}
                     </Button>
                 </section>
             </div>
@@ -136,17 +136,17 @@ function ChooseOption({ scheme, reload }: { scheme: SellMoreScheme; reload: () =
             <Dialog open={open} onOpenChange={v => !saving && setOpen(v)}>
                 <DialogContent className="max-h-[90vh] max-w-[calc(100%-2rem)] overflow-y-auto rounded-2xl sm:max-w-lg">
                     <DialogHeader>
-                        <DialogTitle className="text-xl font-black">{choosing === "buy_more" ? tr("Choose Option 2: Buy More Get More?", "विकल्प 2 चुनें: Buy More Get More?") : tr("Choose Option 1: Sell More Earn More?", "विकल्प 1 चुनें: Sell More Earn More?")}</DialogTitle>
+                        <DialogTitle className="text-xl font-black">{only ? tr("Join Buy More Get More?", "Buy More Get More से जुड़ें?") : choosing === "buy_more" ? tr("Choose Option 2: Buy More Get More?", "विकल्प 2 चुनें: Buy More Get More?") : tr("Choose Option 1: Sell More Earn More?", "विकल्प 1 चुनें: Sell More Earn More?")}</DialogTitle>
                         <DialogDescription className="sr-only">{tr("Terms and conditions", "नियम और शर्तें")}</DialogDescription>
                     </DialogHeader>
-                    <p className="flex gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+                    {!only && <p className="flex gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                         {tr("You can choose only one option. Once you confirm, you can't change it.", "आप केवल एक विकल्प चुन सकते हैं। पुष्टि के बाद इसे बदला नहीं जा सकता।")}
-                    </p>
+                    </p>}
                     <div>
                         <h3 className="mb-2 text-sm font-extrabold text-slate-900">{tr("Terms and conditions", "नियम और शर्तें")}</h3>
                         <ul className="list-disc space-y-1.5 pl-5 text-sm text-slate-700">
-                            {terms(tr, choosing ?? "sell_more").map(line => <li key={line}>{line}</li>)}
+                            {terms(tr, choosing ?? "sell_more").filter((_, i) => !only || i !== 1).map(line => <li key={line}>{line}</li>)}
                         </ul>
                         {scheme.terms && <p className="mt-3 whitespace-pre-line text-sm text-slate-700">{scheme.terms}</p>}
                     </div>
@@ -348,7 +348,7 @@ export function SellMoreView({ scheme, data, onBack, onRefresh }: {
                 <p className="mt-1 text-sm text-slate-600">
                     {data.option
                         ? `${tr("Your option", "आपका विकल्प")}: ${data.option === "buy_more" ? "Buy More Get More" : "Sell More Earn More"}${data.opted_at ? ` · ${tr("chosen on", "चुना")} ${stampDay(data.opted_at, locale)}` : ""}`
-                        : tr("Two options. Choose one.", "दो विकल्प। एक चुनें।")}
+                        : data.only_option ? "Buy More Get More" : tr("Two options. Choose one.", "दो विकल्प। एक चुनें।")}
                 </p>
             </div>
             {data.option
@@ -358,7 +358,7 @@ export function SellMoreView({ scheme, data, onBack, onRefresh }: {
                 ? <BuyMoreView schemeId={scheme.id} data={data.buy_more} reload={onRefresh} />
                 : data.option
                 ? <Earned schemeId={scheme.id} data={data} reload={onRefresh} />
-                : <ChooseOption scheme={scheme} reload={onRefresh} />}
+                : <ChooseOption scheme={scheme} only={Boolean(data.only_option)} reload={onRefresh} />}
         </div>
     );
 }

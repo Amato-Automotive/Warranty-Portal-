@@ -13,6 +13,8 @@ export interface StoreSellMore {
     option: "sell_more" | "buy_more" | null; opted_at: string | null;
     total: number; warranties: number; months: SellMoreMonth[];
     buy_more?: StoreBuyMore | null;
+    /* A distributor gets just this option, with no choice between the two. */
+    only_option?: "buy_more" | null;
 }
 
 /* ─── Option 2: Buy More Get More ─────────────────────────────────────────── */
@@ -57,8 +59,11 @@ export interface AdminSellMore {
     tiers: { id: string; name: string }[];
     stores: AdminSellMoreStore[];
 }
+export type AudienceGroup = "AF" | "AC" | "AFAC" | "distributors";
+export interface Audience { groups: Record<AudienceGroup, boolean>; include: string[]; exclude: string[] }
+export interface ProgramStore { id: string; name: string; code: string | null; city: string | null; state: string | null; group: AudienceGroup; option: string | null }
 export interface ProgramOverview {
-    live: boolean; preview_stores: string[];
+    live: boolean; preview_stores: string[]; audience: Audience; stores: ProgramStore[];
     month_label: string; franchises: number; option1: number; option2: number;
     not_chosen: { id: string; name: string; code: string | null; city: string | null; state: string | null }[];
     invoices_waiting: number; oldest_invoice: string | null; redeem_waiting: number; free_given: number;

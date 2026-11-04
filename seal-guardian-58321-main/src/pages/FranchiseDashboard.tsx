@@ -24,6 +24,7 @@ import { ComingSoon } from "@/components/fms/ComingSoon";
 import { FranchiseAudits } from "@/components/fms/FranchiseAudits";
 import { FranchiseLeads, type LeadsView } from "@/components/fms/FranchiseLeads";
 import { FranchiseSchemes } from "@/components/fms/FranchiseSchemes";
+import { useDistributorHasScheme } from "@/lib/useDistributorHasScheme";
 import VendorGrievances from "@/components/fms/VendorGrievances";
 import POSMModule from "@/components/fms/POSMModule";
 import FeedbackModule from "@/components/fms/FeedbackModule";
@@ -66,6 +67,7 @@ const FranchiseDashboard = () => {
     const { fullHistory } = useNotifications();
     const { tr } = useLanguage();
     const { isDistributor, isFranchise, loadingProfile } = useB2BCart();
+    const distributorScheme = useDistributorHasScheme(isDistributor && !isFranchise);
     const context = useOutletContext<DashboardContext>();
     const [localActiveModule, setLocalActiveModule] = useState<FmsModule>('home');
 
@@ -80,7 +82,7 @@ const FranchiseDashboard = () => {
     const filteredMenuGroups = menuGroups.map(group => {
         if (isDistributor && !isFranchise) {
             const filteredItems = group.items.filter(item => {
-                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', 'offers', 'audit', 'targets', 'feedback'];
+                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback'];
                 return !franchiseOnly.includes(item.id);
             });
             return { ...group, items: filteredItems };

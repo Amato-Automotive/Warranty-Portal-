@@ -14,6 +14,41 @@
  */
 import { roundPoints, type Period, type PointsRule, type StoreTier } from './schemeTargets.js';
 
+/* ─── Who the program is open to ──────────────────────────────────────────── */
+
+export type AudienceGroup = 'AF' | 'AC' | 'AFAC' | 'distributors';
+export const AUDIENCE_GROUPS: AudienceGroup[] = ['AF', 'AC', 'AFAC', 'distributors'];
+export interface Audience { groups: Record<AudienceGroup, boolean>; include: string[]; exclude: string[] }
+
+/** A store's group: distributor only, else a franchise by its brand. A store that is both counts as a franchise. */
+export function groupOf(store: { is_franchise: unknown; allowed_brands?: unknown }): AudienceGroup {
+    if (!store.is_franchise) return 'distributors';
+    const b = String(store.allowed_brands ?? '').trim().toUpperCase();
+    return b === 'AC' || b === 'AFAC' ? b : 'AF';
+}
+
+/** The audience as saved or sent: groups on unless switched off; a store can't be both always and never. */
+export function readAudience(raw: any): Audience {
+    const ids = (v: unknown) => [...new Set((Array.isArray(v) ? v : []).map(x => String(x ?? '').trim()).filter(Boolean))].slice(0, 2000);
+    const exclude = ids(raw?.exclude);
+    return {
+        groups: Object.fromEntries(AUDIENCE_GROUPS.map(g => [g, raw?.groups?.[g] !== false])) as Record<AudienceGroup, boolean>,
+        include: ids(raw?.include).filter(id => !exclude.includes(id)),
+        exclude,
+    };
+}
+
+/** Whether a store can see the program: its own setting first, then its group's. */
+export function inAudience(store: { id: string; is_franchise: unknown; allowed_brands?: unknown }, a: Audience): boolean {
+    if (a.exclude.includes(store.id)) return false;
+    if (a.include.includes(store.id)) return true;
+    return a.groups[groupOf(store)];
+}
+
+/** Distributors only get Buy More Get More; franchises choose either. */
+export const optionAllowed = (option: unknown, store: { is_franchise: unknown }) =>
+    option === 'buy_more' || (option === 'sell_more' && Boolean(store.is_franchise));
+
 /** The published scheme on the live portal. */
 export const SELL_MORE_ID = '22dc9530-8c7e-4438-9230-4f7aa31d3e3d';
 export const isSellMore = (id: string) => id === SELL_MORE_ID;
