@@ -54,6 +54,7 @@ export type AdminModule =
     | 'posm'
     | 'claims'
     | 'feedback'
+    | 'franchise-forms'
     | 'schemes'
     | 'uid-management'
     | 'ppf-rolls'
@@ -88,6 +89,7 @@ const moduleToPermKey: Record<string, string> = {
     'posm': 'posm',
     'claims': 'claims',
     'feedback': 'feedback',
+    'franchise-forms': 'feedback',
     'schemes': 'schemes',
     'ecatalogue': 'ecatalogue',
     'terms': 'terms',
@@ -156,6 +158,7 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
             { id: 'posm', label: "POSM Requests", icon: Flag, keywords: ['posm requirements', 'marketing material', 'branding'] },
             { id: 'schemes', label: "Offers & Schemes", icon: Gift, keywords: ['schemes', 'offers', 'incentives', 'leaderboard', 'contest', 'rewards'] },
             { id: 'feedback', label: "Review & Feedback", icon: MessageSquareHeart, keywords: ['feedback', 'review', 'survey', 'monthly questions', 'rating'] },
+            { id: 'franchise-forms', label: "Franchise Forms", icon: FileText, keywords: ['forms', 'questionnaire', 'targeted survey', 'franchise form'] },
             { id: 'grievances', label: "Complaints", icon: MessageSquareWarning, keywords: ['complaints', 'tickets'] },
             { id: 'asm-management', label: "ASM Management", icon: BriefcaseBusiness, keywords: ['asm', 'area sales manager', 'sales team'] },
             { id: 'asm-expenses', label: "ASM Expenses", icon: Receipt, keywords: ['expense claims', 'reimbursement', 'hr', 'travel', 'conveyance', 'paid'] },

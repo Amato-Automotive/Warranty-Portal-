@@ -30,6 +30,7 @@ import settingsRoutes from './routes/settings.routes.js';
 import posmRoutes from './routes/posm.routes.js';
 import claimRoutes from './routes/claims.routes.js';
 import feedbackRoutes from './routes/feedback.routes.js';
+import franchiseFormsRoutes from './routes/franchiseForms.routes.js';
 import schemeRoutes from './routes/scheme.routes.js';
 import uidRoutes from './routes/uid.routes.js';
 import orderRoutes from './routes/order.routes.js';
@@ -589,6 +590,28 @@ async function runMigrations() {
          KEY idx_feedback_month (month)
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+    // Reusable franchise forms: each form has its own questions, banner,
+    // audience and one response per franchise.
+    await pool.query(`CREATE TABLE IF NOT EXISTS franchise_forms (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         settings JSON NOT NULL,
+         updated_by CHAR(36) NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         deleted_at TIMESTAMP NULL,
+         KEY idx_franchise_forms_deleted (deleted_at)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS franchise_form_responses (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         form_id CHAR(36) NOT NULL,
+         store_id CHAR(36) NOT NULL,
+         answers JSON NOT NULL,
+         submitted_by CHAR(36) NULL,
+         submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE KEY uq_franchise_form_store (form_id, store_id),
+         KEY idx_franchise_form_responses_form (form_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
     // Warranty and alteration claims (claimFlow): raised by the customer or the
     // store, inspected by the store, decided and sent by head office.
     /* The production sheets claims are read from (Claims › Sheet sync). */
@@ -845,6 +868,7 @@ app.use('/api/settings', generalApiLimiter, settingsRoutes);
 app.use('/api/posm', generalApiLimiter, posmRoutes);
 app.use('/api/claims', generalApiLimiter, claimRoutes);
 app.use('/api/feedback', generalApiLimiter, feedbackRoutes);
+app.use('/api/franchise-forms', generalApiLimiter, franchiseFormsRoutes);
 app.use('/api/schemes', generalApiLimiter, schemeRoutes);
 app.use('/api/uid', generalApiLimiter, uidRoutes);
 app.use('/api/orders', generalApiLimiter, orderRoutes);

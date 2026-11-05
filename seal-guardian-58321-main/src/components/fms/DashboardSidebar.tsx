@@ -49,6 +49,7 @@ export type FmsModule =
     | 'targets'
     | 'posm'
     | 'feedback'
+    | 'franchise-forms'
     | 'terms'
     | 'claim-process'
     | 'profile';
@@ -190,6 +191,7 @@ export const menuGroups = [
             },
             { id: 'audit' as const, label: "Audit & Compliance", icon: ClipboardCheck },
             { id: 'feedback' as const, label: "Review & Feedback", icon: MessageSquareHeart },
+            { id: 'franchise-forms' as const, label: "Franchise Forms", icon: ClipboardList },
         ]
     },
     {
@@ -247,7 +249,7 @@ export const DashboardSidebar = ({ activeModule, onModuleChange, isCollapsed, on
         let items = group.items;
 
         if (isDistributor && !isFranchise) {
-            const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback'];
+            const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback', 'franchise-forms'];
             items = items.filter(item => !franchiseOnly.includes(item.id));
         }
 

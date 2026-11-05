@@ -1,0 +1,4 @@
+import type { FeedbackAnswer, FeedbackQuestion, FeedbackAudience } from './feedback';
+export interface FranchiseForm { id: string; title: string; intro: string; banner_url: string | null; audience: FeedbackAudience; questions: FeedbackQuestion[]; status: 'draft' | 'live' | 'offline'; submitted?: boolean; response?: { answers: FeedbackAnswer[]; submitted_at: string } | null; }
+export interface FranchiseFormResponse { id: string; form_id: string; store_id: string; store_name: string; store_code?: string | null; city?: string | null; state?: string | null; answers: FeedbackAnswer[]; submitted_at: string; }
+export const answerText = (a: FeedbackAnswer) => a.type === 'photo' ? `${(a.files ?? []).length} photo${(a.files ?? []).length === 1 ? '' : 's'}` : Array.isArray(a.value) ? a.value.join(', ') : a.value === true ? 'Yes' : a.value === false ? 'No' : String(a.value ?? '—');

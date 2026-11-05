@@ -15,7 +15,7 @@ import {
     stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth, pointsByProduct, roundPoints, tierOf,
     type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
-import { addSets, earned, eligibility, groupOf, inAudience, invoiceProblems, isOffer, isSellMore, noSets, optionAllowed, optionOf, readAudience, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
+import { addSets, earned, eligibility, groupOf, inAudience, invoiceProblems, isOffer, isSellMore, noSets, optionAllowed, optionOf, readAudience, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, type AssignedOption, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -590,8 +590,25 @@ async function storeTargets(scheme: Scheme, storeId: string) {
  */
 const canSee = (scheme: Scheme, store: NonNullable<Awaited<ReturnType<typeof myStore>>>) => {
     if (!isSellMore(scheme.id)) return store.is_franchise && isEligible(scheme.eligibility, store);
-    return scheme.settings.live ? inAudience(store, readAudience(scheme.settings.audience)) : isEligible(scheme.eligibility, store);
+    const audience = readAudience(scheme.settings.audience);
+    return scheme.settings.live ? (Boolean(audience.assignments[store.id]) || inAudience(store, audience)) : isEligible(scheme.eligibility, store);
 };
+
+const assignedOption = (scheme: Scheme, storeId: string): AssignedOption | null =>
+    readAudience(scheme.settings.audience).assignments[storeId] ?? null;
+
+/** Materialise an admin assignment as the store's permanent option. */
+async function ensureAssignedOption(scheme: Scheme, storeId: string) {
+    const option = assignedOption(scheme, storeId);
+    if (!option) return null;
+    await db.execute('INSERT IGNORE INTO scheme_participants (scheme_id, store_id) VALUES (?, ?)', [scheme.id, storeId]);
+    await db.execute(
+        `UPDATE scheme_participants SET terms = JSON_SET(COALESCE(terms, '{}'), '$.option', ?, '$.source', 'admin', '$.opted_at', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(terms, '$.opted_at')), ?))
+         WHERE scheme_id = ? AND store_id = ? AND (terms IS NULL OR JSON_EXTRACT(terms, '$.source') = '"admin"' OR JSON_EXTRACT(terms, '$.option') IS NULL)`,
+        [option, new Date().toISOString(), scheme.id, storeId]
+    );
+    return option;
+}
 
 /** Every verified store the program could be open to, franchises and distributors alike. */
 async function programStores() {
@@ -709,12 +726,13 @@ async function buyMoreForStore(scheme: Scheme, storeId: string) {
 
 /** One store's own view: its choice, its plain points by day and month, each month's reward. Never its store type or calculated score. */
 async function sellMoreForStore(scheme: Scheme, storeId: string) {
+    await ensureAssignedOption(scheme, storeId);
     const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
     const terms = json<StoreTerms & { option?: string; opted_at?: string }>(p?.terms, {});
     const option = optionOf(terms);
     if (option !== 'sell_more') {
         return {
-            option, opted_at: terms.opted_at ?? null, total: 0, warranties: 0, months: [],
+            option, opted_at: terms.opted_at ?? null, assigned: Boolean(assignedOption(scheme, storeId)), total: 0, warranties: 0, months: [],
             buy_more: option === 'buy_more' ? await buyMoreForStore(scheme, storeId) : null,
         };
     }
@@ -725,7 +743,7 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
     const monthTerms = (await sellMoreMonthTerms(scheme.id, [storeId])).get(storeId);
     const shown = new Set(months.map(m => m.key));
     return {
-        option, opted_at: terms.opted_at ?? null, total: e.total, warranties: e.warranties,
+        option, opted_at: terms.opted_at ?? null, assigned: Boolean(assignedOption(scheme, storeId)), total: e.total, warranties: e.warranties,
         months: [
             ...e.months.map(m => {
                 const r = rewards?.get(m.key);
@@ -1295,7 +1313,30 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
             const audience = readAudience(req.body);
+            const stores = await programStores();
+            const valid = new Set(stores.filter((s: any) => inAudience(s, audience) || audience.assignments[s.id]).map((s: any) => s.id));
+            for (const [storeId, option] of Object.entries(audience.assignments)) {
+                const store = stores.find((s: any) => s.id === storeId);
+                if (!store || !valid.has(storeId) || !optionAllowed(option, store)) delete audience.assignments[storeId];
+            }
+            const previous = readAudience(scheme.settings.audience);
+            for (const storeId of Object.keys(previous.assignments)) {
+                if (audience.assignments[storeId]) continue;
+                await db.execute(
+                    `UPDATE scheme_participants SET terms = JSON_REMOVE(COALESCE(terms, '{}'), '$.option', '$.source', '$.opted_at')
+                     WHERE scheme_id = ? AND store_id = ? AND JSON_EXTRACT(terms, '$.source') = '"admin"'`,
+                    [scheme.id, storeId]
+                );
+            }
             await db.execute('UPDATE schemes SET settings = ? WHERE id = ?', [JSON.stringify({ ...scheme.settings, audience }), scheme.id]);
+            for (const [storeId, option] of Object.entries(audience.assignments)) {
+                await db.execute('INSERT IGNORE INTO scheme_participants (scheme_id, store_id) VALUES (?, ?)', [scheme.id, storeId]);
+                await db.execute(
+                    `UPDATE scheme_participants SET terms = JSON_SET(COALESCE(terms, '{}'), '$.option', ?, '$.source', 'admin', '$.opted_at', ?)
+                     WHERE scheme_id = ? AND store_id = ?`,
+                    [option, new Date().toISOString(), scheme.id, storeId]
+                );
+            }
             log(req, 'SCHEME_AUDIENCE_SET', scheme, { was: readAudience(scheme.settings.audience), now: audience });
             res.json({ success: true });
         } catch (error: any) {
@@ -1310,10 +1351,10 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
             const [parts]: any = await db.execute('SELECT store_id, terms FROM scheme_participants WHERE scheme_id = ?', [scheme.id]);
-            const optionFor = new Map<string, string | null>(parts.map((p: any) => [String(p.store_id), optionOf(json<any>(p.terms, {}))]));
             const audience = readAudience(scheme.settings.audience);
+            const optionFor = new Map<string, string | null>(parts.map((p: any) => [String(p.store_id), optionOf(json<any>(p.terms, {})) ?? audience.assignments[String(p.store_id)] ?? null]));
             const everyone = await programStores();
-            const franchises = everyone.filter((s: any) => inAudience(s, audience));
+            const franchises = everyone.filter((s: any) => inAudience(s, audience) || Boolean(audience.assignments[s.id]));
             const months = sellMoreMonths(scheme);
             const current = months[months.length - 1];
             const sell = franchises.filter((f: any) => optionFor.get(f.id) === 'sell_more').map((f: any) => f.id as string);
@@ -1337,7 +1378,7 @@ export class SchemeController {
                 live: scheme.settings.live === true,
                 preview_stores: everyone.filter((f: any) => (scheme.eligibility.store_ids ?? []).includes(f.id)).map((f: any) => f.name),
                 audience,
-                stores: everyone.map((s: any) => ({ id: s.id, name: s.name, code: s.code, city: s.city, state: s.state, group: groupOf(s), option: optionFor.get(s.id) ?? null })),
+                stores: everyone.map((s: any) => ({ id: s.id, name: s.name, code: s.code, city: s.city, state: s.state, group: groupOf(s), option: optionFor.get(s.id) ?? null, assignment: audience.assignments[s.id] ?? null })),
                 month_label: current.label,
                 franchises: franchises.length, option1: sell.length,
                 option2: franchises.filter((f: any) => optionFor.get(f.id) === 'buy_more').length,
@@ -2360,7 +2401,7 @@ export class SchemeController {
         }
     }
 
-    /** Sell More Earn More: opt for an option, once. There is no way back. */
+    /** Sell More Earn More: opt for an option; admins can later reassign or release it. */
     static async storeOpt(req: Request, res: Response) {
         try {
             const store = await myStore(req);
@@ -2370,6 +2411,7 @@ export class SchemeController {
                 return res.status(404).json({ error: 'Scheme not found' });
             }
             if (scheme.state === 'closed') return res.status(400).json({ error: 'This scheme has closed' });
+            if (assignedOption(scheme, store.id)) return res.status(400).json({ error: 'Head office has already assigned your option' });
             if (!optionAllowed(req.body?.option, store)) return res.status(400).json({ error: 'Choose an option' });
             if (req.body?.accept_terms !== true) return res.status(400).json({ error: 'Accept the terms to choose' });
             await db.execute('INSERT IGNORE INTO scheme_participants (scheme_id, store_id) VALUES (?, ?)', [scheme.id, store.id]);

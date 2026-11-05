@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { stampDay, type Audience, type AudienceGroup, type ProgramOverview, type ProgramStore } from "@/lib/sellMore";
+import { stampDay, type AssignedOption, type Audience, type AudienceGroup, type ProgramOverview, type ProgramStore } from "@/lib/sellMore";
 import { SellMoreTab } from "./SellMoreTab";
 import { BuyMoreTab } from "./BuyMoreTab";
 
@@ -103,11 +103,17 @@ function AudiencePanel({ audience, stores, onSave }: { audience: Audience; store
     const [busy, setBusy] = useState(false);
     const save = async (a: Audience) => { setBusy(true); try { await onSave(a); } finally { setBusy(false); } };
     const setting = (id: string) => (audience.include.includes(id) ? "always" : audience.exclude.includes(id) ? "never" : "group");
+    const assignment = (id: string) => audience.assignments?.[id] ?? "self";
     const setStore = (id: string, value: string) => save({
         ...audience,
         include: value === "always" ? [...audience.include.filter(x => x !== id), id] : audience.include.filter(x => x !== id),
         exclude: value === "never" ? [...audience.exclude.filter(x => x !== id), id] : audience.exclude.filter(x => x !== id),
     });
+    const setAssignment = (id: string, value: string) => {
+        const assignments = { ...(audience.assignments ?? {}) };
+        if (value === "self") delete assignments[id]; else assignments[id] = value as AssignedOption;
+        return save({ ...audience, assignments });
+    };
     const count = (g: AudienceGroup) => stores.filter(s => s.group === g).length;
     const special = audience.include.length + audience.exclude.length;
     const term = q.trim().toLowerCase();
@@ -147,16 +153,24 @@ function AudiencePanel({ audience, stores, onSave }: { audience: Audience; store
                                     <span className="block font-medium text-slate-900">{s.name}</span>
                                     <span className="block text-xs text-slate-500">{[groupName(s.group), s.code, s.city, s.state].filter(Boolean).join(" · ")}</span>
                                 </span>
-                                <select value={setting(s.id)} disabled={busy} onChange={e => setStore(s.id, e.target.value)} aria-label={`Setting for ${s.name}`} className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium">
-                                    <option value="group">Follow its group</option>
-                                    <option value="always">Always show</option>
-                                    <option value="never">Never show</option>
-                                </select>
+                                <div className="flex flex-wrap justify-end gap-1.5">
+                                    <select value={setting(s.id)} disabled={busy} onChange={e => setStore(s.id, e.target.value)} aria-label={`Visibility for ${s.name}`} className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium">
+                                        <option value="group">Follow its group</option>
+                                        <option value="always">Always show</option>
+                                        <option value="never">Never show</option>
+                                    </select>
+                                    <select value={assignment(s.id)} disabled={busy} onChange={e => setAssignment(s.id, e.target.value)} aria-label={`Scheme option for ${s.name}`} className="h-8 rounded-md border border-orange-200 bg-orange-50 px-2 text-xs font-semibold text-orange-800">
+                                        <option value="self">Store chooses</option>
+                                        <option value="sell_more" disabled={s.group === "distributors"}>Assign Option 1</option>
+                                        <option value="buy_more">Assign Option 2</option>
+                                    </select>
+                                </div>
                             </li>
                         ))}
                         {!shown.length && <li className="px-3 py-6 text-center text-sm text-slate-500">No store matches.</li>}
                     </ul>
                     {stores.length > 100 && !term && <p className="text-xs text-slate-500">Showing the first 100. Search to find a store.</p>}
+                    <p className="text-xs text-slate-500">Assigning an option makes the store join that option automatically. Stores left on “Store chooses” keep the current flow.</p>
                 </div>
             )}
         </section>

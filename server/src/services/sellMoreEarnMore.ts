@@ -1,7 +1,7 @@
 /**
  * Sell More Earn More, Nov 2026 to Mar 2027. Hardcoded on purpose: this one
- * scheme has its own rules and no builder in the admin. A franchise opts for
- * one option once and can't change it.
+ * scheme has its own rules and no builder in the admin. A franchise normally
+ * opts for one option once; an admin assignment can override or release it.
  *
  * Option 1 (Sell More): points on every warranty the store registers, by the
  * series its product is in, counted live, rejected ones left out. No targets.
@@ -18,7 +18,8 @@ import { roundPoints, type Period, type PointsRule, type StoreTier } from './sch
 
 export type AudienceGroup = 'AF' | 'AC' | 'AFAC' | 'distributors';
 export const AUDIENCE_GROUPS: AudienceGroup[] = ['AF', 'AC', 'AFAC', 'distributors'];
-export interface Audience { groups: Record<AudienceGroup, boolean>; include: string[]; exclude: string[] }
+export type AssignedOption = 'sell_more' | 'buy_more';
+export interface Audience { groups: Record<AudienceGroup, boolean>; include: string[]; exclude: string[]; assignments: Record<string, AssignedOption> }
 
 /** A store's group: distributor only, else a franchise by its brand. A store that is both counts as a franchise. */
 export function groupOf(store: { is_franchise: unknown; allowed_brands?: unknown }): AudienceGroup {
@@ -31,10 +32,14 @@ export function groupOf(store: { is_franchise: unknown; allowed_brands?: unknown
 export function readAudience(raw: any): Audience {
     const ids = (v: unknown) => [...new Set((Array.isArray(v) ? v : []).map(x => String(x ?? '').trim()).filter(Boolean))].slice(0, 2000);
     const exclude = ids(raw?.exclude);
+    const assignments = Object.fromEntries(Object.entries(raw?.assignments ?? {}).filter(([id, option]) =>
+        ids([id]).length > 0 && (option === 'sell_more' || option === 'buy_more'))
+    ) as Record<string, AssignedOption>;
     return {
         groups: Object.fromEntries(AUDIENCE_GROUPS.map(g => [g, raw?.groups?.[g] !== false])) as Record<AudienceGroup, boolean>,
         include: ids(raw?.include).filter(id => !exclude.includes(id)),
         exclude,
+        assignments,
     };
 }
 

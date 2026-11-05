@@ -28,6 +28,7 @@ import { useDistributorHasScheme } from "@/lib/useDistributorHasScheme";
 import VendorGrievances from "@/components/fms/VendorGrievances";
 import POSMModule from "@/components/fms/POSMModule";
 import FeedbackModule from "@/components/fms/FeedbackModule";
+import FranchiseFormsModule from "@/components/fms/FranchiseFormsModule";
 import { FeedbackReminder } from "@/components/fms/FeedbackReminder";
 import ECatalogue from "@/components/fms/ECatalogue";
 import B2BOrderManagement from "@/components/fms/B2BOrderManagement";
@@ -888,6 +889,8 @@ const FranchiseDashboard = () => {
                 );
             case 'feedback':
                 return <FeedbackModule />;
+            case 'franchise-forms':
+                return <FranchiseFormsModule />;
             case 'ecatalogue':
                 return (
                     <div className="-mt-8 md:-mt-14">
@@ -926,6 +929,7 @@ const FranchiseDashboard = () => {
             targets: "Targets & Achievements",
             posm: "POSM Requirements",
             feedback: "Review & Feedback",
+            "franchise-forms": "Franchise Forms",
             profile: "My Profile"
         };
         return titles[activeModule] || "Dashboard";

@@ -15,6 +15,7 @@ export interface StoreSellMore {
     buy_more?: StoreBuyMore | null;
     /* A distributor gets just this option, with no choice between the two. */
     only_option?: "buy_more" | null;
+    assigned?: boolean;
 }
 
 /* ─── Option 2: Buy More Get More ─────────────────────────────────────────── */
@@ -60,8 +61,9 @@ export interface AdminSellMore {
     stores: AdminSellMoreStore[];
 }
 export type AudienceGroup = "AF" | "AC" | "AFAC" | "distributors";
-export interface Audience { groups: Record<AudienceGroup, boolean>; include: string[]; exclude: string[] }
-export interface ProgramStore { id: string; name: string; code: string | null; city: string | null; state: string | null; group: AudienceGroup; option: string | null }
+export type AssignedOption = "sell_more" | "buy_more";
+export interface Audience { groups: Record<AudienceGroup, boolean>; include: string[]; exclude: string[]; assignments: Record<string, AssignedOption> }
+export interface ProgramStore { id: string; name: string; code: string | null; city: string | null; state: string | null; group: AudienceGroup; option: string | null; assignment?: AssignedOption | null }
 export interface ProgramOverview {
     live: boolean; preview_stores: string[]; audience: Audience; stores: ProgramStore[];
     month_label: string; franchises: number; option1: number; option2: number;
