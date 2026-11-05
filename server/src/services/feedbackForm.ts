@@ -282,7 +282,12 @@ export function validateAnswers(raw: unknown, f: FeedbackSettings, fileCounts: R
                 const n = whole(v); if (!(Number.isInteger(n) && n >= lo && n <= hi)) return need(`pick ${lo} to ${hi}`); value = n; break;
             }
             case 'nps': { const n = whole(v); if (!(Number.isInteger(n) && n >= 0 && n <= 10)) return need('pick 0 to 10'); value = n; break; }
-            case 'number': { const n = whole(v); if (!Number.isFinite(n) || Math.abs(n) > 1e9) return need('enter a number'); value = n; break; }
+            case 'number': {
+                const phoneLike = /phone|contact|mobile|pincode|pin\s*code/i.test(q.label);
+                const n = phoneLike && typeof v === 'string' ? Number(v.replace(/\D/g, '')) : whole(v);
+                if (!Number.isFinite(n) || Math.abs(n) > (phoneLike ? 1e12 : 1e9)) return need('enter a number');
+                value = n; break;
+            }
             case 'yesno': {
                 const b = v === true || v === 'yes' || v === 'true' ? true : v === false || v === 'no' || v === 'false' ? false : null;
                 if (b === null) return need('answer yes or no');
