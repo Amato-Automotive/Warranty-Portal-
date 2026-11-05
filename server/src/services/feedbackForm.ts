@@ -241,7 +241,14 @@ export interface FeedbackAnswer {
     files?: string[];
 }
 
-const whole = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : NaN; };
+/* Number inputs arrive as strings, and phone fields are often entered with
+ * harmless formatting such as spaces, commas, or a leading +. Keep the
+ * strict numeric validation while normalising those separators first. */
+const whole = (v: unknown) => {
+    const text = typeof v === 'string' ? v.trim().replace(/[\s,+]/g, '') : v;
+    const n = Number(text);
+    return Number.isFinite(n) ? n : NaN;
+};
 
 /**
  * Checks what a store sent against the active questions and returns the
