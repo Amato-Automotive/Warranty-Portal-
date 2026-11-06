@@ -214,7 +214,10 @@ export const VehicleFields = ({ value, onChange, airbags, registered, plant = fa
                             <select value={value.component} aria-label="Request component" onChange={e => onChange({ ...value, component: e.target.value })}
                                 className="h-12 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold">
                                 <option value="">Request component</option>
-                                {(value.component && !components.includes(value.component) ? [value.component] : []).concat(components).map(c => <option key={c} value={c}>{c}</option>)}
+                                {value.component && !components.some(g => g.items.includes(value.component)) && <option value={value.component}>{value.component}</option>}
+                                {components.map(g => g.name
+                                    ? <optgroup key={g.name} label={g.name}>{g.items.map(c => <option key={c} value={c}>{c}</option>)}</optgroup>
+                                    : g.items.map(c => <option key={c} value={c}>{c}</option>))}
                             </select>
                             <Textarea value={value.component_remarks} onChange={e => onChange({ ...value, component_remarks: e.target.value })} rows={2} maxLength={500}
                                 className="rounded-xl" placeholder="Remarks" aria-label="Remarks" />

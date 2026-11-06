@@ -253,6 +253,23 @@ export function parseMaterials(value: unknown): string[] {
 }
 
 /**
+ * The admin's components, as saved: groups of names (front portion, rear
+ * portion...) in the order the admin keeps them. An older flat list of names
+ * is read as one group with no heading.
+ */
+export function parseComponentGroups(value: unknown): { name: string; items: string[] }[] {
+    try {
+        const raw = typeof value === 'string' ? JSON.parse(value) : value;
+        const entries: [string, unknown][] = Array.isArray(raw) ? [['', raw]] : raw && typeof raw === 'object' ? Object.entries(raw as Record<string, unknown>) : [];
+        return entries
+            .map(([name, items]) => ({ name: String(name).trim(), items: Array.isArray(items) ? items.map(x => String(x).trim()).filter(Boolean) : [] }))
+            .filter(g => g.items.length);
+    } catch {
+        return [];
+    }
+}
+
+/**
  * The material chosen on a claim. Seat covers must choose one from the list;
  * other products, or an empty list, have none to choose. What the claim already
  * has stays allowed, in case it has since left the list.

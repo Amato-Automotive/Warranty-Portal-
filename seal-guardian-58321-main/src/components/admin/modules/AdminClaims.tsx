@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn, formatToIST } from "@/lib/utils";
-import { ClaimVehicleList } from "@/components/admin/modules/ClaimVehicleList";
+import { ClaimComponentList, ClaimVehicleList } from "@/components/admin/modules/ClaimVehicleList";
 import { ClaimNameList } from "@/components/admin/modules/ClaimNameList";
 import { decisionText, day, DEFAULT_COURIERS, forgetClaimsLive, guessMaterial, useClaimCouriers, HOLD_REASONS, useClaimMaterials, PROBLEMS, REJECT_REASONS, vehicleText, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
 import { ChangeRequestBox } from "@/components/claims/ClaimChange";
@@ -417,7 +417,7 @@ export const AdminClaims = () => {
                 : tab === 'vehicles'
                 ? <ClaimVehicleList />
                 : tab === 'components'
-                ? <ClaimNameList key="components" settingKey="claim_components" what="Component" />
+                ? <ClaimComponentList />
                 : <ClaimNameList key="couriers" settingKey="claim_couriers" what="Courier / Transporter" start={DEFAULT_COURIERS} />}
         </div>
     );

@@ -52,6 +52,7 @@ export type FmsModule =
     | 'franchise-forms'
     | 'terms'
     | 'claim-process'
+    | 'claim-info'
     | 'profile';
 
 interface SidebarItemProps {
@@ -204,6 +205,7 @@ export const menuGroups = [
             },
             { id: 'grievances' as const, label: "Complaint Redressal", icon: LifeBuoy },
             { id: 'terms' as const, label: "Terms & Conditions", icon: BookOpen },
+            { id: 'claim-info' as const, label: "Claim Info", icon: BookOpen },
             { id: 'claim-process' as const, label: "Warranty Claim / Alteration", icon: ClipboardList },
         ]
     },

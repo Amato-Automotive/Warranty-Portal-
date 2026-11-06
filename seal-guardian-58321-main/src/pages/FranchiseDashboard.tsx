@@ -777,6 +777,9 @@ const FranchiseDashboard = () => {
                         <Terms />
                     </div>
                 );
+            case 'claim-info':
+                // How claims work and the terms: always available, whether or not claims are open.
+                return <ClaimProcess />;
             case 'claim-process':
                 // Until the plant opens claims, the page shows how claims work, as before.
                 if (!claimsLive) return <ClaimProcess />;
@@ -923,6 +926,7 @@ const FranchiseDashboard = () => {
             orders: "Order Management",
             grievances: "Complaint Redressal",
             terms: "Terms & Conditions",
+            "claim-info": "Claim Info",
             "claim-process": "Warranty Claim / Alteration",
             offers: "Offers & Schemes",
             audit: "Audit & Compliance",

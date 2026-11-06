@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { APP_URL, UPLOADS_BASE_DIR, urlToDiskPath } from '../config/localUpload.js';
 import {
-    applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags, parseMaterials, readMaterial, readComponent,
+    applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags, parseMaterials, readMaterial, readComponent, parseComponentGroups,
     STATUS_TEXT, REJECT_REASONS, HOLD_REASONS, PROBLEMS, PLANT_RIGHTS, OLD_PART_ENABLED,
     type Actor, type ClaimAction, type ClaimStatus, type FlowClaim, type PlantRight, type Who,
 } from '../services/claimFlow.js';
@@ -350,7 +350,7 @@ async function claimVehicles(): Promise<Record<string, string[]>> {
 /** The components a seat cover claim is for (Admin › Claims › Components). */
 async function claimComponents(): Promise<string[]> {
     const [r]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claim_components'");
-    return parseMaterials(r[0]?.setting_value);
+    return parseComponentGroups(r[0]?.setting_value).flatMap(g => g.items);
 }
 
 /** The claim's own fields from what was sent, checked against its warranty. */

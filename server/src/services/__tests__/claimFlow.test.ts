@@ -275,3 +275,11 @@ test('the admin vehicle list is cleaned, and an unusable one falls back to the b
     assert.equal(parseVehicles('{}'), null);
     assert.equal(parseVehicles(undefined), null);
 });
+
+test('components are read as groups, and an older flat list is one group', async () => {
+    const { parseComponentGroups } = await import('../claimFlow.js');
+    assert.deepEqual(parseComponentGroups(JSON.stringify({ Front: [' Seat ', ''], Rear: ['Back'], Empty: [] })), [{ name: 'Front', items: ['Seat'] }, { name: 'Rear', items: ['Back'] }]);
+    assert.deepEqual(parseComponentGroups('["A","B"]'), [{ name: '', items: ['A', 'B'] }]);
+    assert.deepEqual(parseComponentGroups('nope'), []);
+    assert.deepEqual(parseComponentGroups(undefined), []);
+});

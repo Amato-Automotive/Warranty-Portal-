@@ -242,12 +242,27 @@ export function useClaimMaterials(refresh?: unknown): string[] {
     return list;
 }
 
+export interface ComponentGroup { name: string; items: string[] }
+
+/** The admin's components as groups; an older flat list is one group with no heading. */
+export function parseComponentGroups(value: unknown): ComponentGroup[] {
+    try {
+        const raw = typeof value === 'string' ? JSON.parse(value) : value;
+        const entries: [string, unknown][] = Array.isArray(raw) ? [['', raw]] : raw && typeof raw === 'object' ? Object.entries(raw as Record<string, unknown>) : [];
+        return entries
+            .map(([name, items]) => ({ name: String(name).trim(), items: Array.isArray(items) ? items.map(x => String(x).trim()).filter(Boolean) : [] }))
+            .filter(g => g.items.length);
+    } catch {
+        return [];
+    }
+}
+
 /** The components a seat cover claim is raised for, from the admin's list (empty until one is saved). */
-export function useClaimComponents(refresh?: unknown): string[] {
-    const [list, setList] = useState<string[]>([]);
+export function useClaimComponents(refresh?: unknown): ComponentGroup[] {
+    const [list, setList] = useState<ComponentGroup[]>([]);
     useEffect(() => {
         let alive = true;
-        api.get('/settings/public/claim_components').then(r => { if (alive) setList(parseNames(r.data?.value)); }).catch(() => {});
+        api.get('/settings/public/claim_components').then(r => { if (alive) setList(parseComponentGroups(r.data?.value)); }).catch(() => {});
         return () => { alive = false; };
     }, [refresh]);
     return list;
