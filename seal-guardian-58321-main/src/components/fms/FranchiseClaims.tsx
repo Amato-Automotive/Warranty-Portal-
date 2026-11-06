@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { decisionText, day, guessMaterial, NEEDS_DESCRIPTION, PROBLEMS, useClaimMaterials, type Claim, type ClaimStatus, type ClaimWarranty } from "@/lib/claims";
+import { decisionText, day, guessMaterial, NEEDS_DESCRIPTION, PROBLEMS, useClaimMaterials, useClaimComponents, type Claim, type ClaimStatus, type ClaimWarranty } from "@/lib/claims";
 import {
     ChipRow, ClaimStatusPill, ClaimTimeline, ConsentBox, FormStep, VehiclePhoto, EMPTY_VEHICLE, FilePicker, MediaGrid,
     MaterialPicker, MobileActionBar, ProblemPicker, STEP_ID, StepJump, VehicleFields, WarrantySections, claimForm, missingForRequest, vehicleValueOf, type VehicleValue,
@@ -294,6 +294,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
     const [vehiclePhoto, setVehiclePhoto] = useState<File[]>([]);
     const [remarks, setRemarks] = useState('');
     const [sending, setSending] = useState(false);
+    const components = useClaimComponents();
     const materials = useClaimMaterials();
     const [material, setMaterial] = useState('');
     const asksMaterial = w?.product_type === 'seat-cover' && materials.length > 0;
@@ -337,7 +338,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
     };
     const send = async () => {
         if (!w) return;
-        const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: media.filter(f => f.type.startsWith('image/')).length });
+        const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: media.filter(f => f.type.startsWith('image/')).length, needComponent: components.length > 0 });
         if (missing) return toast({ variant: "destructive", title: missing });
         if (asksMaterial && !material) return toast({ variant: "destructive", title: "Choose the material" });
         setSending(true);
@@ -409,7 +410,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
 
             {w && (
                 <>
-                    <FormStep n={2} title="Vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour)))}>
+                    <FormStep n={2} title="Vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour && (!components.length || vehicle.component))))}>
                         <VehicleFields value={vehicle} onChange={setVehicle} airbags={w.asks_airbags} registered={w.car} plant />
                         <VehiclePhoto files={vehiclePhoto} onChange={setVehiclePhoto} />
                     </FormStep>

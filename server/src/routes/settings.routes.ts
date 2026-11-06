@@ -42,6 +42,10 @@ const SETTING_WRITERS: Record<string, express.RequestHandler> = {
     claims_live: requirePermission('claims', 'write'),
     // The materials a seat cover claim chooses from, as a JSON list.
     claim_materials: requirePermission('claims', 'write'),
+    // The makes and vehicle names claims pick from, as a JSON object (make to names).
+    claim_vehicles: requirePermission('claims', 'write'),
+    // The components a seat cover claim is raised for, as a JSON list.
+    claim_components: requirePermission('claims', 'write'),
     // The couriers and transporters a dispatch chooses from, as a JSON list.
     claim_couriers: requirePermission('claims', 'write'),
 };

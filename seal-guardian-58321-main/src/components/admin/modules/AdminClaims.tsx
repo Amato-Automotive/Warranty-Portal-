@@ -1,6 +1,6 @@
 import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useEffect, useState } from "react";
-import { ChevronLeft, Eye, FileSpreadsheet, Layers, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
+import { ChevronLeft, Eye, FileSpreadsheet, Car, Layers, ListChecks, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn, formatToIST } from "@/lib/utils";
+import { ClaimVehicleList } from "@/components/admin/modules/ClaimVehicleList";
 import { ClaimNameList } from "@/components/admin/modules/ClaimNameList";
 import { decisionText, day, DEFAULT_COURIERS, forgetClaimsLive, guessMaterial, useClaimCouriers, HOLD_REASONS, useClaimMaterials, PROBLEMS, REJECT_REASONS, vehicleText, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
 import { ChangeRequestBox } from "@/components/claims/ClaimChange";
@@ -318,7 +319,7 @@ export const AdminClaims = () => {
     const { toast } = useToast();
     const { user } = useAuth() as any;
     // The team is run by super admins, who alone can change admin access.
-    const [tab, setTab] = useState<'claims' | 'team' | 'sheets' | 'materials' | 'couriers'>('claims');
+    const [tab, setTab] = useState<'claims' | 'team' | 'sheets' | 'materials' | 'components' | 'vehicles' | 'couriers'>('claims');
     const materials = useClaimMaterials(tab);
     const couriers = useClaimCouriers(tab);
     const [claims, setClaims] = useState<(Claim & { store_name?: string })[]>([]);
@@ -405,14 +406,18 @@ export const AdminClaims = () => {
         }
     };
 
-    if (tab === 'materials' || tab === 'couriers') return (
+    if (tab === 'materials' || tab === 'components' || tab === 'vehicles' || tab === 'couriers') return (
         <div className="space-y-4">
             <div className="flex items-center gap-2">
                 <Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" aria-label="Back to claims" onClick={() => setTab('claims')}><ChevronLeft className="h-5 w-5" /></Button>
-                <h1 className="text-xl font-extrabold text-gray-900">{tab === 'materials' ? 'Materials' : 'Couriers / Transporters'}</h1>
+                <h1 className="text-xl font-extrabold text-gray-900">{tab === 'materials' ? 'Materials' : tab === 'components' ? 'Request components' : tab === 'vehicles' ? 'Vehicles (make and model)' : 'Couriers / Transporters'}</h1>
             </div>
             {tab === 'materials'
                 ? <ClaimNameList key="materials" settingKey="claim_materials" what="Material" />
+                : tab === 'vehicles'
+                ? <ClaimVehicleList />
+                : tab === 'components'
+                ? <ClaimNameList key="components" settingKey="claim_components" what="Component" />
                 : <ClaimNameList key="couriers" settingKey="claim_couriers" what="Courier / Transporter" start={DEFAULT_COURIERS} />}
         </div>
     );
@@ -513,6 +518,12 @@ export const AdminClaims = () => {
                     </Button>
                     <Button variant="outline" size="icon" title="Materials" aria-label="Materials" onClick={() => setTab('materials')} className="h-11 w-11 rounded-xl">
                         <Layers className="h-5 w-5" />
+                    </Button>
+                    <Button variant="outline" size="icon" title="Vehicles (make and model)" aria-label="Vehicles (make and model)" onClick={() => setTab('vehicles')} className="h-11 w-11 rounded-xl">
+                        <Car className="h-5 w-5" />
+                    </Button>
+                    <Button variant="outline" size="icon" title="Request components" aria-label="Request components" onClick={() => setTab('components')} className="h-11 w-11 rounded-xl">
+                        <ListChecks className="h-5 w-5" />
                     </Button>
                     <Button variant="outline" size="icon" title="Sheet sync" aria-label="Sheet sync" onClick={() => setTab('sheets')} className="h-11 w-11 rounded-xl">
                         <FileSpreadsheet className="h-5 w-5" />

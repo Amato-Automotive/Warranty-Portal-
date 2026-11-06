@@ -20,7 +20,7 @@ export interface ClaimHistory {
     by_role: 'customer' | 'vendor' | 'admin'; by_name?: string | null; undone?: boolean;
 }
 
-export interface Vehicle { material?: string | null; make: string; model: string; year?: number | null; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null; photo?: string | null }
+export interface Vehicle { material?: string | null; component?: string | null; component_remarks?: string | null; make: string; model: string; year?: number | null; airbags: 'with' | 'sab' | 'without' | null; major_colour?: string | null; minor_colour?: string | null; photo?: string | null }
 
 export interface Claim {
     id: number;
@@ -237,6 +237,17 @@ export function useClaimMaterials(refresh?: unknown): string[] {
     useEffect(() => {
         let alive = true;
         api.get('/settings/public/claim_materials').then(r => { if (alive) setList(parseNames(r.data?.value)); }).catch(() => {});
+        return () => { alive = false; };
+    }, [refresh]);
+    return list;
+}
+
+/** The components a seat cover claim is raised for, from the admin's list (empty until one is saved). */
+export function useClaimComponents(refresh?: unknown): string[] {
+    const [list, setList] = useState<string[]>([]);
+    useEffect(() => {
+        let alive = true;
+        api.get('/settings/public/claim_components').then(r => { if (alive) setList(parseNames(r.data?.value)); }).catch(() => {});
         return () => { alive = false; };
     }, [refresh]);
     return list;

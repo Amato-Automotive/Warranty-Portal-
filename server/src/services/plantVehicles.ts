@@ -618,3 +618,25 @@ export const PLANT_VEHICLES: Record<string, string[]> = {
         "VF6"
     ]
 };
+
+/**
+ * The admin's vehicle list, as saved (Admin > Claims > Vehicles): makes with
+ * their vehicle names, trimmed and without repeats. Anything that is not a
+ * usable list gives null, so the built-in list above stays in use.
+ */
+export function parseVehicles(value: unknown): Record<string, string[]> | null {
+    try {
+        const raw = typeof value === 'string' ? JSON.parse(value) : value;
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+        const out: Record<string, string[]> = {};
+        for (const [make, models] of Object.entries(raw as Record<string, unknown>)) {
+            const name = String(make).trim().slice(0, 60);
+            if (!name || !Array.isArray(models)) continue;
+            const seen = new Set<string>();
+            out[name] = models.map(m => String(m).trim().slice(0, 60)).filter(m => m && !seen.has(m.toLowerCase()) && seen.add(m.toLowerCase()));
+        }
+        return Object.keys(out).length ? out : null;
+    } catch {
+        return null;
+    }
+}

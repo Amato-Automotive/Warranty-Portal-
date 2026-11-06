@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import db from '../config/database.js';
 import { modelList } from '../services/carModels.js';
-import { PLANT_VEHICLES } from '../services/plantVehicles.js';
+import { PLANT_VEHICLES, parseVehicles } from '../services/plantVehicles.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { sheetSeen } from './claimSheet.controller.js';
 import { vendorRepository } from '../repositories/vendor.repository.js';
@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { APP_URL, UPLOADS_BASE_DIR, urlToDiskPath } from '../config/localUpload.js';
 import {
-    applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags, parseMaterials, readMaterial,
+    applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags, parseMaterials, readMaterial, readComponent,
     STATUS_TEXT, REJECT_REASONS, HOLD_REASONS, PROBLEMS, PLANT_RIGHTS, OLD_PART_ENABLED,
     type Actor, type ClaimAction, type ClaimStatus, type FlowClaim, type PlantRight, type Who,
 } from '../services/claimFlow.js';
@@ -341,8 +341,20 @@ async function save(c: any) {
             json(c.consent), json(c.plan), json(c.dispatch), json(c.fitted), json(c.old_part), json(c.change_request ?? null), json(c.trail ?? []), json(c.history ?? []), c.id]);
 }
 
+/** The vehicle list the screens pick from: the admin's, else the plant's built-in one. */
+async function claimVehicles(): Promise<Record<string, string[]>> {
+    const [r]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claim_vehicles'");
+    return parseVehicles(r[0]?.setting_value) ?? PLANT_VEHICLES;
+}
+
+/** The components a seat cover claim is for (Admin › Claims › Components). */
+async function claimComponents(): Promise<string[]> {
+    const [r]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claim_components'");
+    return parseMaterials(r[0]?.setting_value);
+}
+
 /** The claim's own fields from what was sent, checked against its warranty. */
-function readNew(w: any, b: any, materials: string[]): { problem: string; description: string | null; vehicle: any } | { error: string } {
+function readNew(w: any, b: any, materials: string[], components: string[]): { problem: string; description: string | null; vehicle: any } | { error: string } {
     if (w.status !== 'validated') return { error: 'Warranty is not approved yet' };
     const cov = coverage(w);
     const p = readProblem(b, cov.covered);
@@ -351,7 +363,9 @@ function readNew(w: any, b: any, materials: string[]): { problem: string; descri
     if ('error' in vehicle) return vehicle;
     const m = readMaterial(b, w.product_type, materials);
     if ('error' in m) return m;
-    return { ...p, vehicle: { ...vehicle, material: m.material } };
+    const k = readComponent(b, w.product_type, components);
+    if ('error' in k) return k;
+    return { ...p, vehicle: { ...vehicle, material: m.material, component: k.component, component_remarks: k.component_remarks } };
 }
 
 /** Creates a claim on a warranty; the caller has checked who may raise it. */
@@ -404,7 +418,7 @@ export default class ClaimsController {
             const [ws]: any = await db.execute('SELECT * FROM warranty_registrations WHERE uid = ? AND user_id = ? LIMIT 1', [String(b.warranty_uid ?? ''), req.user!.id]);
             const w = ws[0];
             if (!w) return bad(res, 'Warranty not found on your account', 404);
-            const fields = readNew(w, b, await claimMaterials());
+            const fields = readNew(w, b, await claimMaterials(), await claimComponents());
             if ('error' in fields) return bad(res, fields.error);
             const media = filesOf(req, 'media');
             if (!media.some(isPhoto)) return bad(res, 'Add at least one photo of the problem');
@@ -510,7 +524,7 @@ export default class ClaimsController {
             const [ws]: any = await db.execute('SELECT * FROM warranty_registrations WHERE uid = ? LIMIT 1', [String(b.warranty_uid ?? '')]);
             const w = ws[0];
             if (!w) return bad(res, 'Warranty not found', 404);
-            const fields = readNew(w, b, await claimMaterials());
+            const fields = readNew(w, b, await claimMaterials(), await claimComponents());
             if ('error' in fields) return bad(res, fields.error);
             const media = filesOf(req, 'media');
             if (!media.some(isPhoto)) return bad(res, 'Add at least one photo of the problem');
@@ -700,11 +714,19 @@ export default class ClaimsController {
                 const m = readMaterial(input, c.product_type, await claimMaterials(), c.vehicle?.material);
                 if ('error' in m) return bad(res, m.error);
                 if (m.material) input.material = m.material; else delete input.material;
+                const k = readComponent(input, c.product_type, await claimComponents(), c.vehicle);
+                if ('error' in k) return bad(res, k.error);
+                input.component = k.component ?? undefined; input.component_remarks = k.component_remarks ?? '';
+                if (input.component === undefined) delete input.component;
             }
             // The plant changes it in the list or on the claim; a change must still be from the list.
             if (action === 'edit' && input.material !== undefined) {
                 const m = readMaterial(input, c.product_type, await claimMaterials(), c.vehicle?.material);
                 if ('error' in m) return bad(res, m.error);
+            }
+            if (action === 'edit' && (input.component !== undefined || input.component_remarks !== undefined)) {
+                const k = readComponent(input, c.product_type, await claimComponents(), c.vehicle);
+                if ('error' in k) return bad(res, k.error);
             }
             const r = applyClaimAction({ ...c, trail: c.trail ?? [] }, action, who, input);
             if ('error' in r) return bad(res, r.error);
@@ -784,12 +806,13 @@ export default class ClaimsController {
 
     /** The lists the screens choose from, and what this person may do. */
     static async meta(req: AuthRequest, res: Response) {
+        const vehicles = await claimVehicles();
         return ok(res, {
             problems: PROBLEMS, reasons: REJECT_REASONS, hold_reasons: HOLD_REASONS, statuses: STATUS_TEXT,
             rights: whoOf(req).rights ?? [], old_part: OLD_PART_ENABLED,
             models: modelList(whoOf(req).actor === 'customer'),
-            // The plant's own vehicle names, for the store and the plant (they hold Maruti names, so never the customer).
-            ...(whoOf(req).actor !== 'customer' && { plant_vehicles: PLANT_VEHICLES }),
+            // The plant's own vehicle names. The customer gets them too, but with no Maruti Suzuki models (compliance): they pick that make and type the model.
+            plant_vehicles: whoOf(req).actor !== 'customer' ? vehicles : { ...vehicles, 'Maruti Suzuki': [] },
         });
     }
 }

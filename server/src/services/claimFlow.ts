@@ -49,6 +49,9 @@ export interface Vehicle {
     make: string; model: string; airbags: 'with' | 'sab' | 'without' | null;
     /** The seat cover's material, from the admin's list. */
     material?: string | null;
+    /** The component the request is for, from the admin's list, and the requester's remarks on it. */
+    component?: string | null;
+    component_remarks?: string | null;
     /** The model year, when given. */
     year?: number | null;
     major_colour?: string | null; minor_colour?: string | null;
@@ -261,6 +264,21 @@ export function readMaterial(input: ClaimInput, productType: string | null | und
     return { material: chosen };
 }
 
+/**
+ * The component a seat cover claim is for, with the requester's remarks on it.
+ * It is chosen from the admin's list; with no list yet, or for other products,
+ * there is nothing to choose. What the claim already has stays allowed, in case
+ * it has since left the list.
+ */
+export function readComponent(input: ClaimInput, productType: string | null | undefined, list: string[], current?: { component?: string | null; component_remarks?: string | null } | null): { component: string | null; component_remarks: string | null } | { error: string } {
+    const keep = { component: current?.component ?? null, component_remarks: current?.component_remarks ?? null };
+    if (!asksAirbags(productType) || !list.length) return keep;
+    const chosen = input.component !== undefined ? text(input.component, 80) : keep.component ?? '';
+    if (!chosen || !(list.includes(chosen) || chosen === keep.component)) return { error: 'Choose the component' };
+    const remarks = input.component_remarks !== undefined ? text(input.component_remarks, 500) : keep.component_remarks ?? '';
+    return { component: chosen, component_remarks: remarks || null };
+}
+
 /** A new claim's issue and description, or why they are not complete. */
 export function readProblem(input: ClaimInput, covered: boolean): { problem: string; description: string | null } | { error: string } {
     const problem = String(input.problem ?? '');
@@ -294,7 +312,7 @@ function correctDetails(c: FlowClaim, input: ClaimInput): { patch: Partial<Claim
         if (vehicleText(v) !== vehicleText(c.vehicle)) {
             changes.push(`Vehicle: ${vehicleText(c.vehicle)} → ${vehicleText(v)}`);
             // A correction keeps the vehicle's photo.
-            patch.vehicle = { ...v, photo: c.vehicle?.photo ?? null, material: c.vehicle?.material ?? null };
+            patch.vehicle = { ...v, photo: c.vehicle?.photo ?? null, material: c.vehicle?.material ?? null, component: c.vehicle?.component ?? null, component_remarks: c.vehicle?.component_remarks ?? null };
         }
     }
     if (input.material !== undefined && (patch.vehicle ?? c.vehicle)) {
@@ -303,6 +321,14 @@ function correctDetails(c: FlowClaim, input: ClaimInput): { patch: Partial<Claim
             changes.push(`Material: ${c.vehicle?.material || '(none)'} → ${material || '(none)'}`);
             patch.vehicle = { ...(patch.vehicle ?? c.vehicle)!, material };
         }
+    }
+    if ((input.component !== undefined || input.component_remarks !== undefined) && (patch.vehicle ?? c.vehicle)) {
+        const base = (patch.vehicle ?? c.vehicle)!;
+        const component = input.component !== undefined ? text(input.component, 80) || null : base.component ?? null;
+        const remarks = input.component_remarks !== undefined ? text(input.component_remarks, 500) || null : base.component_remarks ?? null;
+        if (component !== (base.component ?? null)) changes.push(`Component: ${base.component || '(none)'} → ${component || '(none)'}`);
+        if (remarks !== (base.component_remarks ?? null)) changes.push(`Component remarks: ${base.component_remarks || '(none)'} → ${remarks || '(none)'}`);
+        if (changes.length && (component !== (base.component ?? null) || remarks !== (base.component_remarks ?? null))) patch.vehicle = { ...base, component, component_remarks: remarks };
     }
     if (input.problem !== undefined && input.problem !== c.problem) {
         const problem = String(input.problem);
@@ -449,7 +475,7 @@ const snap = (c: FlowClaim): ClaimSnapshot => ({
 });
 
 /** The detail fields a change sends, as text, leaving out what was not sent. */
-const DETAIL_FIELDS = ['vehicle_make', 'vehicle_model', 'vehicle_year', 'airbags', 'major_colour', 'minor_colour', 'problem', 'description'];
+const DETAIL_FIELDS = ['vehicle_make', 'vehicle_model', 'vehicle_year', 'airbags', 'major_colour', 'minor_colour', 'component', 'component_remarks', 'problem', 'description'];
 const detailFields = (input: ClaimInput): Record<string, string> =>
     Object.fromEntries(DETAIL_FIELDS.filter(k => input[k] !== undefined).map(k => [k, String(input[k] ?? '')]));
 const photoLine = (n: number) => n ? [`${n} photo${n === 1 ? '' : 's'} added`] : [];

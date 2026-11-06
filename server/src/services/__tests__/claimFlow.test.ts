@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    applyClaimAction, actionsFor, coverage, warrantyYears, problemsFor, kindOf, readVehicle, readProblem, waitingOn, parseMaterials, readMaterial,
+    applyClaimAction, actionsFor, coverage, warrantyYears, problemsFor, kindOf, readVehicle, readProblem, waitingOn, parseMaterials, readMaterial, readComponent,
     type FlowClaim, type Who,
 } from '../claimFlow.js';
 
@@ -252,4 +252,26 @@ test('dispatch columns are filled one at a time; a date and a docket make it dis
     assert.equal(ok(applyClaimAction(c3, 'dispatch_info', team, { docket: 'D-56', note: 'Re-booked' })).dispatch?.docket, 'D-56');
     assert.equal(ok(applyClaimAction(c3, 'undo', anuka, { note: 'Mistake' })).status, 'production');
     assert.ok(!actionsFor(verified(), team).includes('dispatch_info'));
+});
+
+test('the request component is chosen from the admin list, with remarks', () => {
+    const list = ['Headrest', 'Armrest'];
+    assert.deepEqual(readComponent({ component: 'Headrest', component_remarks: ' torn  ' }, 'seat-cover', list), { component: 'Headrest', component_remarks: 'torn' });
+    assert.deepEqual(readComponent({ component: 'Headrest' }, 'seat-cover', list), { component: 'Headrest', component_remarks: null });
+    assert.deepEqual(readComponent({}, 'seat-cover', list), { error: 'Choose the component' });
+    assert.deepEqual(readComponent({ component: 'Bumper' }, 'seat-cover', list), { error: 'Choose the component' });
+    // one that has since left the list stays allowed on the claim that has it
+    assert.deepEqual(readComponent({ component_remarks: 'x' }, 'seat-cover', list, { component: 'Old', component_remarks: null }), { component: 'Old', component_remarks: 'x' });
+    // no list yet, or not a seat cover: nothing to choose
+    assert.deepEqual(readComponent({ component: 'Headrest' }, 'seat-cover', []), { component: null, component_remarks: null });
+    assert.deepEqual(readComponent({ component: 'Headrest' }, 'ppf', list), { component: null, component_remarks: null });
+});
+
+test('the admin vehicle list is cleaned, and an unusable one falls back to the built-in list', async () => {
+    const { parseVehicles } = await import('../plantVehicles.js');
+    assert.deepEqual(parseVehicles(JSON.stringify({ ' Tata ': [' Nexon ', 'nexon', '', 'Punch'], Kia: [] })), { Tata: ['Nexon', 'Punch'], Kia: [] });
+    assert.equal(parseVehicles('not json'), null);
+    assert.equal(parseVehicles('[]'), null);
+    assert.equal(parseVehicles('{}'), null);
+    assert.equal(parseVehicles(undefined), null);
 });

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { decisionText, day, guessMaterial, NEEDS_DESCRIPTION, useClaimMaterials, type Claim, type ClaimWarranty } from "@/lib/claims";
+import { decisionText, day, guessMaterial, NEEDS_DESCRIPTION, useClaimMaterials, useClaimComponents, type Claim, type ClaimWarranty } from "@/lib/claims";
 import { CompareTable, StageDates, StatusHero } from "@/components/claims/ClaimView";
 import { ChangeRequestBox, ClaimChange } from "@/components/claims/ClaimChange";
 import {
@@ -109,6 +109,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
 
     const w = warranties.find(x => x.uid === uid);
     const materials = useClaimMaterials();
+    const components = useClaimComponents();
     const [material, setMaterial] = useState('');
     const asksMaterial = w?.product_type === 'seat-cover' && materials.length > 0;
     useEffect(() => { setMaterial(guessMaterial(w?.product_name, materials)); }, [uid, materials]);
@@ -122,7 +123,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
 
     const send = async () => {
         if (!w) return toast({ variant: "destructive", title: "Choose the product" });
-        const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: photos.length, needYear: true });
+        const missing = missingForRequest({ problem, description, vehicle, airbags: w.asks_airbags, photos: photos.length, needYear: true, needComponent: components.length > 0 });
         if (missing) return toast({ variant: "destructive", title: missing });
         if (asksMaterial && !material) return toast({ variant: "destructive", title: "Choose the material" });
         if (!vehiclePhoto.length) return toast({ variant: "destructive", title: "Add a photo of the vehicle" });
@@ -181,7 +182,7 @@ const RaiseClaim = ({ warranties, initialUid, onBack, onDone }: { warranties: Cl
 
             {w && (
                 <>
-                    <FormStep n={2} title="Your vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && vehicle.vehicle_year && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour)))}>
+                    <FormStep n={2} title="Your vehicle" done={!!(vehicle.vehicle_make && vehicle.vehicle_model && vehicle.vehicle_year && (!w.asks_airbags || (vehicle.airbags && vehicle.major_colour && (!components.length || vehicle.component))))}>
                         <VehicleFields value={vehicle} onChange={setVehicle} airbags={w.asks_airbags} registered={w.car} />
                     </FormStep>
 
