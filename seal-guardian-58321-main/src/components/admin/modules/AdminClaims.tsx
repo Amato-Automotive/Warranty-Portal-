@@ -1,6 +1,6 @@
 import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useEffect, useState } from "react";
-import { ChevronLeft, Eye, FileSpreadsheet, Car, Layers, ListChecks, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
+import { ChevronLeft, Copy, Eye, FileSpreadsheet, Car, Layers, ListChecks, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +11,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { getErrorMessage } from "@/lib/api";
 import { cn, formatToIST } from "@/lib/utils";
+import { CopyBtn, CopyTd, nodeText, rowText, sheetText } from "@/components/claims/CopyButtons";
 import { ClaimComponentList, ClaimVehicleList } from "@/components/admin/modules/ClaimVehicleList";
 import { ClaimNameList } from "@/components/admin/modules/ClaimNameList";
-import { decisionText, day, DEFAULT_COURIERS, forgetClaimsLive, guessMaterial, useClaimCouriers, HOLD_REASONS, useClaimMaterials, PROBLEMS, REJECT_REASONS, vehicleText, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
+import { decisionText, day, DEFAULT_COURIERS, forgetClaimsLive, guessMaterial, useClaimCouriers, HOLD_REASONS, useClaimMaterials, useClaimComponents, type ComponentGroup, PROBLEMS, REJECT_REASONS, vehicleText, type Claim, type ClaimStatus, type PlantRight } from "@/lib/claims";
 import { ChangeRequestBox } from "@/components/claims/ClaimChange";
 import { CompareTable, StageDates } from "@/components/claims/ClaimView";
 import { ClaimStatusPill, ClaimSummary, ClaimTimeline, MediaGrid, ChoiceRow, InfoRows, ProblemPicker, VehicleFields, EMPTY_VEHICLE, vehicleValueOf, type VehicleValue } from "@/components/claims/ClaimParts";
@@ -235,7 +236,7 @@ const QuickDecide = ({ c, label, onSave }: {
  */
 const QuickFill = ({ label, title, fields, onSave }: {
     label: React.ReactNode; title: string;
-    fields: { key: string; label: string; type?: string; value: string; need?: boolean; options?: [string, string][] }[];
+    fields: { key: string; label: string; type?: string; value: string; need?: boolean; options?: [string, string, string?][] }[];
     onSave: (v: Record<string, string>) => Promise<boolean>;
 }) => {
     const [open, setOpen] = useState(false);
@@ -256,7 +257,12 @@ const QuickFill = ({ label, title, fields, onSave }: {
                     <label key={f.key} className="block space-y-1 text-xs font-semibold text-gray-700">{f.label}
                         {f.options ? (
                             <select value={v[f.key] ?? ''} onChange={e => setV(p => ({ ...p, [f.key]: e.target.value }))} className="h-11 w-full rounded-md border border-input bg-white px-2 text-sm font-normal">
-                                {f.options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                                {f.options.filter(o => !o[2]).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                                {[...new Set(f.options.map(o => o[2]).filter(Boolean))].map(g => (
+                                    <optgroup key={g} label={g}>
+                                        {f.options!.filter(o => o[2] === g).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                                    </optgroup>
+                                ))}
                             </select>
                         ) : (
                             <Input type={f.type ?? 'text'} value={v[f.key] ?? ''} autoFocus={i === 0} onChange={e => setV(p => ({ ...p, [f.key]: e.target.value }))} className="h-11 text-sm font-normal" />
@@ -285,6 +291,16 @@ const materialField = (c: Claim, list: string[]) => {
         options: [['', 'Choose the material'], ...(now && !list.includes(now) ? [now] : []).concat(list).map(m => [m, m])] as [string, string][],
     };
 };
+/** The request component as a field to change, listed under its portions; keeps one no longer listed. */
+const componentField = (c: Claim, groups: ComponentGroup[]) => {
+    const now = c.vehicle?.component ?? '';
+    const listed = groups.some(g => g.items.includes(now));
+    return {
+        key: 'component', label: 'Request component', need: true, value: now,
+        options: [['', 'Choose the component'], ...(now && !listed ? [[now, now]] : []), ...groups.flatMap(g => g.items.map(i => [i, i, g.name || undefined]))] as [string, string, string?][],
+    };
+};
+const canSetComponent = (c: Claim, groups: ComponentGroup[]) => c.snapshot?.product_type === 'seat-cover' && groups.length > 0 && Boolean(c.vehicle);
 /** A list to choose from that keeps a name already on the claim, even one no longer listed. */
 const withCurrent = (list: string[], now: string) => (now && !list.includes(now) ? [now, ...list] : list);
 const CourierSelect = ({ value, onChange, options, className }: { value: string; onChange: (v: string) => void; options: string[]; className: string }) => (
@@ -294,6 +310,24 @@ const CourierSelect = ({ value, onChange, options, className }: { value: string;
     </select>
 );
 const canSetMaterial = (c: Claim, list: string[]) => c.snapshot?.product_type === 'seat-cover' && list.length > 0 && Boolean(c.vehicle);
+
+/** Everything on a claim as "Label: value" lines, for pasting into a message or a sheet. */
+const claimCopyText = (c: Claim & { store_name?: string }) => {
+    const v = c.vehicle, s = c.snapshot;
+    const dispatch = c.dispatch;
+    return [
+        ['Claim no.', c.claim_no], ['Type', c.kind === 'alteration' ? 'Alteration' : 'Warranty claim'], ['Date', day(c.created_at)],
+        ['Depot', s?.depot], ['Store', storeOf(c)],
+        ['Customer', s?.customer_name], ['Phone', s?.customer_phone], ['Email', s?.customer_email],
+        ['Design', s?.product_name], ['Material', v?.material], ['UID', c.warranty_uid],
+        ['Car', [v?.make, v?.model, v?.year].filter(Boolean).join(' ') || null], ['Car number', vehicleNumberOf(s?.registration_number)],
+        ['Major colour', v?.major_colour], ['Minor colour', v?.minor_colour],
+        ['Component', v?.component], ['Remarks', v?.component_remarks],
+        ['Issue', c.problem_text], ['Details', c.description], ['Decision', decisionText(c)],
+        ['Alteration no.', c.plan?.alteration_no], ['Dispatch date', dispatch?.date ? day(dispatch.date) : null],
+        ['Docket no.', dispatch?.docket], ['Courier / Transporter', dispatch?.courier],
+    ].filter(([, val]) => val).map(([k, val]) => `${k}: ${val}`).join('\n');
+};
 
 /**
  * The plant (MFU): every claim as a sheet, and a pencil on each row that
@@ -321,6 +355,7 @@ export const AdminClaims = () => {
     // The team is run by super admins, who alone can change admin access.
     const [tab, setTab] = useState<'claims' | 'team' | 'sheets' | 'materials' | 'components' | 'vehicles' | 'couriers'>('claims');
     const materials = useClaimMaterials(tab);
+    const components = useClaimComponents(tab);
     const couriers = useClaimCouriers(tab);
     const [claims, setClaims] = useState<(Claim & { store_name?: string })[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
@@ -485,7 +520,7 @@ export const AdminClaims = () => {
             onSave={v => quick(c, 'dispatch_info', v, `${f.label} saved`)} />;
     };
     const REASON = { key: 'note', label: 'Reason for the change (needed)', value: '', need: true };
-    const detailCell = (c: Claim, shown: React.ReactNode, title: string, fields: { key: string; label: string; value: string; need?: boolean; options?: [string, string][] }[], seatOnly = false) =>
+    const detailCell = (c: Claim, shown: React.ReactNode, title: string, fields: { key: string; label: string; value: string; need?: boolean; options?: [string, string, string?][] }[], seatOnly = false) =>
         can(c, 'edit') && (!seatOnly || c.snapshot?.product_type === 'seat-cover')
             ? <QuickFill label={shown} title={`${title} · ${c.claim_no}`} fields={[...fields, REASON]} onSave={v => quick(c, 'edit', v, `${title} changed`)} />
             : shown;
@@ -612,7 +647,8 @@ export const AdminClaims = () => {
                                 <table className="w-full border-collapse text-sm">
                                     <thead className="sticky top-0 z-10 bg-gray-100 text-left text-xs font-bold text-gray-700">
                                         <tr>
-                                            {['S.No.', 'Status', 'Claim no.', 'Date', 'Depot', 'Store', 'Customer', 'Phone', 'Email', 'Design', 'Material', 'Car', 'Major colour', 'Minor colour', 'Issue', 'Decision', 'Alteration no.', 'Dispatch date', 'Docket no.', 'Courier / Transporter'].map(h => (
+                                            <th className="w-9 border border-gray-300 px-1 py-2.5 text-center"><CopyBtn getText={sheetText} title="Copy the whole sheet" /></th>
+                                            {['S.No.', 'Status', 'Claim no.', 'Date', 'Depot', 'Store', 'Customer', 'Phone', 'Email', 'Design', 'Material', 'Car', 'Major colour', 'Minor colour', 'Component', 'Remarks', 'Issue', 'Decision', 'Alteration no.', 'Dispatch date', 'Docket no.', 'Courier / Transporter'].map(h => (
                                                 <th key={h} className="px-3 py-2.5 border border-gray-300 whitespace-nowrap">{h}</th>
                                             ))}
                                         </tr>
@@ -621,43 +657,50 @@ export const AdminClaims = () => {
                                         {claims.map((c, i) => (
                                             // A click on the row opens the claim; the cells filled in here stop it.
                                             <tr key={c.id} onClick={() => setOpen(c.id)} className="cursor-pointer even:bg-gray-50/70 hover:bg-orange-50/60">
-                                                <td className={cn(cell, "text-right tabular-nums text-gray-500")}>{i + 1}</td>
-                                                <td className={cell}>
+                                                <td className="w-9 border border-gray-200 px-1 py-2.5 text-center"><CopyBtn getText={rowText} title="Copy this row" /></td>
+                                                <CopyTd className={cn(cell, "text-right tabular-nums text-gray-500")}>{i + 1}</CopyTd>
+                                                <CopyTd className={cell}>
                                                     <ClaimStatusPill status={c.status} who="admin" />
                                                     {c.change_request && <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">Change asked</span>}
-                                                </td>
-                                                <td className={cell}>
+                                                </CopyTd>
+                                                <CopyTd className={cell}>
                                                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                                                         <button onClick={e => { e.stopPropagation(); setOpen(c.id); }} className="font-bold text-gray-900 underline-offset-2 hover:text-orange-700 hover:underline">{c.claim_no}</button>
                                                         <SourceTag c={c} />
                                                     </span>
-                                                </td>
-                                                <td className={cell}>{day(c.created_at)}</td>
-                                                <td className={cell}>{c.snapshot?.depot ? <>{c.snapshot.depot}<BrandTag b={c.depot_brand} /></> : <Empty />}</td>
-                                                <td className={cell}>{storeOf(c) ? <>{storeOf(c)}<BrandTag b={c.store_brand} /></> : <Empty />}</td>
-                                                <td className={cell}>{c.snapshot?.customer_name || <Empty />}</td>
-                                                <td className={cell}>{c.snapshot?.customer_phone || <Empty />}</td>
-                                                <td className={cell}>{c.snapshot?.customer_email || <Empty />}</td>
-                                                <td className={cell}>{c.snapshot?.product_name ? <>{c.snapshot.product_name}<BrandTag b={c.product_brand} /></> : <Empty />}</td>
-                                                <td className={cell}>{canSetMaterial(c, materials)
+                                                </CopyTd>
+                                                <CopyTd className={cell}>{day(c.created_at)}</CopyTd>
+                                                <CopyTd className={cell}>{c.snapshot?.depot ? <>{c.snapshot.depot}<BrandTag b={c.depot_brand} /></> : <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{storeOf(c) ? <>{storeOf(c)}<BrandTag b={c.store_brand} /></> : <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{c.snapshot?.customer_name || <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{c.snapshot?.customer_phone || <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{c.snapshot?.customer_email || <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{c.snapshot?.product_name ? <>{c.snapshot.product_name}<BrandTag b={c.product_brand} /></> : <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{canSetMaterial(c, materials)
                                                     ? detailCell(c, c.vehicle?.material || <Empty />, 'Material', [materialField(c, materials)], true)
-                                                    : c.vehicle?.material || <Empty />}</td>
-                                                <td className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number) || <Empty />, 'Car',
-                                                    [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }, { key: 'vehicle_year', label: 'Year', value: c.vehicle?.year ? String(c.vehicle.year) : '' }])}</td>
-                                                <td className={cell}>{detailCell(c, c.vehicle?.major_colour || <Empty />, 'Major colour', [{ key: 'major_colour', label: 'Major colour', value: c.vehicle?.major_colour ?? '', need: true }], true)}</td>
-                                                <td className={cell}>{detailCell(c, c.vehicle?.minor_colour || <Empty />, 'Minor colour', [{ key: 'minor_colour', label: 'Minor colour', value: c.vehicle?.minor_colour ?? '' }], true)}</td>
-                                                <td className={cell}>{detailCell(c, <>{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</>, 'Issue', [{ key: 'problem', label: 'Issue', value: c.problem, need: true, options: PROBLEM_OPTIONS }])}</td>
-                                                <td className={cn(cell, needs(c, 'decision') && "bg-amber-50")}>
+                                                    : c.vehicle?.material || <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number) || <Empty />, 'Car',
+                                                    [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }, { key: 'vehicle_year', label: 'Year', value: c.vehicle?.year ? String(c.vehicle.year) : '' }])}</CopyTd>
+                                                <CopyTd className={cell}>{detailCell(c, c.vehicle?.major_colour || <Empty />, 'Major colour', [{ key: 'major_colour', label: 'Major colour', value: c.vehicle?.major_colour ?? '', need: true }], true)}</CopyTd>
+                                                <CopyTd className={cell}>{detailCell(c, c.vehicle?.minor_colour || <Empty />, 'Minor colour', [{ key: 'minor_colour', label: 'Minor colour', value: c.vehicle?.minor_colour ?? '' }], true)}</CopyTd>
+                                                <CopyTd className={cell}>{canSetComponent(c, components)
+                                                    ? detailCell(c, c.vehicle?.component || <Empty />, 'Request component', [componentField(c, components), { key: 'component_remarks', label: 'Remarks', value: c.vehicle?.component_remarks ?? '' }], true)
+                                                    : c.vehicle?.component || <Empty />}</CopyTd>
+                                                <CopyTd className={cn(cell, "max-w-[260px] whitespace-normal break-words")}>{canSetComponent(c, components)
+                                                    ? detailCell(c, c.vehicle?.component_remarks || <Empty />, 'Component remarks', [{ key: 'component_remarks', label: 'Remarks', value: c.vehicle?.component_remarks ?? '' }], true)
+                                                    : c.vehicle?.component_remarks || <Empty />}</CopyTd>
+                                                <CopyTd className={cell}>{detailCell(c, <>{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</>, 'Issue', [{ key: 'problem', label: 'Issue', value: c.problem, need: true, options: PROBLEM_OPTIONS }])}</CopyTd>
+                                                <CopyTd className={cn(cell, needs(c, 'decision') && "bg-amber-50")}>
                                                     {c.decision ? (can(c, 'redecide') || can(c, 'edit') ? <QuickDecide c={c} label={decisionText(c)} onSave={(a, body) => quick(c, a, body, 'Decision changed: the store and customer are told')} /> : decisionText(c)) : needs(c, 'decision')
                                                         ? (['approve', 'hold', 'reject', 'ask_more'].some(a => can(c, a))
                                                             ? <QuickDecide c={c} label={<Add />} onSave={(a, body) => quick(c, a, body, a === 'approve' ? 'Approved: the store and customer are told' : a === 'reject' ? 'Rejected: the store and customer are told' : a === 'hold' ? 'Put on hold' : 'Sent back to the store')} />
                                                             : <Add />)
                                                         : <Empty />}
-                                                </td>
-                                                <td className={cn(cell, needs(c, 'alteration') && "bg-amber-50")}>{alterationCell(c)}</td>
-                                                <td className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'dispatch_date')}</td>
-                                                <td className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'docket')}</td>
-                                                <td className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'courier')}</td>
+                                                </CopyTd>
+                                                <CopyTd className={cn(cell, needs(c, 'alteration') && "bg-amber-50")}>{alterationCell(c)}</CopyTd>
+                                                <CopyTd className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'dispatch_date')}</CopyTd>
+                                                <CopyTd className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'docket')}</CopyTd>
+                                                <CopyTd className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'courier')}</CopyTd>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -690,6 +733,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
     // A decision taken again, starting from the one that stands.
     const [rd, setRd] = useState<Record<string, string>>({});
     const materials = useClaimMaterials();
+    const components = useClaimComponents();
     const couriers = useClaimCouriers();
 
     const load = () => api.get(`/claims/${id}`).then(r => setC(r.data.claim)).catch(e => toast({ variant: "destructive", title: "Could not load", description: getErrorMessage(e, "") }));
@@ -764,7 +808,11 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 </div>
                                 <DialogTitle className="text-xl sm:text-2xl font-black leading-tight text-gray-900">{c.problem_text}</DialogTitle>
                             </div>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap items-start gap-2">
+                                <button type="button" onClick={async () => { const { copyText } = await import('@/components/claims/CopyButtons'); await copyText(claimCopyText(c)); toast({ title: 'Claim details copied' }); }}
+                                    className="flex h-[54px] items-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold text-gray-900 hover:bg-gray-50">
+                                    <Copy className="h-4 w-4" />Copy all
+                                </button>
                                 {([['Customer', c.snapshot?.customer_phone], ['Franchise', c.store_phone]] as [string, string | null | undefined][]).filter(([, n]) => n).map(([tag, n]) => (
                                     <a key={tag} href={`tel:${n}`} className="flex flex-col items-start rounded-xl border border-gray-300 bg-white px-3 py-1.5 no-underline hover:bg-gray-50">
                                         <span className="flex items-center gap-1.5 text-sm font-bold text-gray-900"><Phone className="h-4 w-4" />{n}</span>
@@ -786,7 +834,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 ['Waiting for', c.waiting_on],
                             ] as [string, React.ReactNode][]).map(([k, v]) => (
                                 <div key={k} className="min-w-0 bg-white px-3 py-2">
-                                    <dt className="text-[11px] font-bold uppercase tracking-wider text-gray-500">{k}</dt>
+                                    <dt className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-gray-500">{k}<CopyBtn text={nodeText(v)} title={`Copy ${k}`} /></dt>
                                     <dd className={cn("text-sm font-semibold break-words", k === 'Waiting for' ? "text-orange-800" : "text-gray-900")}>{v || '—'}</dd>
                                 </div>
                             ))}
@@ -810,6 +858,12 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                         fields={[materialField(c, materials), { key: 'note', label: 'Reason for the change (needed)', value: '', need: true }]}
                                         onSave={async v => { await act('edit', v, 'Material changed'); return true; }} />
                                 ) : c.vehicle?.material],
+                                ['Component', has('edit') && canSetComponent(c, components) ? (
+                                    <QuickFill label={c.vehicle?.component || <Empty />} title={`Request component · ${c.claim_no}`}
+                                        fields={[componentField(c, components), { key: 'component_remarks', label: 'Remarks', value: c.vehicle?.component_remarks ?? '' }, { key: 'note', label: 'Reason for the change (needed)', value: '', need: true }]}
+                                        onSave={async v => { await act('edit', v, 'Component changed'); return true; }} />
+                                ) : c.vehicle?.component],
+                                ['Remarks', c.vehicle?.component_remarks],
                                 ['UID', c.warranty_uid],
                                 ['Warranty', [c.snapshot?.warranty_type, c.snapshot?.cover_end ? `covered till ${day(c.snapshot.cover_end)}` : null].filter(Boolean).join(' · ')],
                                 ['Vehicle', vehicleText(c.vehicle)],
@@ -829,10 +883,10 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                 <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Store verification{c.verification ? ` · ${day(c.verification.at)}` : ''}</p>
                                 {c.verification ? (
                                     <>
-                                        {c.verification.remarks && <p className="text-sm text-gray-800">{c.verification.remarks}</p>}
+                                        {c.verification.remarks && <p className="flex items-start justify-between gap-1 text-sm text-gray-800"><span className="min-w-0 break-words">{c.verification.remarks}</span><CopyBtn text={c.verification.remarks} title="Copy the store's remarks" /></p>}
                                         {c.verification.corrections.length > 0 && (
                                             <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
-                                                <p className="font-bold">The store corrected:</p>
+                                                <p className="flex items-center justify-between font-bold">The store corrected:<CopyBtn text={c.verification.corrections.join(', ')} title="Copy the corrections" /></p>
                                                 <ul className="list-disc pl-5">{c.verification.corrections.map((x, i) => <li key={i}>{x}</li>)}</ul>
                                             </div>
                                         )}
@@ -843,7 +897,7 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                             <section className="rounded-2xl border border-gray-200 p-4 space-y-2">
                                 <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Remarks on this warranty</p>
                                 {r?.remarks?.length ? r.remarks.map((m, i) => (
-                                    <p key={i} className="text-xs text-gray-700"><b>{m.admin_name}</b> · {formatToIST(m.created_at)}: {m.remark}</p>
+                                    <p key={i} className="flex items-start justify-between gap-1 text-xs text-gray-700"><span className="min-w-0 break-words"><b>{m.admin_name}</b> · {formatToIST(m.created_at)}: {m.remark}</span><CopyBtn text={m.remark} title="Copy this remark" /></p>
                                 )) : <p className="text-sm text-gray-500">None.</p>}
                             </section>
                         </div>
@@ -933,14 +987,15 @@ const AdminClaim = ({ id, onClose }: { id: number; onClose: () => void }) => {
                                         ...(d.item ? [['Material', d.item]] : []),
                                         ...(d.remarks ? [['Remarks', d.remarks]] : []),
                                         ...(c.consent ? [['Customer', `Charge ${c.consent.agreed ? 'agreed' : 'declined'} by the ${c.consent.by === 'customer' ? 'customer' : "store on the customer's behalf"} · ${day(c.consent.at)}${c.consent.note ? ` · ${c.consent.note}` : ''}`]] : []),
-                                        ...(c.plan ? [['Alteration no.', `${c.plan.alteration_no ?? '—'}${c.plan.edd ? ` · EDD ${day(c.plan.edd)}` : ''}`]] : []),
+                                        ...(c.plan ? [['Alteration no.', c.plan.alteration_no ?? '—'], ...(c.plan.edd ? [['EDD', day(c.plan.edd)]] : [])] : []),
                                         ...(c.dispatch ? [['Dispatch date', c.dispatch.date ? day(c.dispatch.date) : '—'], ['Docket no.', c.dispatch.docket || '—'], ['Courier / Transporter', c.dispatch.courier || '—']] : []),
                                         ...(c.fitted ? [[d.outcome === 'repair_store' ? 'Repaired' : 'Fitted', `${day(c.fitted.at)}${c.fitted.note ? ` · ${c.fitted.note}` : ''}`]] : []),
                                     ] as [string, string][]).map(([k, v]) => (
                                         <div key={k} className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 px-4 py-2.5">
                                             <dt className="font-semibold text-gray-500">{k}</dt>
-                                            <dd className={cn("font-semibold break-words", k === 'Charge' && v === 'Chargeable' ? "text-purple-800" : d.outcome === 'reject' && k !== 'Remarks' ? "text-red-900" : "text-gray-900")}>
-                                                {k === 'Dispatch date' && <Truck className="mr-1 inline h-4 w-4 text-orange-600" />}{v}
+                                            <dd className={cn("flex items-start justify-between gap-1 font-semibold break-words", k === 'Charge' && v === 'Chargeable' ? "text-purple-800" : d.outcome === 'reject' && k !== 'Remarks' ? "text-red-900" : "text-gray-900")}>
+                                                <span className="min-w-0">{k === 'Dispatch date' && <Truck className="mr-1 inline h-4 w-4 text-orange-600" />}{v}</span>
+                                                <CopyBtn text={v} title={`Copy ${k}`} className="-mt-0.5" />
                                             </dd>
                                         </div>
                                     ))}

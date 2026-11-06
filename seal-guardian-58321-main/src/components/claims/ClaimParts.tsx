@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn, formatToIST } from "@/lib/utils";
 import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
 import { PhotoViewer } from "@/components/claims/PhotoViewer";
+import { CopyBtn, nodeText } from "@/components/claims/CopyButtons";
 import {
     PROBLEMS, NEEDS_DESCRIPTION, STATUS, NOT_COVERED_LINE, AIRBAGS, trackerSteps, isPhoto, isVideo, day, vehicleText, useClaimComponents,
     type Claim, type ClaimHistory, type ClaimStatus, type ClaimWarranty, type Vehicle,
@@ -258,7 +259,8 @@ export const InfoRows = ({ title, rows, children }: { title: string; rows: [stri
             {rows.filter(([, v]) => v).map(([k, v]) => (
                 <div key={k} className="contents">
                     <dt className="text-gray-500">{k}</dt>
-                    <dd className="break-words font-semibold text-gray-900">{v}</dd>
+                    <dd className="flex items-start justify-between gap-1 break-words font-semibold text-gray-900"><span className="min-w-0">{v}</span>
+                        <CopyBtn text={nodeText(v)} title={`Copy ${k}`} className="-mt-0.5" /></dd>
                 </div>
             ))}
         </dl>

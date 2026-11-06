@@ -283,3 +283,15 @@ test('components are read as groups, and an older flat list is one group', async
     assert.deepEqual(parseComponentGroups('nope'), []);
     assert.deepEqual(parseComponentGroups(undefined), []);
 });
+
+test('the plant edits a claim\'s component and remarks, and a vehicle correction keeps them', () => {
+    const base = claim({ vehicle: { make: 'Hyundai', model: 'Creta', airbags: 'with', major_colour: 'Black', component: 'Hatti', component_remarks: 'torn' } });
+    const r = applyClaimAction(base, 'edit', anuka, { component: 'Dicci Seat', component_remarks: 'seam open', note: 'Wrong part picked' });
+    const c = ok(r);
+    assert.equal(c.vehicle?.component, 'Dicci Seat');
+    assert.equal(c.vehicle?.component_remarks, 'seam open');
+    // a correction of the colour leaves the component alone
+    const d = ok(applyClaimAction(base, 'edit', anuka, { major_colour: 'Grey', note: 'Colour fix' }));
+    assert.equal(d.vehicle?.component, 'Hatti');
+    assert.equal(d.vehicle?.component_remarks, 'torn');
+});

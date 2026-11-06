@@ -216,7 +216,8 @@ const SEARCH_TEXT = `CONCAT_WS(' ', c.claim_no, c.warranty_uid, vd.store_name, c
     JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.car')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.foc_note')),
     JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.make')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.model')),
     JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.major_colour')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.minor_colour')),
-    JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.material')), JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_email')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.material')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.component')), JSON_UNQUOTE(JSON_EXTRACT(c.vehicle, '$.component_remarks')),
+    JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.customer_email')),
     JSON_UNQUOTE(JSON_EXTRACT(c.decision, '$.item')), JSON_UNQUOTE(JSON_EXTRACT(c.plan_info, '$.alteration_no')),
     JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.docket')), JSON_UNQUOTE(JSON_EXTRACT(c.dispatch, '$.courier')))`;
 

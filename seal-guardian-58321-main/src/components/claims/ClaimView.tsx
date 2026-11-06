@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { LabeledPhotos } from "@/components/claims/RegistrationPanel";
 import { MediaGrid, mediaItems } from "@/components/claims/ClaimParts";
 import { DownloadAll } from "@/components/claims/PhotoViewer";
+import { CopyBtn, nodeText } from "@/components/claims/CopyButtons";
 import { guessMaterial, useClaimMaterials, decisionText, day, HOLD_REASONS, REJECT_REASONS, STATUS, trackerSteps, vehicleText, type Claim } from "@/lib/claims";
 
 type Who = 'store' | 'customer' | 'admin';
@@ -150,6 +151,10 @@ export const CompareTable = ({ c, who }: { c: Claim; who: Who }) => {
         { k: 'Product', left: r?.product_name, right: s?.product_name },
         ...(showMaterial ? [{ k: 'Material', left: registeredMaterial, right: c.vehicle?.material, diff: materialDiffers }] : []),
         { k: 'Vehicle', left: [r?.car, r?.car_colour].filter(Boolean).join(' · '), right: claimCar, diff: carDiffers },
+        ...(c.vehicle?.component ? [
+            { k: 'Component', left: null, right: c.vehicle.component },
+            ...(c.vehicle.component_remarks ? [{ k: 'Remarks', left: null, right: c.vehicle.component_remarks }] : []),
+        ] : []),
         ...(c.vehicle?.major_colour || c.vehicle?.minor_colour ? [
             { k: 'Major colour', left: null, right: c.vehicle?.major_colour },
             { k: 'Minor colour', left: null, right: c.vehicle?.minor_colour },
@@ -200,9 +205,10 @@ export const CompareTable = ({ c, who }: { c: Claim; who: Who }) => {
             {rows.map(x => (
                 <div key={x.k} className={cn("grid grid-cols-2 sm:grid-cols-[150px_minmax(0,1fr)_minmax(0,1fr)] border-t border-gray-200", x.diff && "bg-amber-50")}>
                     <span className="col-span-2 sm:col-span-1 px-3 sm:px-4 pt-2 sm:py-2.5 text-[11px] sm:text-sm font-bold sm:font-semibold text-gray-500 sm:text-gray-600">{x.k}</span>
-                    <span className={cell}>{x.left || dash}</span>
+                    <span className={cell}>{x.left || dash}{!!nodeText(x.left).trim() && <CopyBtn text={nodeText(x.left)} title={`Copy ${x.k} at registration`} className="ml-1 align-middle" />}</span>
                     <span className={cn(cell, "border-l border-gray-200 sm:border-l-0", x.diff && "text-amber-900")}>
                         {x.right || dash}{x.diff && <AlertTriangle className="ml-1 inline h-4 w-4 text-amber-600" />}
+                        {!!nodeText(x.right).trim() && <CopyBtn text={nodeText(x.right)} title={`Copy ${x.k} in this claim`} className="ml-1 align-middle" />}
                     </span>
                 </div>
             ))}
