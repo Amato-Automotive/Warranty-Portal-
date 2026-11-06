@@ -67,6 +67,15 @@ test("quantities come from the SET column, not the serial number or prices", () 
     ].join("\n")), { signature: 1, umax_arrow: 3 });
 });
 
+test("a number from a header or address is not counted as an invoice quantity", () => {
+    const text = [
+        "TAX INVOICE",
+        "D3 445",
+        "1  D3 PERFO S.BROWN/BLACK  87089900  18 %  2 SET  6,483.00  SET  12,966.00",
+    ].join("\n");
+    assert.deepEqual(Object.fromEntries(matchInvoice(text, [{ id: "d3", name: "D3", points: 1 }]).map(l => [l.product_id, l.qty])), { d3: 2 });
+});
+
 test("only the exact series word is sure; a near-spelling (a photo's OCR) is marked to check", () => {
     const lines = matchInvoice([
         "TAX INVOICE",

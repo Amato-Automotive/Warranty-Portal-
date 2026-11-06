@@ -13,9 +13,29 @@ export type ReadProgress = (stage: string, pct: number) => void;
 const MAX_PDF_PAGES = 3;
 
 async function pdfText(file: File, onProgress: ReadProgress): Promise<{ text: string; canvases: HTMLCanvasElement[] }> {
+    /* pdfjs-dist 6 uses Promise.withResolvers, which older Chromium/Edge
+     * builds do not provide. Supplying the tiny standard polyfill keeps PDF
+     * invoices readable without changing the rest of the app. */
+    const promiseCtor = Promise as typeof Promise & { withResolvers?: <T>() => { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason?: unknown) => void } };
+    if (!promiseCtor.withResolvers) {
+        promiseCtor.withResolvers = <T>() => {
+            let resolve!: (value: T | PromiseLike<T>) => void;
+            let reject!: (reason?: unknown) => void;
+            const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+            return { promise, resolve, reject };
+        };
+    }
     const pdfjs = await import("pdfjs-dist");
     const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-    pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+    /* Hostinger serves .mjs as text/plain, which makes PDF.js's dynamic
+     * worker import fail with "Setting up fake worker". Fetch the asset and
+     * re-wrap it as a JavaScript blob so the browser sees the correct MIME
+     * type regardless of the host's static-file mapping. */
+    const workerSource = await fetch(workerUrl).then(r => {
+        if (!r.ok) throw new Error(`Could not load the PDF reader worker (${r.status})`);
+        return r.text();
+    });
+    pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
     const pages = Math.min(doc.numPages, MAX_PDF_PAGES);
     let text = "";
@@ -28,6 +48,7 @@ async function pdfText(file: File, onProgress: ReadProgress): Promise<{ text: st
         const rows = new Map<number, { x: number; s: string }[]>();
         for (const item of content.items as any[]) {
             if (!item.str?.trim()) continue;
+            if (!Array.isArray(item.transform) || item.transform.length < 6) continue;
             const y = Math.round(item.transform[5]);
             const key = [...rows.keys()].find(k => Math.abs(k - y) <= 3) ?? y;
             rows.set(key, [...(rows.get(key) ?? []), { x: item.transform[4], s: item.str }]);

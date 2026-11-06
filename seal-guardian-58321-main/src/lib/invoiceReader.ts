@@ -169,6 +169,8 @@ const INVOICE_START = /^tax\s+invoice\b/i;
 const UNIT = /^(pcs?|pc\.?|nos?\.?|sets?|set\.?|qty|units?|pair|pairs)$/i;
 /* A number before one of these describes the product, not how many: "2 Row", "5 Seater", "12mm". */
 const SPEC = /^(rows?|seaters?|seats?|wheelers?|mm|cm|inch(es)?|in|kg|gm?|ml|ltr|l|x|%|pack|layers?|d)$/i;
+/* Prevent header/HSN/amount numbers from becoming huge set quantities. */
+const MAX_LINE_QTY = 100;
 
 /** The quantity on a line, outside the words the product name took up. */
 function quantityOn(tokens: string[], from: number, to: number): { qty: number; clear: boolean } | null {
@@ -177,7 +179,7 @@ function quantityOn(tokens: string[], from: number, to: number): { qty: number; 
         if (i >= from && i <= to) return;
         if (!/^\d{1,3}(\.0+)?$/.test(t)) return;            // whole numbers up to 999; prices and codes are longer or have paise
         const n = Number(t);
-        if (!(n >= 1 && n <= 500)) return;
+        if (!(n >= 1 && n <= MAX_LINE_QTY)) return;
         if (SPEC.test(tokens[i + 1] ?? "")) return;
         /* The line's own serial number: a number first, before the name. */
         if (i === 0 && from > 0) return;
@@ -189,9 +191,9 @@ function quantityOn(tokens: string[], from: number, to: number): { qty: number; 
     if (withUnit) return { qty: withUnit.n, clear: true };
     /* Otherwise the first number after the name — invoices put the quantity
        before the rate and the amount. One candidate is clear; several are not. */
-    const after = found.filter(f => f.i > to);
-    if (after.length) return { qty: after[0].n, clear: after.length === 1 };
-    return { qty: found[0].n, clear: false };
+    /* If OCR did not preserve a unit, do not guess from serials, prices, or
+       address numbers. The store can correct the value manually below. */
+    return null;
 }
 
 /** Every product found in the invoice text, with its quantity; the same product on two lines is added up. */
@@ -210,9 +212,10 @@ export function matchInvoice(text: string, products: ReaderProduct[]): ReadLine[
         const q = quantityOn(tokens, hit.from, hit.to);
         /* A product line has a quantity. A near-name with none — "Signatory"
            at the foot of the bill — is not a product line. */
-        if (!q && hit.score < 0.95) continue;
-        const sure = hit.score >= EXACT && Boolean(q?.clear);
-        const qty = q?.qty ?? 1;
+        /* An exact name without a nearby quantity can be a heading/address. */
+        if (!q) continue;
+        const sure = hit.score >= EXACT && q.clear;
+        const qty = q.qty;
         const prev = out.get(hit.p.id);
         if (prev) {
             prev.qty += qty;
