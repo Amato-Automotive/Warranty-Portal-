@@ -60,6 +60,26 @@ export const isSellMore = (id: string) => id === SELL_MORE_ID;
 /** One program with two options: Sell More Earn More, and Buy More Get More. */
 export const SELL_MORE_PROGRAM = 'Sell More Earn More Franchisee Benefit Program';
 
+/** Option 1's private reward ladder. Stores only see the next rung, never the full table. */
+export const SELL_MORE_REWARD_STEP_POINTS = 6;
+export const SELL_MORE_REWARD_STEP_SETS = 1;
+export const SELL_MORE_REWARD_LABEL = 'FOC – 2 Row Amaze Seat Covers';
+
+export function rewardSlab(target: number | null, achieved: number, claimed: number) {
+    if (!target || target <= 0) return null;
+    const slab = Math.max(0, Number(claimed) || 0);
+    const points = roundPoints(target + slab * SELL_MORE_REWARD_STEP_POINTS);
+    const more = Math.max(0, roundPoints(points - (Number(achieved) || 0)));
+    return {
+        slab: slab + 1,
+        points,
+        to_next: more,
+        sets: SELL_MORE_REWARD_STEP_SETS,
+        label: SELL_MORE_REWARD_LABEL,
+        text: `On achieving ${points} points: Get ${SELL_MORE_REWARD_STEP_SETS} set – 2 Row Amaze Seat Covers.`,
+    };
+}
+
 export type SellMoreOption = 'sell_more' | 'buy_more';
 
 /** The option a store opted for, from its terms on the scheme. */

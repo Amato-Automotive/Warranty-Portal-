@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { earned, eligibility, groupOf, inAudience, invoiceProblems, isSellMore, optionAllowed, readAudience, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, storeScaleTarget, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
+import { rewardSlab, earned, eligibility, groupOf, inAudience, invoiceProblems, isSellMore, optionAllowed, readAudience, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, storeScaleTarget, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
 import { periodsOf } from '../schemeTargets.js';
 
 const rule = {
@@ -175,4 +175,17 @@ test('distributors only get Buy More Get More', () => {
 test('only the one scheme runs this way', () => {
     assert.ok(isSellMore(SELL_MORE_ID));
     assert.ok(!isSellMore('8ecf2030-ff0b-437b-88a1-81ac354df46a'));
+});
+
+test('reward ladder: first rung is the target, each claim adds 6 points', () => {
+    assert.equal(rewardSlab(null, 10, 0), null);
+    assert.equal(rewardSlab(0, 10, 0), null);
+    const first = rewardSlab(20, 14, 0)!;
+    assert.deepEqual([first.slab, first.points, first.to_next, first.sets], [1, 20, 6, 1]);
+    const reached = rewardSlab(20, 20, 0)!;
+    assert.equal(reached.to_next, 0);
+    const second = rewardSlab(20, 20, 1)!;
+    assert.deepEqual([second.slab, second.points, second.to_next], [2, 26, 6]);
+    assert.equal(rewardSlab(20, 33, 2)!.points, 32);
+    assert.equal(rewardSlab(20, 33, 2)!.to_next, 0);
 });

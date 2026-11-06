@@ -101,21 +101,29 @@ function AudiencePanel({ audience, stores, onSave }: { audience: Audience; store
     const [open, setOpen] = useState(false);
     const [q, setQ] = useState("");
     const [busy, setBusy] = useState(false);
-    const save = async (a: Audience) => { setBusy(true); try { await onSave(a); } finally { setBusy(false); } };
-    const setting = (id: string) => (audience.include.includes(id) ? "always" : audience.exclude.includes(id) ? "never" : "group");
-    const assignment = (id: string) => audience.assignments?.[id] ?? "self";
+    const [draft, setDraft] = useState<Audience>(audience);
+    useEffect(() => setDraft(audience), [audience]);
+    const save = async (a: Audience) => {
+        // Update immediately so a quick follow-up assignment cannot reuse a
+        // stale group value from the previous server response.
+        setDraft(a);
+        setBusy(true);
+        try { await onSave(a); } finally { setBusy(false); }
+    };
+    const setting = (id: string) => (draft.include.includes(id) ? "always" : draft.exclude.includes(id) ? "never" : "group");
+    const assignment = (id: string) => draft.assignments?.[id] ?? "self";
     const setStore = (id: string, value: string) => save({
-        ...audience,
-        include: value === "always" ? [...audience.include.filter(x => x !== id), id] : audience.include.filter(x => x !== id),
-        exclude: value === "never" ? [...audience.exclude.filter(x => x !== id), id] : audience.exclude.filter(x => x !== id),
+        ...draft,
+        include: value === "always" ? [...draft.include.filter(x => x !== id), id] : draft.include.filter(x => x !== id),
+        exclude: value === "never" ? [...draft.exclude.filter(x => x !== id), id] : draft.exclude.filter(x => x !== id),
     });
     const setAssignment = (id: string, value: string) => {
-        const assignments = { ...(audience.assignments ?? {}) };
+        const assignments = { ...(draft.assignments ?? {}) };
         if (value === "self") delete assignments[id]; else assignments[id] = value as AssignedOption;
-        return save({ ...audience, assignments });
+        return save({ ...draft, assignments });
     };
     const count = (g: AudienceGroup) => stores.filter(s => s.group === g).length;
-    const special = audience.include.length + audience.exclude.length;
+    const special = draft.include.length + draft.exclude.length;
     const term = q.trim().toLowerCase();
     const shown = stores
         .filter(s => !term || [s.name, s.code, s.city, s.state].some(v => String(v ?? "").toLowerCase().includes(term)))
@@ -132,8 +140,8 @@ function AudiencePanel({ audience, stores, onSave }: { audience: Audience; store
                             <span className="block text-sm font-semibold text-slate-900">{label} <span className="font-normal tabular-nums text-slate-500">({count(g)})</span></span>
                             <span className="block text-xs text-slate-500">{note}</span>
                         </span>
-                        <Switch checked={audience.groups[g]} disabled={busy} aria-label={label}
-                            onCheckedChange={v => save({ ...audience, groups: { ...audience.groups, [g]: v } })} />
+                        <Switch checked={draft.groups[g]} disabled={busy} aria-label={label}
+                            onCheckedChange={v => save({ ...draft, groups: { ...draft.groups, [g]: v } })} />
                     </label>
                 ))}
             </div>

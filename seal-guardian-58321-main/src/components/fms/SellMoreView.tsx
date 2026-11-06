@@ -223,9 +223,16 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                                 </p>
                             </div>
                         )}
+                        {month.reward_slab && (
+                            <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-800">
+                                {month.reward_slab.to_next > 0
+                                    ? tr(`Achieve ${points(month.reward_slab.to_next)} more points to get ${month.reward_slab.sets} set – 2 Row Amaze Seat Covers.`, `2 Row Amaze Seat Covers का ${month.reward_slab.sets} सेट पाने के लिए ${points(month.reward_slab.to_next)} पॉइंट और पाएं।`)
+                                    : tr(`Milestone reached: get ${month.reward_slab.sets} set – 2 Row Amaze Seat Covers.`, `माइलस्टोन पूरा: 2 Row Amaze Seat Covers का ${month.reward_slab.sets} सेट पाएं।`)}
+                            </div>
+                        )}
                     </div>
                     <div className="flex flex-col gap-2 sm:items-end">
-                        {month.reward?.status === "sent" ? (
+                        {month.reward?.status === "sent" && !month.can_request ? (
                             <p className="flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-3 text-sm font-semibold text-emerald-300">
                                 <CheckCircle2 className="h-4 w-4 shrink-0" />{tr("Reward sent", "रिवॉर्ड भेज दिया गया")}{month.reward.sent_at ? ` · ${stampDay(month.reward.sent_at, locale)}` : ""}{month.reward.note ? ` · ${month.reward.note}` : ""}
                             </p>
@@ -308,6 +315,23 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                     </section>
                 </div>
             )}
+
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-700">
+                <h2 className="mb-3 text-base font-extrabold text-slate-900">Important Terms &amp; Conditions</h2>
+                <ol className="list-decimal space-y-1.5 pl-5">
+                    <li>All points will be calculated monthly only.</li>
+                    <li>Points will not be carried forward to the next month.</li>
+                    <li>{month?.target ? `If monthly achievement is below ${points(month.target)} points, no reward will be applicable.` : "If monthly achievement is below the monthly target points, no reward will be applicable."}</li>
+                    <li>Additional FOC rewards will be given for every complete 6 points earned above the monthly target.</li>
+                    <li>Rewards will be calculated and claimed on a monthly basis only.</li>
+                </ol>
+                <div className="mt-4 space-y-1">
+                    <p><b>Program Validity:</b> 1st November 2026 to 31st March 2027</p>
+                    <p className="mt-3 font-bold text-slate-900">Sell More, Earn More!</p>
+                    <p>Wishing you great success and higher sales!</p>
+                    <p className="pt-2">Thanks &amp; Regards,<br />Team AFAC</p>
+                </div>
+            </section>
 
             <Dialog open={asking} onOpenChange={v => !sending && setAsking(v)}>
                 <DialogContent className="max-w-[calc(100%-2rem)] rounded-2xl sm:max-w-md">

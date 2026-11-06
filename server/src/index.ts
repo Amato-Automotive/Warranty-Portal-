@@ -533,6 +533,14 @@ async function runMigrations() {
       await pool.query("UPDATE scheme_reward_requests SET month = DATE_FORMAT(requested_at, '%Y-%m') WHERE month IS NULL");
       await pool.query('ALTER TABLE scheme_reward_requests ADD UNIQUE KEY uq_srr_month (scheme_id, store_id, month)');
     }
+    // Option 1 can earn one FOC set at each private reward slab (+6 points).
+    const [srrSlab]: any = await pool.query("SHOW COLUMNS FROM scheme_reward_requests LIKE 'slab_no'");
+    if (!srrSlab.length) await pool.query("ALTER TABLE scheme_reward_requests ADD COLUMN slab_no INT NOT NULL DEFAULT 1 AFTER month");
+    const [srrSlabIndex]: any = await pool.query("SHOW INDEX FROM scheme_reward_requests WHERE Key_name = 'uq_srr_slab'");
+    if (!srrSlabIndex.length) {
+      try { await pool.query('ALTER TABLE scheme_reward_requests DROP INDEX uq_srr_month'); } catch { /* older databases may not have the legacy key */ }
+      await pool.query('ALTER TABLE scheme_reward_requests ADD UNIQUE KEY uq_srr_slab (scheme_id, store_id, month, slab_no)');
+    }
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_reminders (
          scheme_id CHAR(36) NOT NULL,
          window_start VARCHAR(16) NOT NULL,

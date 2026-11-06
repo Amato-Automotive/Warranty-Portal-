@@ -15,7 +15,7 @@ import {
     stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth, pointsByProduct, roundPoints, tierOf,
     type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
-import { addSets, earned, eligibility, groupOf, inAudience, invoiceProblems, isOffer, isSellMore, noSets, optionAllowed, optionOf, readAudience, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, type AssignedOption, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
+import { addSets, earned, eligibility, groupOf, inAudience, invoiceProblems, isOffer, isSellMore, noSets, optionAllowed, optionOf, readAudience, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, rewardSlab, type AssignedOption, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -583,15 +583,15 @@ async function storeTargets(scheme: Scheme, storeId: string) {
 /* ─── Sell More Earn More ─────────────────────────────────────────────────── */
 
 /**
- * The program: live, the stores in its audience can see it. Paused, which is how
- * it starts, only the scheme's own list of stores can: the test store, so it can
- * be tried on the live site without any real store seeing it. Distributors see
- * no other scheme; those are for franchises.
+ * Sell More is admin-assignment only: a store must have an explicit option
+ * assignment before the scheme appears in its portal. Paused schemes retain
+ * the existing preview rule for an assigned/test store.
  */
 const canSee = (scheme: Scheme, store: NonNullable<Awaited<ReturnType<typeof myStore>>>) => {
     if (!isSellMore(scheme.id)) return store.is_franchise && isEligible(scheme.eligibility, store);
     const audience = readAudience(scheme.settings.audience);
-    return scheme.settings.live ? (Boolean(audience.assignments[store.id]) || inAudience(store, audience)) : isEligible(scheme.eligibility, store);
+    if (audience.exclude.includes(store.id)) return false;
+    return Boolean(audience.assignments[store.id]) && (scheme.settings.live || isEligible(scheme.eligibility, store));
 };
 
 const assignedOption = (scheme: Scheme, storeId: string): AssignedOption | null =>
@@ -674,16 +674,18 @@ function adminMonth(scheme: Scheme, rows: WarrantyRow[], m: Period, months: Peri
 
 /** Each store's reward rows, by store then month. */
 async function sellMoreRewards(schemeId: string, storeIds: string[]) {
-    const out = new Map<string, Map<string, any>>();
+    const out = new Map<string, Map<string, any[]>>();
     if (!storeIds.length) return out;
     const [rows]: any = await db.query(
-        'SELECT id, store_id, month, points, status, source, note, requested_at, sent_at FROM scheme_reward_requests WHERE scheme_id = ? AND store_id IN (?)',
+        'SELECT id, store_id, month, slab_no, points, status, source, note, requested_at, sent_at FROM scheme_reward_requests WHERE scheme_id = ? AND store_id IN (?) ORDER BY slab_no ASC, requested_at ASC',
         [schemeId, storeIds]
     );
     for (const r of rows) {
         const k = String(r.store_id);
         if (!out.has(k)) out.set(k, new Map());
-        out.get(k)!.set(String(r.month), { ...r, store_id: k, points: Number(r.points) });
+        const m = out.get(k)!;
+        const key = String(r.month);
+        m.set(key, [...(m.get(key) ?? []), { ...r, store_id: k, points: Number(r.points), slab_no: Number(r.slab_no ?? 1) }]);
     }
     return out;
 }
@@ -746,8 +748,10 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
         option, opted_at: terms.opted_at ?? null, assigned: Boolean(assignedOption(scheme, storeId)), total: e.total, warranties: e.warranties,
         months: [
             ...e.months.map(m => {
-                const r = rewards?.get(m.key);
+                const rewardRows = rewards?.get(m.key) ?? [];
                 const d = adminMonth(scheme, rows, months.find(x => x.key === m.key)!, months, monthTerms);
+                const slab = rewardSlab(d.target, d.calc.points, rewardRows.length);
+                const lastReward = rewardRows[rewardRows.length - 1] ?? null;
                 return {
                     key: m.key, label: m.label, warranties: m.warranties, points: m.points, future: false,
                     /* Its target and how far along it is, on the store's own points. */
@@ -756,12 +760,14 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
                     days: m.days.filter(d => d.warranties > 0).map(({ no_series: _n, ...d }) => d),
                     series: seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on),
                     /* Requests open once the calculated points reach the target. */
-                    can_request: d.target !== null && d.calc.points >= d.target,
-                    reward: r ? { status: r.status, note: r.note, requested_at: r.requested_at, sent_at: r.sent_at } : null,
+                    can_request: Boolean(slab && slab.to_next === 0 && !lastReward || slab && slab.to_next === 0 && lastReward?.status === 'sent'),
+                    reward: lastReward ? { status: lastReward.status, note: lastReward.note, requested_at: lastReward.requested_at, sent_at: lastReward.sent_at } : null,
+                    reward_slab: slab,
+                    rewards_claimed: rewardRows.length,
                 };
             }),
             ...periodsOf(scheme.starts_on, scheme.ends_on, 'month').filter(m => !shown.has(m.key)).map(m => ({
-                key: m.key, label: m.label, warranties: 0, points: 0, future: true, target: null, pct: null, days: [], series: [], can_request: false, reward: null,
+                key: m.key, label: m.label, warranties: 0, points: 0, future: true, target: null, pct: null, days: [], series: [], can_request: false, reward: null, reward_slab: null, rewards_claimed: 0,
             })),
         ],
     };
@@ -1140,7 +1146,7 @@ export class SchemeController {
                     opted_at: p.terms.opted_at ?? p.joined_at,
                     months: Object.fromEntries(data.map(([m, d]) => [m.key, {
                         tier: d.tier, target: d.target, calculated: d.calc.points, store_points: d.plain.points,
-                        warranties: d.calc.warranties, no_series: d.calc.no_series, reward: mine?.get(m.key)?.status ?? null,
+                        warranties: d.calc.warranties, no_series: d.calc.no_series, reward: mine?.get(m.key)?.at(-1)?.status ?? null,
                     }])),
                 };
             });
@@ -1176,7 +1182,7 @@ export class SchemeController {
                     const storeDay = new Map(d.plain.days.map(x => [x.date, x.points]));
                     return {
                         key: m.key, label: m.label, points: d.calc.points, store_points: d.plain.points, warranties: d.calc.warranties, no_series: d.calc.no_series,
-                        reward: rewards?.get(m.key) ?? null,
+                        reward: rewards?.get(m.key)?.at(-1) ?? null,
                         series: seriesInMonth(rows, rule, m.key, scheme.starts_on, scheme.ends_on, d.tier_obj),
                         days: d.calc.days.map(x => ({ ...x, store_points: storeDay.get(x.date) ?? 0 })),
                     };
@@ -1313,12 +1319,21 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
             const audience = readAudience(req.body);
+            // Stores are assigned manually now; the distributor group must stay
+            // off so stale admin-screen payloads cannot reopen it.
+            audience.groups.distributors = false;
             const stores = await programStores();
             const valid = new Set(stores.filter((s: any) => inAudience(s, audience) || audience.assignments[s.id]).map((s: any) => s.id));
             for (const [storeId, option] of Object.entries(audience.assignments)) {
                 const store = stores.find((s: any) => s.id === storeId);
                 if (!store || !valid.has(storeId) || !optionAllowed(option, store)) delete audience.assignments[storeId];
             }
+            // An explicit option assignment also makes the store visible. This
+            // lets the admin bulk-hide unassigned stores with “Never show” and
+            // later reveal one simply by assigning Option 1 or 2.
+            const assignedIds = new Set(Object.keys(audience.assignments));
+            audience.exclude = audience.exclude.filter(id => !assignedIds.has(id));
+            audience.include = [...new Set([...audience.include, ...assignedIds])];
             const previous = readAudience(scheme.settings.audience);
             for (const storeId of Object.keys(previous.assignments)) {
                 if (audience.assignments[storeId]) continue;
@@ -1410,21 +1425,23 @@ export class SchemeController {
             const months = sellMoreMonths(scheme);
             if (!months.some(m => m.key === month)) return res.status(400).json({ error: 'That month is not open' });
             const by = (req as any).user?.id ?? null;
+            const [[latest]]: any = await db.execute('SELECT MAX(slab_no) AS slab_no FROM scheme_reward_requests WHERE scheme_id = ? AND store_id = ? AND month = ?', [scheme.id, storeId, month]);
+            const slabNo = Math.max(1, Number(req.body?.slab_no) || Number(latest?.slab_no) || 1);
             if (req.body?.status === 'sent') {
                 const note = String(req.body?.note ?? '').trim().slice(0, 500) || null;
                 const rows = (await sellMoreRows(scheme, [storeId])).get(storeId) ?? [];
                 const plain = earned(rows, worthOf(scheme.settings.points), months, scheme.starts_on, scheme.ends_on).months.find(m => m.key === month)?.points ?? 0;
                 await db.execute(
-                    `INSERT INTO scheme_reward_requests (id, scheme_id, store_id, month, points, status, source, note, sent_at, sent_by)
-                     VALUES (?, ?, ?, ?, ?, 'sent', 'admin', ?, NOW(), ?)
+                    `INSERT INTO scheme_reward_requests (id, scheme_id, store_id, month, slab_no, points, status, source, note, sent_at, sent_by)
+                     VALUES (?, ?, ?, ?, ?, ?, 'sent', 'admin', ?, NOW(), ?)
                      ON DUPLICATE KEY UPDATE status = 'sent', note = VALUES(note), sent_at = NOW(), sent_by = VALUES(sent_by)`,
-                    [uuidv4(), scheme.id, storeId, month, plain, note, by]
+                    [uuidv4(), scheme.id, storeId, month, slabNo, plain, note, by]
                 );
             } else {
-                await db.execute(`DELETE FROM scheme_reward_requests WHERE scheme_id = ? AND store_id = ? AND month = ? AND source = 'admin'`, [scheme.id, storeId, month]);
+                await db.execute(`DELETE FROM scheme_reward_requests WHERE scheme_id = ? AND store_id = ? AND month = ? AND slab_no = ? AND source = 'admin'`, [scheme.id, storeId, month, slabNo]);
                 await db.execute(
-                    `UPDATE scheme_reward_requests SET status = 'requested', note = NULL, sent_at = NULL, sent_by = NULL WHERE scheme_id = ? AND store_id = ? AND month = ?`,
-                    [scheme.id, storeId, month]
+                    `UPDATE scheme_reward_requests SET status = 'requested', note = NULL, sent_at = NULL, sent_by = NULL WHERE scheme_id = ? AND store_id = ? AND month = ? AND slab_no = ?`,
+                    [scheme.id, storeId, month, slabNo]
                 );
             }
             log(req, req.body?.status === 'sent' ? 'SCHEME_REWARD_SENT' : 'SCHEME_REWARD_UNDONE', scheme, { store_id: storeId, month, note: req.body?.note ?? null });
@@ -2507,13 +2524,14 @@ export class SchemeController {
                 return res.status(404).json({ error: 'Scheme not found' });
             }
             const mine = await sellMoreForStore(scheme, store.id);
-            const month = (mine.months as { key: string; points: number; reward: unknown; future: boolean; can_request: boolean }[]).find(m => m.key === req.body?.month && !m.future) ?? null;
-            const problem = redeemProblem(mine.option, month, Boolean(month?.reward));
+            const month = (mine.months as { key: string; points: number; reward: any; reward_slab?: { slab: number }; future: boolean; can_request: boolean }[]).find(m => m.key === req.body?.month && !m.future) ?? null;
+            const problem = redeemProblem(mine.option, month, month?.reward?.status === 'requested');
             if (problem) return res.status(400).json({ error: problem });
-            /* The unique key stops a double tap making two requests. */
+            const slabNo = Math.max(1, Number(month?.reward_slab?.slab) || 1);
+            /* The unique key stops a double tap making two requests for one slab. */
             await db.execute(
-                'INSERT IGNORE INTO scheme_reward_requests (id, scheme_id, store_id, month, points) VALUES (?, ?, ?, ?, ?)',
-                [uuidv4(), scheme.id, store.id, month!.key, month!.points]
+                'INSERT IGNORE INTO scheme_reward_requests (id, scheme_id, store_id, month, slab_no, points) VALUES (?, ?, ?, ?, ?, ?)',
+                [uuidv4(), scheme.id, store.id, month!.key, slabNo, month!.points]
             );
             res.json({ success: true });
         } catch (error: any) {
