@@ -71,18 +71,23 @@ async function pdfText(file: File, onProgress: ReadProgress): Promise<{ text: st
  * A phone photo is often stored sideways with an "orientation" note that tells
  * viewers to turn it. OCR reads the raw pixels and ignores the note, so a
  * portrait photo comes out as garbage. Drawing it through the browser turns it
- * upright first. If that fails, the file is read as it is.
+ * upright first (and enlarges a small one). If that fails, the file is read as it is.
  */
 async function upright(file: File): Promise<File | HTMLCanvasElement> {
     try {
         const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+        /* A small picture (a screenshot, a WhatsApp-compressed photo) is too coarse for OCR to read small print; enlarging it first makes it readable. */
+        const longest = Math.max(bitmap.width, bitmap.height);
+        const scale = longest < 2000 ? Math.min(4, 2000 / longest) : 1;
         const canvas = document.createElement("canvas");
-        canvas.width = bitmap.width; canvas.height = bitmap.height;
+        canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
         const ctx = canvas.getContext("2d");
         if (!ctx) return file;
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(bitmap, 0, 0);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         bitmap.close?.();
         return canvas;
     } catch {
