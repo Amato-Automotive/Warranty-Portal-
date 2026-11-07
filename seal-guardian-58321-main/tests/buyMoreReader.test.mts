@@ -81,3 +81,31 @@ test("a line that names Emporio is Emporio even when it matched a plainer produc
     assert.equal(r.sets.emporio, 1);
     assert.equal(r.sets.velora, 2);
 });
+
+test("noisy OCR: '1SET' read as '18ET' is 1, and the discount after SET is never the quantity", () => {
+    const names = ["Q2", "H-CROSS"];
+    /* From the browser's OCR of a small screenshot of Ual-7795/26-27. */
+    const text = [
+        "7/Q2 G.MEG /BLACK 1.20 NS 14 W/O ABF 87089900 | 18% 1SET| 6.46200 SET| 8% 5,945.04",
+        "11/ Q2 OFF/WH COLA BOLERO-7 REF W/O ABF  |87082800 | 18% 18ET| 8,093.00/SET| 8% 7",
+        "6 H-CROSS LT.GREY /BLACK SCORPIO-7 CAP 87089900 | 18% 1SET| 8U93.00(SET| 8%| 7,445.56",
+    ].join("\n");
+    assert.deepEqual(readSets(text, names).sets, { velora: 3, doble: 0, signature: 0, emporio: 0, other: 0 });
+    assert.equal(readSets("1  Q2 Black  87089900  SET  8 %  5,945.04", names).sets.velora, 0);   // no quantity at all: not guessed
+});
+
+test("a quantity the line's own amount contradicts is left out, not counted", () => {
+    const names = ["Q2"];
+    /* OCR read "1 SET" as "41 SET": 41 sets of a 6,462.00 item cannot come to 5,945.04. */
+    const r = readSets("8|Q2 V.SILVER C.GREY VENUE NS IH 25 SAB 87089900 | 18 % 41 SET| 6,462.00 SET| 8% 5,945.04", names);
+    assert.equal(r.sets.velora, 0);
+    assert.equal(r.missed.length, 1);
+    /* A genuine multi-set line is kept, and so is one whose prices OCR garbled. */
+    assert.equal(readSets("2|Q2 BLACK 87089900 | 18 % 2 SET| 4,958.00 SET| 8 % 9,122.72", names).sets.velora, 2);
+    assert.equal(readSets("5|Q2 BLACK 87089900 | 18% 2 SET| 14.703.00(SET. 8% 27,053.52", names).sets.velora, 2);
+});
+
+test("goods rows that were not counted are reported; tax-summary rows are not", () => {
+    const r = readSets(["1|U-MAX ARROW BLACK/BLACK 87089900 | 18 % 1 SET| 4,958.00 SET| 8% 4,561.36", "87089900  14,988.00  9%  1,348.92  9%  1,348.92  2,697.84"].join("\n"), ["Q2"]);
+    assert.equal(r.missed.length, 1);
+});

@@ -1,4 +1,4 @@
-import { matchInvoice, type ReaderProduct } from "./invoiceReader";
+import { matchInvoiceDetailed, type ReaderProduct } from "./invoiceReader";
 import { seriesOfProduct } from "./productSeries";
 
 /**
@@ -25,7 +25,7 @@ export function kindOf(name: string): SetKind {
     return kind;
 }
 
-export interface ReadSets { sets: Sets; check: SetKind[]; from: string[] }
+export interface ReadSets { sets: Sets; check: SetKind[]; from: string[]; /* goods-table rows that could not be counted */ missed: string[] }
 
 /** The sets on an invoice's text. `names` are the seat cover products to look for. */
 export function readSets(text: string, names: string[]): ReadSets {
@@ -34,11 +34,12 @@ export function readSets(text: string, names: string[]): ReadSets {
     const sets = noSets();
     const check = new Set<SetKind>();
     const from: string[] = [];
-    for (const line of matchInvoice(text, products, true)) {
+    const found = matchInvoiceDetailed(text, products, true);
+    for (const line of found.lines) {
         const kind = line.word ? (line.word as SetKind) : kindOf(line.product_id);
         sets[kind] += line.qty;
         if (line.confidence === "check") check.add(kind);
         from.push(line.from);
     }
-    return { sets, check: [...check], from };
+    return { sets, check: [...check], from, missed: found.missed };
 }

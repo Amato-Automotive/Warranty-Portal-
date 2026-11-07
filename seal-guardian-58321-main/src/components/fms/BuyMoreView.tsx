@@ -36,6 +36,7 @@ function InvoiceForm({ open, schemeId, products, again, onClose, onDone }: { ope
     const [reading, setReading] = useState<string | null>(null);
     const [note, setNote] = useState<"none" | "error" | "found" | null>(null);
     const [readError, setReadError] = useState<string | null>(null);
+    const [missed, setMissed] = useState(0);
     const [sending, setSending] = useState(false);
 
     /* Sending a rejected invoice again: its number and date are already known. */
@@ -43,16 +44,16 @@ function InvoiceForm({ open, schemeId, products, again, onClose, onDone }: { ope
         if (open && again) { setInvoiceNo(again.invoice_no); setInvoiceDate(again.invoice_date); }
     }, [open, again]);
 
-    const reset = () => { setFiles([]); setInvoiceNo(""); setInvoiceDate(""); setSets(noSets()); setCheck([]); setRead(null); setReading(null); setNote(null); setReadError(null); };
+    const reset = () => { setFiles([]); setInvoiceNo(""); setInvoiceDate(""); setSets(noSets()); setCheck([]); setRead(null); setReading(null); setNote(null); setReadError(null); setMissed(0); };
 
     const readThem = async (list: File[]) => {
         if (!list.length) { setSets(noSets()); setCheck([]); setRead(null); setNote(null); return; }
         setReading(tr("Reading the invoice…", "इनवॉइस पढ़ा जा रहा है…"));
-        setNote(null); setReadError(null);
+        setNote(null); setReadError(null); setMissed(0);
         try {
             const r = readSets(await readInvoiceFiles(list), products);
             const total = SET_KINDS.reduce((n, k) => n + r.sets[k], 0);
-            setSets(r.sets); setCheck(r.check); setRead(r.sets);
+            setSets(r.sets); setCheck(r.check); setRead(r.sets); setMissed(r.missed.length);
             setNote(total ? "found" : "none");
         } catch (e) {
             console.error("[Buy More] invoice reading failed:", e);
@@ -119,6 +120,7 @@ function InvoiceForm({ open, schemeId, products, again, onClose, onDone }: { ope
                         ))}
                         {reading && <p className="flex items-center gap-2 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin text-orange-500" />{reading}</p>}
                         {note === "found" && <p className="text-sm text-emerald-700">{tr("Read. Please check the sets below.", "पढ़ लिया गया। नीचे दिए सेट जाँच लें।")}</p>}
+                        {(note === "found" || note === "none") && missed > 0 && <p className="text-sm text-amber-700">{tr(`${missed} line(s) on the invoice were not counted (not a warranty seat cover, or hard to read). Please compare the sets below with your invoice.`, `इनवॉइस की ${missed} लाइन गिनी नहीं गईं (वारंटी सीट कवर नहीं, या पढ़ने में मुश्किल)। कृपया नीचे के सेट अपने इनवॉइस से मिला लें।`)}</p>}
                         {note === "none" && <p className="text-sm text-amber-700">{tr("We couldn't find any sets on it. Please fill them in below.", "इसमें कोई सेट नहीं मिला। कृपया नीचे भरें।")}</p>}
                         {note === "error" && <p className="text-sm text-amber-700">{tr("We couldn't read this file. Please fill in the sets below.", "यह फ़ाइल पढ़ी नहीं जा सकी। कृपया नीचे सेट भरें।")}</p>}
                         {note === "error" && readError && <p className="break-words text-xs text-amber-800/80">Reader error: {readError}</p>}

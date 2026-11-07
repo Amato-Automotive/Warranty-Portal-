@@ -196,6 +196,9 @@ function quantityOn(tokens: string[], from: number, to: number): { qty: number; 
         /* "1SET", "2PCS": the number and its unit run together. */
         const fused = /^(\d{1,3})(pcs?|nos?|sets?|sts?|units?|pairs?)\.?$/.exec(t);
         if (fused) { const n = Number(fused[1]); if (n >= 1 && n <= MAX_LINE_QTY) found.push({ n, i, unit: true, after: true }); return; }
+        /* OCR reads the S of "1SET" as an 8 or 5: "18ET", "25ET" is 1 SET, 2 SET. */
+        const misread = /^(\d)[85]e?t$/.exec(t);
+        if (misread) { found.push({ n: Number(misread[1]), i, unit: true, after: true }); return; }
         if (!/^\d{1,3}(\.0+)?$/.test(t)) return;            // whole numbers up to 999; prices and codes are longer or have paise
         const n = Number(t);
         if (!(n >= 1 && n <= MAX_LINE_QTY)) return;
@@ -203,7 +206,8 @@ function quantityOn(tokens: string[], from: number, to: number): { qty: number; 
         /* The line's own serial number: a number first, before the name. */
         if (i === 0 && from > 0) return;
         const after = UNIT.test(tokens[i + 1] ?? "");
-        const unit = after || UNIT.test(tokens[i - 1] ?? "");
+        /* A number right after "SET" is the discount or the rate ("SET  8 %"); only "Qty 3" puts the number after its label. */
+        const unit = after || /^qty$/i.test(tokens[i - 1] ?? "");
         found.push({ n, i, unit, after });
     });
     if (!found.length) return null;
@@ -217,9 +221,46 @@ function quantityOn(tokens: string[], from: number, to: number): { qty: number; 
     return null;
 }
 
+/**
+ * Is the quantity too high for the line's own money? The amount is about
+ * quantity × rate, less a discount: 1 SET at 6,462.00 cannot come to 5,945.04
+ * as "41 SET". OCR turns "1 SET" into "41 SET" or "11 SET" now and then, and an
+ * inflated count is the harmful kind of mistake.
+ *
+ * Only clean prices count (a garbled "14.703.00" is ignored), and only a
+ * quantity that is too HIGH is refused, so a good line is never thrown away
+ * because OCR spoiled a price. With fewer than two clean prices: no opinion.
+ */
+function amountAgrees(line: string, qty: number): boolean {
+    const clean = /(?<![\d.,])(?:\d{1,3}(?:,\d{2,3})+|\d{3,7})\.\d{2}(?![\d.])/g;
+    const prices = (line.match(clean) ?? []).map(p => Number(p.replace(/,/g, ""))).filter(n => n > 0);
+    if (prices.length < 2) return true;
+    const implied = prices[prices.length - 1] / prices[0];
+    /* A small quantity is never doubted, and neither is a line whose amount is far below its rate (a 97% discount): there the money says nothing about how many. */
+    if (qty < 4 || implied < 0.3) return true;
+    return qty <= implied * 3 + 0.5;
+}
+
 /** Every product found in the invoice text, with its quantity; the same product on two lines is added up. */
+
+const NOT_DESCRIPTION = new Set(["set", "sets", "sts", "pcs", "pc", "nos", "qty", "cgst", "sgst", "igst", "total", "output", "amount", "tax", "per", "disc"]);
+/** A row of the goods table: an 8-digit HSN code and a few words of description (not a tax-summary row, which has none). */
+function looksLikeItemRow(line: string): boolean {
+    if (!/\b\d{8}\b/.test(line)) return false;
+    const describing = words(line).filter(w => /^[a-z][a-z/.-]{2,}$/.test(w) && !NOT_DESCRIPTION.has(w));
+    return describing.length >= 2;
+}
+
+export interface MatchResult { lines: ReadLine[]; /* item rows the reader could not use */ missed: string[] }
+
 export function matchInvoice(text: string, products: ReaderProduct[], byWord = false): ReadLine[] {
+    return matchInvoiceDetailed(text, products, byWord).lines;
+}
+
+/** As matchInvoice, and also the goods-table rows that were not counted, so the store can be told. */
+export function matchInvoiceDetailed(text: string, products: ReaderProduct[], byWord = false): MatchResult {
     const out = new Map<string, ReadLine>();
+    const missed: string[] = [];
     let inEwayBill = false;
     for (const raw of String(text ?? "").split(/\r?\n/)) {
         const line = raw.trim();
@@ -230,12 +271,14 @@ export function matchInvoice(text: string, products: ReaderProduct[], byWord = f
         /* "8,093.00" is one price, not an 8 and a 093.00. */
         const tokens = words(line.replace(/(\d),(?=\d{2,3}(?!\d))/g, "$1"));
         const hit = bestOnLine(tokens, products);
-        if (!hit || hit.score < MAYBE) continue;
+        if (!hit || hit.score < MAYBE) { if (looksLikeItemRow(line)) missed.push(line); continue; }
         const q = quantityOn(tokens, hit.from, hit.to);
         /* A product line has a quantity. A near-name with none — "Signatory"
            at the foot of the bill — is not a product line. */
         /* An exact name without a nearby quantity can be a heading/address. */
-        if (!q) continue;
+        if (!q) { if (looksLikeItemRow(line)) missed.push(line); continue; }
+        /* A quantity the line's own money contradicts is a misread: leave the line out rather than count it. */
+        if (!amountAgrees(line, q.qty)) { missed.push(line); continue; }
         const sure = hit.score >= EXACT && q.clear;
         const qty = q.qty;
         /* A line that names a series ("U-Focus Perfo Emporio") is that series, whichever product it matched; the word named last wins. */
@@ -250,5 +293,5 @@ export function matchInvoice(text: string, products: ReaderProduct[], byWord = f
             out.set(key, { product_id: hit.p.id, qty, confidence: sure ? "sure" : "check", from: line, ...(word ? { word } : {}) });
         }
     }
-    return [...out.values()];
+    return { lines: [...out.values()], missed };
 }
