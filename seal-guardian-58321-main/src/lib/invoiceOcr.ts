@@ -67,6 +67,29 @@ async function pdfText(file: File, onProgress: ReadProgress): Promise<{ text: st
     return { text, canvases };
 }
 
+/**
+ * A phone photo is often stored sideways with an "orientation" note that tells
+ * viewers to turn it. OCR reads the raw pixels and ignores the note, so a
+ * portrait photo comes out as garbage. Drawing it through the browser turns it
+ * upright first. If that fails, the file is read as it is.
+ */
+async function upright(file: File): Promise<File | HTMLCanvasElement> {
+    try {
+        const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width; canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return file;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close?.();
+        return canvas;
+    } catch {
+        return file;
+    }
+}
+
 /** All the text on the invoice files (photos and PDFs), as lines. */
 export async function readInvoiceFiles(files: File[], onProgress: ReadProgress = () => {}): Promise<string> {
     let text = "";
@@ -77,7 +100,7 @@ export async function readInvoiceFiles(files: File[], onProgress: ReadProgress =
             text += r.text;
             images.push(...r.canvases);
         } else if (f.type.startsWith("image/") || /\.(jpe?g|png|webp)$/i.test(f.name)) {
-            images.push(f);
+            images.push(await upright(f));
         }
     }
     if (images.length) {

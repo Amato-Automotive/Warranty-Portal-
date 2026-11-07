@@ -1,4 +1,5 @@
 import { matchInvoice, type ReaderProduct } from "./invoiceReader";
+import { seriesOfProduct } from "./productSeries";
 
 /**
  * Option 2 (Buy More Get More): what the invoice reader found, as sets of each
@@ -11,8 +12,10 @@ export type SetKind = (typeof SET_KINDS)[number];
 export type Sets = Record<SetKind, number>;
 export const noSets = (): Sets => ({ velora: 0, doble: 0, signature: 0, emporio: 0, other: 0 });
 
-/** Which kind a product is: the premium word named last ("Signature Swed Doble" is Doble), else other. */
+/** Which kind a product is: the team's series list first, else the premium word named last ("Signature Swed Doble" is Doble), else other. */
 export function kindOf(name: string): SetKind {
+    const given = seriesOfProduct(name);
+    if (given !== undefined) return (SET_KINDS as readonly string[]).includes(given) && given !== "other" ? (given as SetKind) : "other";
     const n = String(name ?? "").toLowerCase();
     let kind: SetKind = "other", at = -1;
     for (const k of ["velora", "doble", "signature", "emporio"] as const) {
@@ -31,8 +34,8 @@ export function readSets(text: string, names: string[]): ReadSets {
     const sets = noSets();
     const check = new Set<SetKind>();
     const from: string[] = [];
-    for (const line of matchInvoice(text, products)) {
-        const kind = kindOf(line.product_id);
+    for (const line of matchInvoice(text, products, true)) {
+        const kind = line.word ? (line.word as SetKind) : kindOf(line.product_id);
         sets[kind] += line.qty;
         if (line.confidence === "check") check.add(kind);
         from.push(line.from);

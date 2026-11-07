@@ -22,6 +22,8 @@ export interface ReadLine {
     confidence: "sure" | "check";
     /* The invoice line it came from, to show the store where it was read. */
     from: string;
+    /* Only with `byWord`: the series word the line itself names ("emporio"), when it names one. */
+    word?: string;
 }
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9+]+/g, "");
@@ -101,24 +103,37 @@ function matchProduct(tokens: string[], fixed: string[], p: ReaderProduct): Hit 
     if (!kw.length) return null;
     let hit: Hit | null = null;
 
-    let pos = 0, first = -1, last = -1, score = 1;
-    for (const w of kw) {
-        let at = -1, best = 0, span = 1;
-        for (let i = pos; i < tokens.length && best < 1; i++) {
-            let s = wordLike(tokens[i], fixed[i], w), len = 1;
-            if (s < 1 && i + 1 < tokens.length) {
-                const s2 = wordLike(tokens[i] + tokens[i + 1], fixed[i] + fixed[i + 1], w);
-                if (s2 > s) { s = s2; len = 2; }
+    /* Every word of `list` found in order, side by side. */
+    const inOrder = (list: string[]): { score: number; from: number; to: number } | null => {
+        let pos = 0, first = -1, last = -1, score = 1;
+        for (const w of list) {
+            let at = -1, best = 0, span = 1;
+            /* The name's words sit side by side: "U-MAX ARROW" is not "U-ARROW". Only a one-character OCR speck may sit between. */
+            const lastAt = first < 0 ? tokens.length : Math.min(tokens.length, pos + 1 + (tokens[pos]?.length === 1 ? 1 : 0));
+            for (let i = pos; i < lastAt && best < 1; i++) {
+                let s = wordLike(tokens[i], fixed[i], w), len = 1;
+                if (s < 1 && i + 1 < tokens.length) {
+                    const s2 = wordLike(tokens[i] + tokens[i + 1], fixed[i] + fixed[i + 1], w);
+                    if (s2 > s) { s = s2; len = 2; }
+                }
+                if (s > best) { best = s; at = i; span = len; }
             }
-            if (s > best) { best = s; at = i; span = len; }
+            if (at < 0 || best < 0.8) return null;
+            if (first < 0) first = at;
+            last = at + span - 1;
+            pos = last + 1;
+            score = Math.min(score, best);
         }
-        if (at < 0 || best < 0.8) { score = 0; break; }
-        if (first < 0) first = at;
-        last = at + span - 1;
-        pos = last + 1;
-        score = Math.min(score, best);
+        return { score, from: first, to: last };
+    };
+
+    const whole = inOrder(kw);
+    if (whole) hit = { p, ...whole, words: kw.length };
+    /* Invoices often drop the "U-" of a name: "S/C Focus 2 Row" is U-FOCUS. A guess, so never exact; and not after "MAX" ("U-MAX ARROW" is another product). */
+    else if (kw[0] === "u" && kw.length > 1) {
+        const bare = inOrder(kw.slice(1));
+        if (bare && !/max$/.test(tokens[bare.from - 1] ?? "")) hit = { p, score: Math.min(bare.score, 0.9), from: bare.from, to: bare.to, words: kw.length - 1 };
     }
-    if (score > 0) hit = { p, score, from: first, to: last, words: kw.length };
 
     const key = squash(kw.join(""));
     for (let i = 0; i < tokens.length; i++) {
@@ -128,9 +143,9 @@ function matchProduct(tokens: string[], fixed: string[], p: ReaderProduct): Hit 
             joinedFixed += squash(fixed[j]);
             if (!joined) continue;
             if (joined.length > key.length + 3 && joinedFixed.length > key.length + 3) break;
-            let s = Math.max(likeness(joined, key), likeness(joinedFixed, key));
+            let s = Math.max(joined[0] === key[0] ? likeness(joined, key) : 0, joinedFixed[0] === key[0] ? likeness(joinedFixed, key) : 0);
             /* Shortened on the invoice: "UMAXPREM" for U Max Premium — a guess, so never exact. */
-            for (const j2 of [joined, joinedFixed]) if (j2.length >= 5 && key.startsWith(j2) && j2.length / key.length >= 0.6) s = Math.max(s, 0.85);
+            for (const j2 of [joined, joinedFixed]) if (j2[0] === key[0] && j2.length >= 5 && key.startsWith(j2) && j2.length / key.length >= 0.6) s = Math.max(s, 0.85);
             if (s >= 1 && j > i && kw.length === 1) s = 0.9;   // one name word found only by gluing words: check it
             if (!hit || s > hit.score) hit = { p, score: s, from: i, to: j, words: kw.length };
         }
@@ -166,7 +181,8 @@ function bestOnLine(tokens: string[], products: ReaderProduct[]): Hit | null {
 const EWAY_START = /^(\d+\.\s*)?e[\s-]?way\s*bill(\s+details)?(\s+e[\s-]?way\s*bill)?\s*$/i;
 const INVOICE_START = /^tax\s+invoice\b/i;
 
-const UNIT = /^(pcs?|pc\.?|nos?\.?|sets?|set\.?|qty|units?|pair|pairs)$/i;
+const SERIES_WORDS = new Set(["velora", "doble", "signature", "emporio"]);
+const UNIT = /^(pcs?|nos?|sets?|sts?|qty|units?|pairs?)\.?$/i;
 /* A number before one of these describes the product, not how many: "2 Row", "5 Seater", "12mm". */
 const SPEC = /^(rows?|seaters?|seats?|wheelers?|mm|cm|inch(es)?|in|kg|gm?|ml|ltr|l|x|%|pack|layers?|d)$/i;
 /* Prevent header/HSN/amount numbers from becoming huge set quantities. */
@@ -174,20 +190,25 @@ const MAX_LINE_QTY = 100;
 
 /** The quantity on a line, outside the words the product name took up. */
 function quantityOn(tokens: string[], from: number, to: number): { qty: number; clear: boolean } | null {
-    const found: { n: number; i: number; unit: boolean }[] = [];
+    const found: { n: number; i: number; unit: boolean; after: boolean }[] = [];
     tokens.forEach((t, i) => {
         if (i >= from && i <= to) return;
+        /* "1SET", "2PCS": the number and its unit run together. */
+        const fused = /^(\d{1,3})(pcs?|nos?|sets?|sts?|units?|pairs?)\.?$/.exec(t);
+        if (fused) { const n = Number(fused[1]); if (n >= 1 && n <= MAX_LINE_QTY) found.push({ n, i, unit: true, after: true }); return; }
         if (!/^\d{1,3}(\.0+)?$/.test(t)) return;            // whole numbers up to 999; prices and codes are longer or have paise
         const n = Number(t);
         if (!(n >= 1 && n <= MAX_LINE_QTY)) return;
         if (SPEC.test(tokens[i + 1] ?? "")) return;
         /* The line's own serial number: a number first, before the name. */
         if (i === 0 && from > 0) return;
-        const unit = UNIT.test(tokens[i + 1] ?? "") || UNIT.test(tokens[i - 1] ?? "");
-        found.push({ n, i, unit });
+        const after = UNIT.test(tokens[i + 1] ?? "");
+        const unit = after || UNIT.test(tokens[i - 1] ?? "");
+        found.push({ n, i, unit, after });
     });
     if (!found.length) return null;
-    const withUnit = found.find(f => f.unit);
+    /* "2 SET" beats a number that merely follows a unit (the rate's "SET  8 %"). */
+    const withUnit = found.find(f => f.unit && f.after) ?? found.find(f => f.unit);
     if (withUnit) return { qty: withUnit.n, clear: true };
     /* Otherwise the first number after the name — invoices put the quantity
        before the rate and the amount. One candidate is clear; several are not. */
@@ -197,7 +218,7 @@ function quantityOn(tokens: string[], from: number, to: number): { qty: number; 
 }
 
 /** Every product found in the invoice text, with its quantity; the same product on two lines is added up. */
-export function matchInvoice(text: string, products: ReaderProduct[]): ReadLine[] {
+export function matchInvoice(text: string, products: ReaderProduct[], byWord = false): ReadLine[] {
     const out = new Map<string, ReadLine>();
     let inEwayBill = false;
     for (const raw of String(text ?? "").split(/\r?\n/)) {
@@ -206,7 +227,8 @@ export function matchInvoice(text: string, products: ReaderProduct[]): ReadLine[
         if (INVOICE_START.test(line)) inEwayBill = false;
         if (inEwayBill) continue;
         if (line.length < 3) continue;
-        const tokens = words(line);
+        /* "8,093.00" is one price, not an 8 and a 093.00. */
+        const tokens = words(line.replace(/(\d),(?=\d{2,3}(?!\d))/g, "$1"));
         const hit = bestOnLine(tokens, products);
         if (!hit || hit.score < MAYBE) continue;
         const q = quantityOn(tokens, hit.from, hit.to);
@@ -216,13 +238,16 @@ export function matchInvoice(text: string, products: ReaderProduct[]): ReadLine[
         if (!q) continue;
         const sure = hit.score >= EXACT && q.clear;
         const qty = q.qty;
-        const prev = out.get(hit.p.id);
+        /* A line that names a series ("U-Focus Perfo Emporio") is that series, whichever product it matched; the word named last wins. */
+        const word = byWord ? [...tokens].reverse().find(t => SERIES_WORDS.has(t)) : undefined;
+        const key = word ? `${hit.p.id}|${word}` : hit.p.id;
+        const prev = out.get(key);
         if (prev) {
             prev.qty += qty;
             if (!sure) prev.confidence = "check";
             prev.from += ` / ${line}`;
         } else {
-            out.set(hit.p.id, { product_id: hit.p.id, qty, confidence: sure ? "sure" : "check", from: line });
+            out.set(key, { product_id: hit.p.id, qty, confidence: sure ? "sure" : "check", from: line, ...(word ? { word } : {}) });
         }
     }
     return [...out.values()];
