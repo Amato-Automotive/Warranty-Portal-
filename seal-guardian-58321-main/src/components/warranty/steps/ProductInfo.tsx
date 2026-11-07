@@ -12,6 +12,7 @@ import { EVFormData, PPFRoll } from "../EVProductsForm";
 import { useToast } from "@/hooks/use-toast";
 import { TermsModal } from "../TermsModal";
 import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
+import { isDng } from "@/lib/rawPhoto";
 import {
   getRollsError,
   normalizeSerial,
@@ -256,7 +257,7 @@ const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, exis
     const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif'];
 
     if (file) {
-      const isAllowedType = ALLOWED_FILE_TYPES.includes(file.type) ||
+      const isAllowedType = ALLOWED_FILE_TYPES.includes(file.type) || isDng(file) ||
         file.name.toLowerCase().endsWith('.heic') ||
         file.name.toLowerCase().endsWith('.heif');
 
@@ -280,6 +281,11 @@ const ProductInfo = ({ formData, updateFormData, onPrev, onSubmit, loading, exis
         } finally {
           setCompressing(false);
         }
+      }
+
+      if (isDng(processedFile)) {
+        toast({ title: "Photo not supported", description: "This RAW (.dng) photo could not be converted. Please choose a normal photo (JPG or HEIC).", variant: "destructive" });
+        return;
       }
 
       if (processedFile.size > MAX_FILE_SIZE) {

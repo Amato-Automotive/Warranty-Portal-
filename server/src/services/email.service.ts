@@ -1206,14 +1206,16 @@ export class EmailService {
       ticket_id: string;
       category: string;
       subject: string;
-      department: string;
+      department?: string | null;
       department_details?: string;
     }
   ): Promise<boolean> {
     const categoryDisplay = EmailService.getCategoryDisplay(grievance.category);
     const submissionDate = formatDateTimeIST();
 
-    const departmentDisplay = grievance.department.charAt(0).toUpperCase() + grievance.department.slice(1);
+    /* The department is optional on the form: with none chosen, the grievance goes to head office. */
+    const department = String(grievance.department || '').trim();
+    const departmentDisplay = department ? department.charAt(0).toUpperCase() + department.slice(1) : 'Head office';
     const targetInfo = grievance.department_details
       ? `${departmentDisplay} - ${EmailService.escapeHtml(grievance.department_details)}`
       : departmentDisplay;

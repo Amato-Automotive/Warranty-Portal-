@@ -3,6 +3,8 @@
  * Automatically resizes large images to prevent network timeouts
  */
 
+import { dngToJpeg, isDng } from "./rawPhoto";
+
 interface CompressionOptions {
     maxWidth?: number;
     maxHeight?: number;
@@ -30,6 +32,8 @@ export const compressImage = async (
     options: CompressionOptions = {}
 ): Promise<File> => {
     const opts = { ...DEFAULT_OPTIONS, ...options };
+    /* A RAW (.dng) photo becomes an ordinary JPEG first (throws RawPhotoError if it has no usable preview); the rest is as for any JPEG. */
+    if (isDng(file)) file = await dngToJpeg(file);
     const isHeic = /\.(heic|heif)$/i.test(file.name) || /^image\/hei[cf]$/i.test(file.type);
 
     // Skip if already small enough (under target size) — but HEIC files always need
@@ -132,7 +136,7 @@ export const compressImages = async (
  */
 export const isCompressibleImage = (file: File): boolean => {
     const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif'];
-    return imageTypes.includes(file.type) ||
+    return imageTypes.includes(file.type) || isDng(file) ||
         /\.(jpe?g|png|heic|heif)$/i.test(file.name);
 };
 

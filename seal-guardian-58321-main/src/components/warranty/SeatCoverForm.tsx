@@ -29,6 +29,7 @@ import { submitWarranty, updateWarranty } from "@/lib/warrantyApi";
 import { TermsModal } from "./TermsModal";
 import { WarrantyReviewDialog } from "./WarrantyReviewDialog";
 import { compressImage, isCompressibleImage } from "@/lib/imageCompression";
+import { isDng } from "@/lib/rawPhoto";
 import exifr from 'exifr';
 import fpPromise from '@fingerprintjs/fingerprintjs';
 import jsQR from "jsqr";
@@ -1088,7 +1089,7 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
     const file = e.target.files?.[0];
     if (file) {
       // Check file type
-      if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+      if (!ALLOWED_FILE_TYPES.includes(file.type) && !isDng(file)) {
         toast({
           title: "Invalid File Format",
           description: "Only JPG, PNG, HEIC, and PDF files are allowed",
@@ -1158,6 +1159,13 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
         } finally {
           setLoading(false);
         }
+      }
+
+      // A RAW photo that could not be converted must not go up as it is: the server only takes JPG, PNG and HEIC.
+      if (isDng(processedFile)) {
+        toast({ title: "Photo not supported", description: "This RAW (.dng) photo could not be converted. Please choose a normal photo (JPG or HEIC).", variant: "destructive" });
+        e.target.value = '';
+        return;
       }
 
       // Check file size after compression
@@ -1268,6 +1276,10 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
       }
     } catch (err) {
       console.warn('Camera image compression failed, using original:', err);
+      if (isDng(file)) {
+        toast({ title: "Photo not supported", description: "This RAW (.dng) photo could not be converted. Please choose a normal photo (JPG or HEIC).", variant: "destructive" });
+        setFormData(prev => (prev[field] === file ? { ...prev, [field]: null } : prev));
+      }
     } finally {
       setProcessingCapture(false);
     }

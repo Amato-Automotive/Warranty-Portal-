@@ -540,7 +540,7 @@ class GrievanceController {
                         title: `🏪 Franchise Grievance: ${ticketId}`,
                         message: actingAsAsm
                             ? `${asmOwn!.asm_name} (ASM) raised a grievance for "${vendor.store_name}". Subject: ${subject}`
-                            : `Franchise "${vendor.store_name}" submitted a grievance to ${department}. Subject: ${subject}`,
+                            : `Franchise "${vendor.store_name}" submitted a grievance to ${department || 'head office'}. Subject: ${subject}`,
                         type: 'warranty',
                         link: `/admin/grievances/${ticketId}`,
                         targetRole: 'admin'
