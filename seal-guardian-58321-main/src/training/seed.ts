@@ -71,6 +71,11 @@ export interface TrainingState {
     franchises: any[];
     feedbackCurrent: any;
     feedbackPast: any[];
+    /* Filled in by mockApi from the later features' own modules. */
+    claims: any[];
+    forms: any[];
+    sellMore: any;
+    listings: Record<string, any>;
 }
 
 export const STORE_DETAILS_ID = "training-vd-1";
@@ -415,5 +420,6 @@ export function seed(mode: Mode): TrainingState {
         mode, seq: 10_000, user, profile, warranties, manpower, leads, schemes, audits, posmCatalog, posmRequests, posmMessages,
         grievances, myGrievances, remarks, grievanceCategories, notifications, orders, incoming, inventory: distributor ? {} : null,
         distributor: dist, franchises, feedbackCurrent, feedbackPast,
+        claims: [], forms: [], sellMore: null, listings: {},
     };
 }

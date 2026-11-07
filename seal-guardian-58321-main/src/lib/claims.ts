@@ -288,7 +288,7 @@ export function guessMaterial(design: string | null | undefined, list: string[])
     return [...list].sort((a, b) => b.length - a.length).find(m => name.includes(m.toLowerCase())) ?? '';
 }
 
-export const isPhoto = (url: string) => /\.(jpe?g|png|webp|heic|heif)(\?|$)/i.test(url);
+export const isPhoto = (url: string) => /\.(jpe?g|png|webp|heic|heif|svg)(\?|$)/i.test(url);
 export const isVideo = (url: string) => /\.(mp4|mov|webm|3gp|m4v)(\?|$)/i.test(url);
 export const day = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 export const AIRBAGS = { with: 'With airbags', sab: 'SAB', without: 'Without airbags' } as const;

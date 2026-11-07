@@ -2,6 +2,9 @@
 import axios, { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
 import { seed, iso, istDay, STORE_DETAILS_ID, type Mode } from "./seed";
 import { TRAINING_EXIT_KEY } from "./flag";
+import { seedClaims, registerClaimRoutes } from "./claims";
+import { seedSellMore, registerSellMoreRoutes, sellMoreCard, sellMoreScheme, storeSellMore, isSellMoreId } from "./sellMore";
+import { seedForms, registerExtraRoutes, demoFitment } from "./extras";
 
 /**
  * The API, answered in the browser for a training tab (see ./flag.ts).
@@ -19,6 +22,9 @@ import { TRAINING_EXIT_KEY } from "./flag";
 
 const mode: Mode = new URLSearchParams(window.location.search).get("as") === "distributor" ? "distributor" : "franchise";
 const S = seed(mode);
+S.claims = seedClaims(S);
+S.forms = seedForms(mode === "distributor");
+S.sellMore = seedSellMore();
 
 class Fail extends Error {
     constructor(public status: number, message: string, public extra: Record<string, unknown> = {}) { super(message); }
@@ -92,6 +98,7 @@ async function stockRows() {
     const cat = new Map(categories.map((c: any) => [c.id, c]));
     const rows: any[] = [];
     products.filter((p: any) => (p.brand || "AF") === "AF").forEach((p: any, i: number) => {
+        const listing = (S.listings[p.id] ??= { fitment: demoFitment(i), images: [], own_images: false, stock_mode: "product", cars: [], updated_at: null });
         const variations = p.variations?.length ? p.variations : [{ id: null, name: "Default", price: typeof p.price === "number" ? p.price : p.price?.default ?? 0, sku: null }];
         variations.forEach((v: any, j: number) => {
             const key = `${p.id}::${v.id ?? ""}`;
@@ -103,6 +110,7 @@ async function stockRows() {
                 category_id: p.categoryId, category_name: c?.name ?? null, category_parent_id: c?.parent_id ?? c?.parentId ?? null,
                 product_brand: "AF", variation_name: v.name || "Default", price: Number(v.price) || 0, sku: v.sku ?? null,
                 distributor_id: S.distributor.id, distributor_name: S.distributor.name, distributor_brands: "AF",
+                fitment: listing.fitment, stock_mode: "product", car_stock_total: 0, car_stock: [], dist_images: listing.own_images ? listing.images : [],
             });
         });
     });
@@ -225,6 +233,15 @@ function displayOf(itemId: string, values: Record<string, any>) {
 const routes: [string, RegExp, Handler][] = [];
 const on = (method: string, path: string, h: Handler) =>
     routes.push([method, new RegExp("^" + path.replace(/:[a-zA-Z]+/g, "([^/]+)") + "$"), h]);
+
+/* The later features' routes go in first, so a specific path is never taken for a generic one (/orders/vehicles for /orders/:id). */
+let firstAt = 0;
+const onFirst = (method: string, path: string, h: Handler) =>
+    routes.splice(firstAt++, 0, [method, new RegExp("^" + path.replace(/:[a-zA-Z]+/g, "([^/]+)") + "$"), h]);
+const helpers = { fail: (status: number, message: string) => fail(status, message), nextId: () => nextId(), now: () => now(), fileUrls: (form: FormData | null, match: (k: string) => boolean) => fileUrls(form, match) };
+registerClaimRoutes(onFirst, S, helpers);
+registerSellMoreRoutes(onFirst, S, { ...helpers, onlyBuyMore: mode === "distributor" });
+registerExtraRoutes(onFirst, S, { ...helpers, mode }, loadCatalogue);
 
 /* auth */
 on("GET", "/auth/me", () => ({ success: true, user: S.user }));
@@ -398,13 +415,14 @@ on("POST", "/posm/:id/delivered", ({ p, form }) => {
 /* schemes */
 on("GET", "/schemes", () => ({
     success: true,
-    schemes: S.schemes.map(s => ({
+    schemes: [sellMoreCard(S.sellMore, mode === "distributor"), ...(mode === "distributor" ? [] : S.schemes)].map((s: any) => s.run === "sell_more" ? s : ({
         id: s.id, title: s.title, category: s.category, summary: s.summary, banner_url: s.banner_url, starts_on: s.starts_on, ends_on: s.ends_on,
         state: s.state, windows: s.windows, open_window: s.open_window, next_window: s.next_window,
         has_score: s.score_rule.mode !== "none", joined: s.joined, achieved: achieved(s),
     })),
 }));
 on("GET", "/schemes/:id", ({ p }) => {
+    if (isSellMoreId(p[0])) return { success: true, scheme: sellMoreScheme(), joined: true, can_submit: false, sell_more: storeSellMore(S.sellMore, mode === "distributor") };
     const s = S.schemes.find(x => x.id === p[0]) ?? fail(404, "Scheme not found");
     const months = new Map<string, number>();
     s.entries.filter((e: any) => e.status === "approved").forEach((e: any) => {
@@ -578,6 +596,9 @@ export async function handle(config: InternalAxiosRequestConfig): Promise<AxiosR
     const q = url.searchParams;
     Object.entries(config.params ?? {}).forEach(([k, v]) => { if (v != null) q.set(k, String(v)); });
     const path = url.pathname.replace(/\/+$/, "") || "/";
+
+    // Training always has claims open, so the whole flow can be practised.
+    if (method === "GET" && path === "/settings/public/claims_live") return respond(config, 200, { success: true, value: "true" });
 
     if (method === "GET" && PUBLIC.some(re => re.test(path))) {
         const res = await pub().get(path, { params: Object.fromEntries(q) });

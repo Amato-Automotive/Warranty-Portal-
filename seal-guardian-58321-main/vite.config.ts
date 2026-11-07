@@ -7,6 +7,8 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    // The training store reuses the server's claim and Sell More rules (pure files), which sit beside this folder.
+    fs: { allow: [".."] },
   },
   plugins: [
     react(),
