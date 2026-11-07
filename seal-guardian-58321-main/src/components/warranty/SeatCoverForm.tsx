@@ -1082,17 +1082,26 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uidScannerOpen, formData.customerMobile]);
 
-  const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif', 'application/pdf'];
+  const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif'];
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, field: 'invoiceFile' | 'mrpLabelFile' | 'seatCoverPhoto') => {
     const file = e.target.files?.[0];
     if (file) {
-      // Check file type
+      // Check file type. PDFs are not accepted (the server rejects them), so say so now rather than at submit.
+      if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+        toast({
+          title: "PDF files are not accepted",
+          description: "Please upload a photo or screenshot instead (JPG or PNG).",
+          variant: "destructive",
+        });
+        e.target.value = ''; // Reset input
+        return;
+      }
       if (!ALLOWED_FILE_TYPES.includes(file.type) && !isDng(file)) {
         toast({
           title: "Invalid File Format",
-          description: "Only JPG, PNG, HEIC, and PDF files are allowed",
+          description: "Only JPG, PNG and HEIC photos are allowed",
           variant: "destructive",
         });
         e.target.value = ''; // Reset input
