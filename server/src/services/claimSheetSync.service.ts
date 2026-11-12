@@ -1,7 +1,7 @@
 import db from '../config/database.js';
 import { readSheet, readServiceAccount } from './googleSheets.js';
-import { designBrand, materialFromRemarks, readSheetRow, rowsFromGrid, type SheetClaim } from './claimSheet.js';
-import { parseMaterials } from './claimFlow.js';
+import { designBrand, materialFromRemarks, readSheetRow, rowsFromGrid, splitRemarks, type SheetClaim } from './claimSheet.js';
+import { parseComponentGroups, parseMaterials } from './claimFlow.js';
 
 /**
  * Keeps the plant's production sheets and the portal's claims in step.
@@ -91,6 +91,8 @@ export async function syncSource(source: SheetSource, apply: boolean): Promise<S
         const existing = new Map<string, any>(had.map((x: any) => [x.k, x]));
         const [listed]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claim_materials'");
         const materials = parseMaterials(listed[0]?.setting_value);
+        const [comps]: any = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key = 'claim_components'");
+        const components = parseComponentGroups(comps[0]?.setting_value).flatMap(g => g.items);
 
         const conn = apply ? await (db as any).getConnection() : null;
         try {
@@ -102,6 +104,17 @@ export async function syncSource(source: SheetSource, apply: boolean): Promise<S
                 const had = old ? parse(old.vehicle)?.material : null;
                 const material = (had && materials.includes(had) ? had : null) || materialFromRemarks(c.decision?.item, materials) || had;
                 if (material) (c as any).vehicle = { ...c.vehicle, material };
+                // The sheet's one REMARKS note goes to the plant's columns: the part of the seat to Component,
+                // the other notes to Remarks, and the Decision no longer carries the lot. What the plant already
+                // set on the claim stays, as with the material.
+                const oldVehicle = old ? parse(old.vehicle) : null;
+                const split = splitRemarks(c.decision?.item, materials, components);
+                const component = oldVehicle?.component || split.component;
+                const componentRemarks = oldVehicle?.component_remarks || split.remarks;
+                if (c.decision?.item || component || componentRemarks) {
+                    (c as any).vehicle = { ...c.vehicle, component: component ?? null, component_remarks: componentRemarks ?? null };
+                    if (c.decision) c.decision = { ...c.decision, item: null };
+                }
                 const fields = [c.kind, c.store_id, c.problem, c.description, json(c.vehicle), json(c.snapshot), c.status, json(c.decision), json(c.plan), json(c.dispatch), json(c.hold)];
                 if (old) {
                     const was = [old.kind, old.store_id ? String(old.store_id) : null, old.problem, old.description, old.vehicle, old.snapshot, old.status, old.decision, old.plan_info, old.dispatch, old.hold_info];

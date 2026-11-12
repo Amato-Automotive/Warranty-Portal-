@@ -168,6 +168,62 @@ export function materialFromRemarks(remarks: unknown, list: string[]): string | 
     return null;
 }
 
+/** Words that say which part of the seat a note is about. */
+const COMPONENT_WORD = /^(DRIVER|CO-?DRIVER|CODRIVER|PASSENGER|SEATS?|BACK|BACKREST|HEAD|HEADREST|REST|ARM|ARMREST|ROW|MIDDLE|REAR|FRONT|THIRD|SECOND|3RD|2ND|BOLSTER|CUSHION|PIECES?|PCS|PORTION|SIDE|CENTRE|CENTER|BASE|BOTTOM|LEFT|RIGHT|LHS|RHS)$/;
+
+/** The text without the material it names (and the "OLD" before it), or null when it names none. */
+function withoutMaterial(text: string, list: string[]): string | null {
+    // A long note is kept as written; only a short one is read for the material in it.
+    if (text.split(/\s+/).length > 5) return null;
+    const spelt = materialSpelling(text);
+    const names = list.map(name => materialSpelling(name)).filter(Boolean).sort((a, b) => b.length - a.length);
+    for (const name of names) {
+        const words = name.split(' ').map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+        const re = new RegExp(`(?<![A-Z0-9])${words}(?![A-Z0-9])`);
+        if (re.test(spelt)) return spelt.replace(re, ' ').replace(/\(\s*\)/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    return null;
+}
+
+/** A part as a set of words, so "DRIVER SEAT AND CO DRIVER SEAT" is the list's "Driver and Co Driver Seat". */
+const partWords = (v: string) => [...new Set(v.toUpperCase().replace(/CO-?DRIVER/g, 'CO DRIVER').split(/[^A-Z0-9%]+/).filter(w => w && w !== 'THE'))].sort().join(' ');
+
+/**
+ * A sheet row's REMARKS in the plant's columns. The sheet writes one note, such as
+ * "SILVER STITCH, OLD LUCENZO A4 PERFO, DRIVER SEAT AND CO DRIVER SEAT"; the portal
+ * keeps the material, the component and the remaining notes apart. Nothing is
+ * dropped: whatever is neither a listed material nor a part of the seat stays in
+ * the remarks.
+ */
+export function splitRemarks(remarks: unknown, materials: string[], components: string[] = []): { component: string | null; remarks: string | null } {
+    const notes: string[] = [];
+    const parts: string[] = [];
+    for (const segment of clean(remarks).split(/,|;|(?<=\w\w)\s*\/\s*(?=\w\w)/).map(s => s.trim()).filter(Boolean)) {
+        const words = segment.split(/\s+/);
+        let at = words.findIndex(w => COMPONENT_WORD.test(w.toUpperCase().replace(/[^A-Z0-9-]/g, '')));
+        // "1 PIECE FRONT ARMREST", "40% SEAT", "FULL REAR", "CO DRIVER": these belong to the part.
+        while (at > 0 && /^(\d+%?|FULL|CO|BOTH)$/i.test(words[at - 1])) at--;
+        const before = (at < 0 ? words : words.slice(0, at)).join(' ');
+        const part = at < 0 ? '' : words.slice(at).join(' ');
+        if (before) {
+            const rest = withoutMaterial(before, materials);
+            const keep = rest === null ? before : rest;
+            if (keep) notes.push(keep);
+        }
+        if (part) {
+            const rest = withoutMaterial(part, materials);
+            const keep = rest === null ? part : rest;
+            if (keep) parts.push(keep);
+        }
+    }
+    const joined = parts.join(', ');
+    const listed = joined ? components.find(x => partWords(x) === partWords(joined)) : undefined;
+    return {
+        component: (listed ?? joined).slice(0, 80) || null,
+        remarks: notes.join(', ').slice(0, 500) || null,
+    };
+}
+
 /** A sheet design or a warranty product by its name alone: no U-, finish, age or material words, however it is spelt. */
 const designKey = (v: unknown) => clean(v).toUpperCase()
     .replace(/\([^)]*\)/g, ' ')

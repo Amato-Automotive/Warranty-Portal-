@@ -65,6 +65,41 @@ test('the material comes from the remarks, whatever its spelling', () => {
     assert.equal(materialFromRemarks('LUCENZO', []), null);
 });
 
+test('one REMARKS note goes to the plant\'s columns: the part of the seat to Component, the other notes to Remarks', async () => {
+    const { splitRemarks } = await import('../claimSheet.js');
+    const mats = ['Signature', 'Lucenzo', 'Lucenzo Pro', 'Lucenzo Pro +', 'Emporio', 'Velora', 'MDF'];
+    const split = (t: string, comps: string[] = []) => splitRemarks(t, mats, comps);
+    // The row that was reported: the Decision showed all of it.
+    assert.deepEqual(split('SILVER STITCH, OLD LUCENZO A4 PERFO, DRIVER SEAT AND CO DRIVER SEAT'),
+        { component: 'DRIVER SEAT AND CO DRIVER SEAT', remarks: 'SILVER STITCH, A4 PERFO' });
+    assert.deepEqual(split('OLD LUCENZO,DRIVER SEAT'), { component: 'DRIVER SEAT', remarks: null });
+    assert.deepEqual(split('LUCENZO PRO +,REAR BACK'), { component: 'REAR BACK', remarks: null });
+    assert.deepEqual(split('SIG,1 PIECE FRONT ARMREST'), { component: '1 PIECE FRONT ARMREST', remarks: null });
+    assert.deepEqual(split('EMPORIO DRIVER SEAT AND BACK'), { component: 'DRIVER SEAT AND BACK', remarks: null });
+    assert.deepEqual(split('MDF/ DRIVER SIDE SEAT'), { component: 'DRIVER SIDE SEAT', remarks: null });
+    assert.deepEqual(split('A1 PERFO DRIVER SEAT'), { component: 'DRIVER SEAT', remarks: 'A1 PERFO' });
+    assert.deepEqual(split('CRYSTA TYPE, MIDDLE ROW'), { component: 'MIDDLE ROW', remarks: 'CRYSTA TYPE' });
+    // A note that is no material and no part is kept, not dropped.
+    assert.deepEqual(split('LEGACY'), { component: null, remarks: 'LEGACY' });
+    assert.deepEqual(split('LUCEZNO A4 PERFO'), { component: null, remarks: 'A4 PERFO' });
+    assert.deepEqual(split(''), { component: null, remarks: null });
+    // The words that go with a part come along; a long note is kept as written.
+    assert.equal(split('METAL LOGO, EMPORIO, FULL REAR AND DICCI PORTION -9 SET').component, 'FULL REAR AND DICCI PORTION -9 SET');
+    assert.equal(split('SILVER STITCH, LUCENZO,Co driver front back only').component, 'Co driver front back only');
+    assert.equal(split('40% SEAT, SILVER STITCH').component, '40% SEAT');
+    assert.equal(split('REAR FULL SEAT, STITCH BROWN & BROWN PU OERDER 3mtr. LAMINTED WITH 4MM FOAM IN SIGNATURE MATERIAL .').remarks,
+        'STITCH BROWN & BROWN PU OERDER 3mtr. LAMINTED WITH 4MM FOAM IN SIGNATURE MATERIAL .');
+    // The same parts in other words are the admin's entry.
+    assert.equal(split('SILVER STITCH, OLD LUCENZO A4 PERFO, DRIVER SEAT AND CO DRIVER SEAT', ['Driver and Co Driver Back', 'Driver and Co Driver Seat']).component, 'Driver and Co Driver Seat');
+    assert.equal(split('CO-DRIVER SEAT', ['Driver and Co Driver Seat', 'Co Driver Seat']).component, 'Co Driver Seat');
+    assert.deepEqual(split('MDF ,BOTH DRIVER SEAT AND BACK, SAME AS PIC'), { component: 'BOTH DRIVER SEAT AND BACK', remarks: 'SAME AS PIC' });
+    assert.deepEqual(split('REQUIRED F/S ( SIGNATURE )'), { component: null, remarks: 'REQUIRED F/S' });
+    // A part the admin lists is written as the list spells it.
+    assert.equal(split('DRIVER SEAT', ['Driver Seat', 'Rear Back']).component, 'Driver Seat');
+    // No material list yet: the material words stay in the remarks rather than being lost.
+    assert.deepEqual(splitRemarks('OLD LUCENZO, DRIVER SEAT', []), { component: 'DRIVER SEAT', remarks: 'OLD LUCENZO' });
+});
+
 test('the sheet\'s reasons, however they are spelt, to the issue they mean', () => {
     for (const r of ['PEEL OFF', 'PILL OFF', 'PHELL OFF', 'PEEL OFF/CHARGEABLE']) assert.equal(sheetProblem(r), 'peel_off');
     for (const r of ['SITTCH ISSUE', 'STICHING PROBLM', 'STITCH ISSUE']) assert.equal(sheetProblem(r), 'stitch_issue');
