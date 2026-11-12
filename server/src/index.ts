@@ -533,6 +533,9 @@ async function runMigrations() {
     /* Which of a distributor's stores the admin shows it in Buy More Get More, and whether it may add invoices. */
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_stores (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, store_id VARCHAR(36) NOT NULL, PRIMARY KEY (scheme_id, distributor_id, store_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_access (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, can_add TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (scheme_id, distributor_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* Whether this distributor supplies the store's seat covers, accessories and mats (SAM). Buy More invoices come only from those; EV and care distributors stay mapped. */
+    const [fdSam]: any = await pool.query("SHOW COLUMNS FROM franchise_distributors LIKE 'supplies_sam'");
+    if (!fdSam.length) await pool.query('ALTER TABLE franchise_distributors ADD COLUMN supplies_sam TINYINT(1) NOT NULL DEFAULT 1');
     const [srrMonth]: any = await pool.query("SHOW COLUMNS FROM scheme_reward_requests LIKE 'month'");
     if (!srrMonth.length) {
       await pool.query("ALTER TABLE scheme_reward_requests ADD COLUMN month VARCHAR(7) NULL, ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'store'");

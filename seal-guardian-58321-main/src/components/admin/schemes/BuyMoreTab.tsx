@@ -50,7 +50,7 @@ function Preview({ files }: { files: AdminBuyMoreInvoice["files"] }) {
 /** Which of a distributor's Buy More stores it sees, and whether it may add invoices. Nothing is shown until the admin switches stores on. */
 function ManageStores({ schemeId, dist, onClose, onSaved }: { schemeId: string; dist: AdminBuyMoreDistributor; onClose: () => void; onSaved: () => void }) {
     const { toast } = useToast();
-    const [rows, setRows] = useState<{ store_id: string; store_name: string; store_code: string | null; city: string | null; shown: boolean }[] | null>(null);
+    const [rows, setRows] = useState<{ store_id: string; store_name: string; store_code: string | null; city: string | null; shown: boolean; sam: boolean; others: string[] }[] | null>(null);
     const [canAdd, setCanAdd] = useState(true);
     const [saving, setSaving] = useState(false);
     useEffect(() => {
@@ -92,7 +92,14 @@ function ManageStores({ schemeId, dist, onClose, onSaved }: { schemeId: string; 
                             {rows.map(r => (
                                 <li key={r.store_id} className="flex items-center gap-3 px-3 py-2.5">
                                     <Switch checked={r.shown} onCheckedChange={v => flip(r.store_id, v)} aria-label={`${r.store_name} takes part`} />
-                                    <span className="min-w-0 text-sm"><span className="block font-semibold text-slate-900">{r.store_name}</span><span className="block text-xs text-slate-500">{[r.store_code, r.city].filter(Boolean).join(" · ")}</span></span>
+                                    <span className="min-w-0 text-sm"><span className="block font-semibold text-slate-900">{r.store_name}</span><span className="block text-xs text-slate-500">{[r.store_code, r.city].filter(Boolean).join(" · ")}</span>
+                                        {(!r.sam || r.others.length > 0) && (
+                                            <span className="mt-1 flex flex-wrap gap-1">
+                                                {!r.sam && <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800" title="This distributor is not the store's seat cover, accessories and mats distributor">Not SAM</span>}
+                                                {r.others.length > 0 && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700" title={`Also: ${r.others.join(", ")}`}>{r.others.length + 1} distributors</span>}
+                                            </span>
+                                        )}
+                                    </span>
                                 </li>
                             ))}
                             {!rows.length && <li className="px-3 py-8 text-center text-sm text-slate-500">None of this distributor's stores are on Option 2.</li>}

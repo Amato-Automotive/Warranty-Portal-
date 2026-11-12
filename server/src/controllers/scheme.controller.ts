@@ -735,7 +735,7 @@ async function myDistributor(req: Request) {
     return d ? { id: String(d.id), name: String(d.name) } : null;
 }
 
-/** The stores mapped to a distributor that are in this scheme on Buy More Get More. */
+/** The stores the admin has switched on for a distributor in this scheme (they must be mapped and on Option 2). */
 async function distributorStores(scheme: Scheme, distributorId: string) {
     const [rows]: any = await db.execute(
         `SELECT vd.id AS store_id, vd.store_name, vd.store_code, vd.city, vd.state, sp.terms
@@ -1631,7 +1631,9 @@ export class SchemeController {
             const [[dist]]: any = await db.execute('SELECT id, name FROM distributors WHERE id = ?', [req.params.distributorId]);
             if (!dist) return res.status(404).json({ error: 'Distributor not found' });
             const [rows]: any = await db.execute(
-                `SELECT vd.id AS store_id, vd.store_name, vd.store_code, vd.city, sp.terms,
+                `SELECT vd.id AS store_id, vd.store_name, vd.store_code, vd.city, sp.terms, fd.supplies_sam,
+                        (SELECT GROUP_CONCAT(d2.name ORDER BY d2.name SEPARATOR '||') FROM franchise_distributors f2 JOIN distributors d2 ON d2.id = f2.distributor_id
+                          WHERE f2.franchise_user_id = fd.franchise_user_id AND f2.distributor_id <> fd.distributor_id) AS others,
                         EXISTS(SELECT 1 FROM scheme_distributor_stores sds WHERE sds.scheme_id = sp.scheme_id AND sds.distributor_id = fd.distributor_id AND sds.store_id = vd.id) AS shown
                    FROM franchise_distributors fd
                    JOIN vendor_details vd ON vd.user_id = fd.franchise_user_id
@@ -1640,7 +1642,7 @@ export class SchemeController {
                 [scheme.id, dist.id]
             );
             const stores = rows.filter((r: any) => optionOf(json<any>(r.terms, {})) === 'buy_more')
-                .map((r: any) => ({ store_id: String(r.store_id), store_name: String(r.store_name ?? '').trim(), store_code: r.store_code ?? null, city: r.city ?? null, shown: Boolean(r.shown) }));
+                .map((r: any) => ({ store_id: String(r.store_id), store_name: String(r.store_name ?? '').trim(), store_code: r.store_code ?? null, city: r.city ?? null, shown: Boolean(r.shown), sam: Boolean(r.supplies_sam), others: r.others ? String(r.others).split('||') : [] }));
             res.json({ success: true, distributor: dist.name, can_add: await distributorMayAdd(scheme.id, dist.id), stores });
         } catch (error: any) {
             console.error('[Schemes] distributor stores:', error);
