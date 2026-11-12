@@ -1,6 +1,6 @@
 import { vehicleNumberOf } from "@/lib/vehicleNumber";
 import { useEffect, useState } from "react";
-import { ChevronLeft, Copy, Eye, FileSpreadsheet, Car, Layers, ListChecks, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
+import { ChevronLeft, Columns3, Copy, Eye, FileSpreadsheet, Car, Layers, ListChecks, Loader2, Pencil, Phone, RefreshCw, Search, Settings, Truck, Undo2, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,8 @@ import { CompareTable, StageDates } from "@/components/claims/ClaimView";
 import { ClaimStatusPill, ClaimSummary, ClaimTimeline, MediaGrid, ChoiceRow, InfoRows, ProblemPicker, VehicleFields, EMPTY_VEHICLE, vehicleValueOf, type VehicleValue } from "@/components/claims/ClaimParts";
 import { PlantTeam } from "@/components/admin/claims/PlantTeam";
 import { SheetSync } from "@/components/admin/claims/SheetSync";
+import { SheetColumns, useClaimSheetColumns } from "@/components/admin/claims/SheetColumns";
+import { labelOfColumn, type ClaimColumnKey } from "@/lib/claimSheetColumns";
 
 /** The plant's queues, in the order the work flows; "change" is the claims with a change asked for. */
 const CARDS: { key: string; statuses: ClaimStatus[]; label: string; right?: PlantRight }[] = [
@@ -357,6 +359,8 @@ export const AdminClaims = () => {
     const materials = useClaimMaterials(tab);
     const components = useClaimComponents(tab);
     const couriers = useClaimCouriers(tab);
+    const [sheetColumns, setSheetColumns] = useClaimSheetColumns(tab);
+    const [editColumns, setEditColumns] = useState(false);
     const [claims, setClaims] = useState<(Claim & { store_name?: string })[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [rights, setRights] = useState<PlantRight[] | null>(null);
@@ -526,6 +530,98 @@ export const AdminClaims = () => {
             : shown;
     const PROBLEM_OPTIONS = Object.entries(PROBLEMS).map(([k, x]) => [k, x.label] as [string, string]);
     const cell = "px-3 py-2.5 border border-gray-200 whitespace-nowrap";
+    /* One cell of the sheet; the plant sets which columns there are and in what order. */
+    const cellOf = (key: ClaimColumnKey, c: Claim & { store_name?: string }, i: number): React.ReactNode => {
+        switch (key) {
+            case 'sno': return (
+                                                <CopyTd key="sno" className={cn(cell, "text-right tabular-nums text-gray-500")}>{i + 1}</CopyTd>
+            );
+            case 'status': return (
+                                                <CopyTd key="status" className={cell}>
+                                                    <ClaimStatusPill status={c.status} who="admin" />
+                                                    {c.change_request && <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">Change asked</span>}
+                                                </CopyTd>
+            );
+            case 'claim_no': return (
+                                                <CopyTd key="claim_no" className={cell}>
+                                                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                                                        <button onClick={e => { e.stopPropagation(); setOpen(c.id); }} className="font-bold text-gray-900 underline-offset-2 hover:text-orange-700 hover:underline">{c.claim_no}</button>
+                                                        <SourceTag c={c} />
+                                                    </span>
+                                                </CopyTd>
+            );
+            case 'date': return (
+                                                <CopyTd key="date" className={cell}>{day(c.created_at)}</CopyTd>
+            );
+            case 'depot': return (
+                                                <CopyTd key="depot" className={cell}>{c.snapshot?.depot ? <>{c.snapshot.depot}<BrandTag b={c.depot_brand} /></> : <Empty />}</CopyTd>
+            );
+            case 'store': return (
+                                                <CopyTd key="store" className={cell}>{storeOf(c) ? <>{storeOf(c)}<BrandTag b={c.store_brand} /></> : <Empty />}</CopyTd>
+            );
+            case 'customer': return (
+                                                <CopyTd key="customer" className={cell}>{c.snapshot?.customer_name || <Empty />}</CopyTd>
+            );
+            case 'phone': return (
+                                                <CopyTd key="phone" className={cell}>{c.snapshot?.customer_phone || <Empty />}</CopyTd>
+            );
+            case 'email': return (
+                                                <CopyTd key="email" className={cell}>{c.snapshot?.customer_email || <Empty />}</CopyTd>
+            );
+            case 'design': return (
+                                                <CopyTd key="design" className={cell}>{c.snapshot?.product_name ? <>{c.snapshot.product_name}<BrandTag b={c.product_brand} /></> : <Empty />}</CopyTd>
+            );
+            case 'material': return (
+                                                <CopyTd key="material" className={cell}>{canSetMaterial(c, materials)
+                                                    ? detailCell(c, c.vehicle?.material || <Empty />, 'Material', [materialField(c, materials)], true)
+                                                    : c.vehicle?.material || <Empty />}</CopyTd>
+            );
+            case 'car': return (
+                                                <CopyTd key="car" className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number) || <Empty />, 'Car',
+                                                    [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }, { key: 'vehicle_year', label: 'Year', value: c.vehicle?.year ? String(c.vehicle.year) : '' }])}</CopyTd>
+            );
+            case 'major_colour': return (
+                                                <CopyTd key="major_colour" className={cell}>{detailCell(c, c.vehicle?.major_colour || <Empty />, 'Major colour', [{ key: 'major_colour', label: 'Major colour', value: c.vehicle?.major_colour ?? '', need: true }], true)}</CopyTd>
+            );
+            case 'minor_colour': return (
+                                                <CopyTd key="minor_colour" className={cell}>{detailCell(c, c.vehicle?.minor_colour || <Empty />, 'Minor colour', [{ key: 'minor_colour', label: 'Minor colour', value: c.vehicle?.minor_colour ?? '' }], true)}</CopyTd>
+            );
+            case 'component': return (
+                                                <CopyTd key="component" className={cell}>{canSetComponent(c, components)
+                                                    ? detailCell(c, c.vehicle?.component || <Empty />, 'Request component', [componentField(c, components), { key: 'component_remarks', label: 'Remarks', value: c.vehicle?.component_remarks ?? '' }], true)
+                                                    : c.vehicle?.component || <Empty />}</CopyTd>
+            );
+            case 'remarks': return (
+                                                <CopyTd key="remarks" className={cn(cell, "max-w-[260px] whitespace-normal break-words")}>{canSetComponent(c, components)
+                                                    ? detailCell(c, c.vehicle?.component_remarks || <Empty />, 'Component remarks', [{ key: 'component_remarks', label: 'Remarks', value: c.vehicle?.component_remarks ?? '' }], true)
+                                                    : c.vehicle?.component_remarks || <Empty />}</CopyTd>
+            );
+            case 'issue': return (
+                                                <CopyTd key="issue" className={cell}>{detailCell(c, <>{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</>, 'Issue', [{ key: 'problem', label: 'Issue', value: c.problem, need: true, options: PROBLEM_OPTIONS }])}</CopyTd>
+            );
+            case 'decision': return (
+                                                <CopyTd key="decision" className={cn(cell, needs(c, 'decision') && "bg-amber-50")}>
+                                                    {c.decision ? (can(c, 'redecide') || can(c, 'edit') ? <QuickDecide c={c} label={decisionText(c)} onSave={(a, body) => quick(c, a, body, 'Decision changed: the store and customer are told')} /> : decisionText(c)) : needs(c, 'decision')
+                                                        ? (['approve', 'hold', 'reject', 'ask_more'].some(a => can(c, a))
+                                                            ? <QuickDecide c={c} label={<Add />} onSave={(a, body) => quick(c, a, body, a === 'approve' ? 'Approved: the store and customer are told' : a === 'reject' ? 'Rejected: the store and customer are told' : a === 'hold' ? 'Put on hold' : 'Sent back to the store')} />
+                                                            : <Add />)
+                                                        : <Empty />}
+                                                </CopyTd>
+            );
+            case 'alteration_no': return (
+                                                <CopyTd key="alteration_no" className={cn(cell, needs(c, 'alteration') && "bg-amber-50")}>{alterationCell(c)}</CopyTd>
+            );
+            case 'dispatch_date': return (
+                                                <CopyTd key="dispatch_date" className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'dispatch_date')}</CopyTd>
+            );
+            case 'docket': return (
+                                                <CopyTd key="docket" className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'docket')}</CopyTd>
+            );
+            case 'courier': return (
+                                                <CopyTd key="courier" className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'courier')}</CopyTd>
+            );
+        }
+    };
 
     return (
         <div className="space-y-4">
@@ -559,6 +655,9 @@ export const AdminClaims = () => {
                     </Button>
                     <Button variant="outline" size="icon" title="Request components" aria-label="Request components" onClick={() => setTab('components')} className="h-11 w-11 rounded-xl">
                         <ListChecks className="h-5 w-5" />
+                    </Button>
+                    <Button variant="outline" size="icon" title="Sheet columns and copy order" aria-label="Sheet columns and copy order" onClick={() => setEditColumns(true)} className="h-11 w-11 rounded-xl">
+                        <Columns3 className="h-5 w-5" />
                     </Button>
                     <Button variant="outline" size="icon" title="Sheet sync" aria-label="Sheet sync" onClick={() => setTab('sheets')} className="h-11 w-11 rounded-xl">
                         <FileSpreadsheet className="h-5 w-5" />
@@ -648,8 +747,8 @@ export const AdminClaims = () => {
                                     <thead className="sticky top-0 z-10 bg-gray-100 text-left text-xs font-bold text-gray-700">
                                         <tr>
                                             <th className="w-9 border border-gray-300 px-1 py-2.5 text-center"><CopyBtn getText={sheetText} title="Copy the whole sheet" /></th>
-                                            {['S.No.', 'Status', 'Claim no.', 'Date', 'Depot', 'Store', 'Customer', 'Phone', 'Email', 'Design', 'Material', 'Car', 'Major colour', 'Minor colour', 'Component', 'Remarks', 'Issue', 'Decision', 'Alteration no.', 'Dispatch date', 'Docket no.', 'Courier / Transporter'].map(h => (
-                                                <th key={h} className="px-3 py-2.5 border border-gray-300 whitespace-nowrap">{h}</th>
+                                            {sheetColumns.map(k => (
+                                                <th key={k} className="px-3 py-2.5 border border-gray-300 whitespace-nowrap">{labelOfColumn(k)}</th>
                                             ))}
                                         </tr>
                                     </thead>
@@ -658,49 +757,7 @@ export const AdminClaims = () => {
                                             // A click on the row opens the claim; the cells filled in here stop it.
                                             <tr key={c.id} onClick={() => setOpen(c.id)} className="cursor-pointer even:bg-gray-50/70 hover:bg-orange-50/60">
                                                 <td className="w-9 border border-gray-200 px-1 py-2.5 text-center"><CopyBtn getText={rowText} title="Copy this row" /></td>
-                                                <CopyTd className={cn(cell, "text-right tabular-nums text-gray-500")}>{i + 1}</CopyTd>
-                                                <CopyTd className={cell}>
-                                                    <ClaimStatusPill status={c.status} who="admin" />
-                                                    {c.change_request && <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">Change asked</span>}
-                                                </CopyTd>
-                                                <CopyTd className={cell}>
-                                                    <span className="flex items-center gap-1.5 whitespace-nowrap">
-                                                        <button onClick={e => { e.stopPropagation(); setOpen(c.id); }} className="font-bold text-gray-900 underline-offset-2 hover:text-orange-700 hover:underline">{c.claim_no}</button>
-                                                        <SourceTag c={c} />
-                                                    </span>
-                                                </CopyTd>
-                                                <CopyTd className={cell}>{day(c.created_at)}</CopyTd>
-                                                <CopyTd className={cell}>{c.snapshot?.depot ? <>{c.snapshot.depot}<BrandTag b={c.depot_brand} /></> : <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{storeOf(c) ? <>{storeOf(c)}<BrandTag b={c.store_brand} /></> : <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{c.snapshot?.customer_name || <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{c.snapshot?.customer_phone || <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{c.snapshot?.customer_email || <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{c.snapshot?.product_name ? <>{c.snapshot.product_name}<BrandTag b={c.product_brand} /></> : <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{canSetMaterial(c, materials)
-                                                    ? detailCell(c, c.vehicle?.material || <Empty />, 'Material', [materialField(c, materials)], true)
-                                                    : c.vehicle?.material || <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{detailCell(c, [c.vehicle?.make, c.vehicle?.model, c.vehicle?.year].filter(Boolean).join(' ') || vehicleNumberOf(c.snapshot?.registration_number) || <Empty />, 'Car',
-                                                    [{ key: 'vehicle_make', label: 'Make', value: c.vehicle?.make ?? '', need: true }, { key: 'vehicle_model', label: 'Model', value: c.vehicle?.model ?? '', need: true }, { key: 'vehicle_year', label: 'Year', value: c.vehicle?.year ? String(c.vehicle.year) : '' }])}</CopyTd>
-                                                <CopyTd className={cell}>{detailCell(c, c.vehicle?.major_colour || <Empty />, 'Major colour', [{ key: 'major_colour', label: 'Major colour', value: c.vehicle?.major_colour ?? '', need: true }], true)}</CopyTd>
-                                                <CopyTd className={cell}>{detailCell(c, c.vehicle?.minor_colour || <Empty />, 'Minor colour', [{ key: 'minor_colour', label: 'Minor colour', value: c.vehicle?.minor_colour ?? '' }], true)}</CopyTd>
-                                                <CopyTd className={cell}>{canSetComponent(c, components)
-                                                    ? detailCell(c, c.vehicle?.component || <Empty />, 'Request component', [componentField(c, components), { key: 'component_remarks', label: 'Remarks', value: c.vehicle?.component_remarks ?? '' }], true)
-                                                    : c.vehicle?.component || <Empty />}</CopyTd>
-                                                <CopyTd className={cn(cell, "max-w-[260px] whitespace-normal break-words")}>{canSetComponent(c, components)
-                                                    ? detailCell(c, c.vehicle?.component_remarks || <Empty />, 'Component remarks', [{ key: 'component_remarks', label: 'Remarks', value: c.vehicle?.component_remarks ?? '' }], true)
-                                                    : c.vehicle?.component_remarks || <Empty />}</CopyTd>
-                                                <CopyTd className={cell}>{detailCell(c, <>{c.problem_text}{c.kind === 'alteration' ? ' · alteration' : ''}</>, 'Issue', [{ key: 'problem', label: 'Issue', value: c.problem, need: true, options: PROBLEM_OPTIONS }])}</CopyTd>
-                                                <CopyTd className={cn(cell, needs(c, 'decision') && "bg-amber-50")}>
-                                                    {c.decision ? (can(c, 'redecide') || can(c, 'edit') ? <QuickDecide c={c} label={decisionText(c)} onSave={(a, body) => quick(c, a, body, 'Decision changed: the store and customer are told')} /> : decisionText(c)) : needs(c, 'decision')
-                                                        ? (['approve', 'hold', 'reject', 'ask_more'].some(a => can(c, a))
-                                                            ? <QuickDecide c={c} label={<Add />} onSave={(a, body) => quick(c, a, body, a === 'approve' ? 'Approved: the store and customer are told' : a === 'reject' ? 'Rejected: the store and customer are told' : a === 'hold' ? 'Put on hold' : 'Sent back to the store')} />
-                                                            : <Add />)
-                                                        : <Empty />}
-                                                </CopyTd>
-                                                <CopyTd className={cn(cell, needs(c, 'alteration') && "bg-amber-50")}>{alterationCell(c)}</CopyTd>
-                                                <CopyTd className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'dispatch_date')}</CopyTd>
-                                                <CopyTd className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'docket')}</CopyTd>
-                                                <CopyTd className={cn(cell, needs(c, 'dispatch') && "bg-amber-50")}>{dispatchCell(c, 'courier')}</CopyTd>
+                                                {sheetColumns.map(k => cellOf(k, c, i))}
                                             </tr>
                                         ))}
                                     </tbody>
@@ -710,6 +767,7 @@ export const AdminClaims = () => {
             </div>
 
             {open !== null && <AdminClaim id={open} onClose={() => { setOpen(null); load(); }} />}
+            <SheetColumns open={editColumns} current={sheetColumns} onClose={() => setEditColumns(false)} onSaved={setSheetColumns} />
         </div>
     );
 };

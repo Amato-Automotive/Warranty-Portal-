@@ -48,6 +48,8 @@ const SETTING_WRITERS: Record<string, express.RequestHandler> = {
     claim_components: requirePermission('claims', 'write'),
     // The couriers and transporters a dispatch chooses from, as a JSON list.
     claim_couriers: requirePermission('claims', 'write'),
+    // The plant's claim sheet: which columns, in what order, as a JSON list of keys.
+    claim_sheet_columns: requirePermission('claims', 'write'),
 };
 
 const isPublicSettingKey = (key: string) =>
