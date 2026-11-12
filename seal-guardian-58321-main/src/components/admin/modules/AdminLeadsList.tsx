@@ -61,8 +61,8 @@ interface Lead {
     lead_status: Outcome | null;
     review_status: Outcome | null;
     review_reason: string | null;
-    /* The auditor's own notes. Shown only in the Edit lead dialog: not in the
-       table, the search or the export. */
+    /* The auditor's own notes. Shown in the Edit lead dialog and in the export:
+       not in the table or the search. */
     internal_notes: string | null;
     reviewed_at: string | null;
     /* The store an admin pointed this customer at, and whether the customer
@@ -1005,6 +1005,7 @@ export const AdminLeadsList = () => {
             "Store sent at": lead.store_sent_at ? formatWhen(lead.store_sent_at) : "",
             Review: lead.review_status ? OUTCOME_LABEL[lead.review_status] : "",
             "Review reason": lead.review_reason || "",
+            "Internal notes": lead.internal_notes || "",
             "Reviewed at": lead.reviewed_at ? formatWhen(lead.reviewed_at) : "",
         }));
 
