@@ -1531,8 +1531,10 @@ export class SchemeController {
             const distsOf = new Map<string, { id: string; name: string; city: string | null }[]>();
             for (const m of maps) distsOf.set(String(m.franchise_user_id), [...(distsOf.get(String(m.franchise_user_id)) ?? []), { id: String(m.id), name: m.name, city: m.city ?? null }]);
             const [allDists]: any = await db.execute('SELECT id, name FROM distributors');
-            const [shownRows]: any = await db.execute('SELECT distributor_id, COUNT(*) AS n FROM scheme_distributor_stores WHERE scheme_id = ? GROUP BY distributor_id', [scheme.id]);
-            const shownBy = new Map<string, number>(shownRows.map((r: any) => [String(r.distributor_id), Number(r.n)]));
+            /* The stores switched on for each distributor: its numbers count only those. */
+            const [shownRows]: any = await db.execute('SELECT distributor_id, store_id FROM scheme_distributor_stores WHERE scheme_id = ?', [scheme.id]);
+            const shownSet = new Map<string, Set<string>>();
+            for (const r of shownRows) shownSet.set(String(r.distributor_id), (shownSet.get(String(r.distributor_id)) ?? new Set()).add(String(r.store_id)));
             const [addRows]: any = await db.execute('SELECT distributor_id, can_add FROM scheme_distributor_access WHERE scheme_id = ?', [scheme.id]);
             const addBy = new Map<string, boolean>(addRows.map((r: any) => [String(r.distributor_id), Boolean(r.can_add)]));
             const distName = new Map<string, string>(allDists.map((d: any) => [String(d.id), String(d.name)]));
@@ -1563,11 +1565,11 @@ export class SchemeController {
                         rows.get(d.id)!.stores.add(String(p.store_id));
                     }
                     return [...rows.values()].map(r => {
-                        const ids = [...r.stores];
+                        const ids = [...r.stores].filter(id => shownSet.get(r.id)?.has(id));
                         const mine = invoices.filter((i: any) => ids.includes(i.store_id));
                         const approved = ids.reduce((n, id) => n + setsTotal(balanceOf(id).approved), 0);
                         return {
-                            id: r.id, name: r.name, city: r.city, stores: ids.length, shown: shownBy.get(r.id) ?? 0, can_add: addBy.get(r.id) ?? true,
+                            id: r.id, name: r.name, city: r.city, stores: r.stores.size, shown: ids.length, can_add: addBy.get(r.id) ?? true,
                             stores_active: ids.filter(id => mine.some((i: any) => i.store_id === id && i.status === 'approved')).length,
                             approved_sets: approved,
                             waiting_sets: mine.filter((i: any) => i.status === 'pending').reduce((n: number, i: any) => n + setsTotal(i.sets), 0),
