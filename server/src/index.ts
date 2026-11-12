@@ -527,6 +527,12 @@ async function runMigrations() {
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     const [sfsOffer]: any = await pool.query("SHOW COLUMNS FROM scheme_free_sets LIKE 'offer'");
     if (!sfsOffer.length) await pool.query("ALTER TABLE scheme_free_sets ADD COLUMN offer VARCHAR(10) NOT NULL DEFAULT 'offer1', ADD COLUMN used JSON NULL");
+    /* Who sent an invoice when a distributor added it for one of its stores. */
+    const [sbiBy]: any = await pool.query("SHOW COLUMNS FROM scheme_buy_invoices LIKE 'added_by_distributor_id'");
+    if (!sbiBy.length) await pool.query('ALTER TABLE scheme_buy_invoices ADD COLUMN added_by_distributor_id CHAR(36) NULL');
+    /* Which of a distributor's stores the admin shows it in Buy More Get More, and whether it may add invoices. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_stores (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, store_id VARCHAR(36) NOT NULL, PRIMARY KEY (scheme_id, distributor_id, store_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_access (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, can_add TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (scheme_id, distributor_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     const [srrMonth]: any = await pool.query("SHOW COLUMNS FROM scheme_reward_requests LIKE 'month'");
     if (!srrMonth.length) {
       await pool.query("ALTER TABLE scheme_reward_requests ADD COLUMN month VARCHAR(7) NULL, ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'store'");

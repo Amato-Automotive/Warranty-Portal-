@@ -75,10 +75,16 @@ router.put('/admin/:id/sell-more/reward', ...write, SchemeController.adminSellMo
 router.get('/admin/:id/buy-more', ...read, SchemeController.adminBuyMore);
 router.put('/admin/:id/buy-more/invoices/:invoiceId', ...write, SchemeController.adminBuyMoreInvoice);
 router.put('/admin/:id/buy-more/free-sets/:claimId', ...write, SchemeController.adminBuyMoreFreeSet);
+router.get('/admin/:id/buy-more/distributors/:distributorId', ...read, SchemeController.adminDistributorStores);
+router.put('/admin/:id/buy-more/distributors/:distributorId', ...write, SchemeController.adminDistributorStoresSave);
 
 // Franchise: see, join and enter schemes. Scoped to the signed-in store.
 const store = [authenticateToken, requireRole('vendor')];
 router.get('/', ...store, SchemeController.storeList);
+// A distributor: its stores that are in Buy More Get More, and invoices it adds for them.
+router.get('/distributor', ...store, SchemeController.distributorBuyMoreList);
+router.get('/distributor/:id', ...store, SchemeController.distributorBuyMore);
+router.post('/distributor/:id/invoices', ...store, entryFiles, SchemeController.distributorBuyInvoice);
 router.get('/:id', ...store, SchemeController.storeGet);
 router.post('/:id/join', ...store, SchemeController.storeJoin);
 router.post('/:id/opt', ...store, SchemeController.storeOpt);

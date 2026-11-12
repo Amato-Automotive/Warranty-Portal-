@@ -87,6 +87,8 @@ const REJECTION_REASONS = [
     "The files are corrupted.",
     "The MRP sticker is torn or damaged.",
     "Vehicle registration number does not match the product image.",
+    "The MRP sticker/Taffeta label is missing.",
+    "A GST invoice/Challan is mandatory.",
 ];
 const CUSTOM_REJECTION = "__custom__";
 

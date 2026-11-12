@@ -24,6 +24,7 @@ import { ComingSoon } from "@/components/fms/ComingSoon";
 import { FranchiseAudits } from "@/components/fms/FranchiseAudits";
 import { FranchiseLeads, type LeadsView } from "@/components/fms/FranchiseLeads";
 import { FranchiseSchemes } from "@/components/fms/FranchiseSchemes";
+import { DistributorBuyMore } from "@/components/fms/DistributorBuyMore";
 import { useDistributorHasScheme } from "@/lib/useDistributorHasScheme";
 import VendorGrievances from "@/components/fms/VendorGrievances";
 import POSMModule from "@/components/fms/POSMModule";
@@ -867,6 +868,7 @@ const FranchiseDashboard = () => {
             case 'offers':
                 return (
                     <div className="-mt-8 md:-mt-14">
+                        {isDistributor && <div className="mb-8"><DistributorBuyMore /></div>}
                         <FranchiseSchemes key={openSchemeId ?? 'all'} initialOpenId={openSchemeId} />
                     </div>
                 );

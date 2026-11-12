@@ -40,13 +40,28 @@ export interface StoreBuyMore {
     invoices: BuyMoreInvoice[]; approved: Sets; used: Sets; available: Sets; eligibility: BuyEligibility; rewards: number;
     waiting_sets: number; claims: FreeSet[]; products: string[];
 }
-export interface AdminBuyMoreInvoice extends BuyMoreInvoice { store_id: string; store_name: string; city: string | null }
+export interface AdminBuyMoreInvoice extends BuyMoreInvoice { store_id: string; store_name: string; city: string | null; added_by?: string | null }
 export interface AdminFreeSet extends FreeSet { store_id: string; store_name: string; city: string | null; used: Sets; available: Sets }
 export interface AdminBuyMoreStore {
     store_id: string; store_name: string; store_code: string | null; city: string | null; state: string | null; brand: string;
     opted_at: string; approved: Sets; used: Sets; available: Sets; eligibility: BuyEligibility; rewards: number; waiting_sets: number; requests: number;
+    distributors?: string[];
 }
-export interface AdminBuyMore { stores: AdminBuyMoreStore[]; invoices: AdminBuyMoreInvoice[]; free_sets: AdminFreeSet[] }
+export interface AdminBuyMoreDistributor {
+    id: string; name: string; city: string | null; stores: number; shown: number; can_add: boolean; stores_active: number; approved_sets: number; waiting_sets: number;
+    available_sets: number; ready: number; free_sets: number; invoices_added: number; invoices_by_stores: number;
+}
+export interface AdminBuyMore { stores: AdminBuyMoreStore[]; invoices: AdminBuyMoreInvoice[]; free_sets: AdminFreeSet[]; distributors?: AdminBuyMoreDistributor[] }
+
+/** A distributor's own view: its stores in the scheme, each with its sets and invoices. */
+export interface DistributorBuyMoreStore {
+    store_id: string; store_name: string; store_code: string | null; city: string | null; state: string | null;
+    approved: Sets; used: Sets; available: Sets; eligibility: BuyEligibility; rewards: number; waiting_sets: number; invoices: BuyMoreInvoice[];
+}
+export interface DistributorBuyMore {
+    distributor: string; scheme: { id: string; title: string; starts_on: string; ends_on: string; status: string }; can_add: boolean;
+    stores: DistributorBuyMoreStore[]; products: string[];
+}
 
 /** The short version on the scheme's cards. */
 export interface SellMoreCard { opted: boolean; option: "sell_more" | "buy_more" | null; total: number; month_label: string | null; month_points: number; free_sets: number; approved_sets: number }

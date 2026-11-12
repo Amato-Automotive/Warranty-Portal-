@@ -4,9 +4,11 @@ import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn, downloadCSV } from "@/lib/utils";
 import { SET_KINDS, type Sets } from "@/lib/buyMoreReader";
-import { buildActivity, OFFER_LABEL, readyAfter, setsLine, shortDay, stampDay, type AdminBuyMore, type AdminBuyMoreInvoice, type AdminBuyMoreStore, type AdminFreeSet } from "@/lib/sellMore";
+import { buildActivity, OFFER_LABEL, readyAfter, setsLine, shortDay, stampDay, type AdminBuyMore, type AdminBuyMoreDistributor, type AdminBuyMoreInvoice, type AdminBuyMoreStore, type AdminFreeSet } from "@/lib/sellMore";
 
 /**
  * Option 2, Buy More Get More, for the admin: invoices reviewed one at a time,
@@ -45,6 +47,134 @@ function Preview({ files }: { files: AdminBuyMoreInvoice["files"] }) {
     );
 }
 
+/** Which of a distributor's Buy More stores it sees, and whether it may add invoices. Nothing is shown until the admin switches stores on. */
+function ManageStores({ schemeId, dist, onClose, onSaved }: { schemeId: string; dist: AdminBuyMoreDistributor; onClose: () => void; onSaved: () => void }) {
+    const { toast } = useToast();
+    const [rows, setRows] = useState<{ store_id: string; store_name: string; store_code: string | null; city: string | null; shown: boolean }[] | null>(null);
+    const [canAdd, setCanAdd] = useState(true);
+    const [saving, setSaving] = useState(false);
+    useEffect(() => {
+        api.get(`/schemes/admin/${schemeId}/buy-more/distributors/${dist.id}`).then(r => { setRows(r.data.stores); setCanAdd(r.data.can_add); })
+            .catch(e => { toast({ title: "Could not load the stores", description: getErrorMessage(e, "Try again"), variant: "destructive" }); onClose(); });
+    }, [schemeId, dist.id, toast, onClose]);
+    const flip = (id: string, on: boolean) => setRows(rs => (rs ?? []).map(r => (r.store_id === id ? { ...r, shown: on } : r)));
+    const all = (on: boolean) => setRows(rs => (rs ?? []).map(r => ({ ...r, shown: on })));
+    const save = async () => {
+        setSaving(true);
+        try {
+            await api.put(`/schemes/admin/${schemeId}/buy-more/distributors/${dist.id}`, { store_ids: (rows ?? []).filter(r => r.shown).map(r => r.store_id), can_add: canAdd });
+            toast({ title: "Saved" });
+            onSaved();
+            onClose();
+        } catch (e) {
+            toast({ title: "Could not save", description: getErrorMessage(e, "Try again"), variant: "destructive" });
+        } finally { setSaving(false); }
+    };
+    const on = (rows ?? []).filter(r => r.shown).length;
+    return (
+        <Dialog open onOpenChange={v => { if (!v && !saving) onClose(); }}>
+            <DialogContent className="max-h-[90vh] max-w-[calc(100%-2rem)] overflow-y-auto rounded-2xl sm:max-w-lg">
+                <DialogHeader>
+                    <DialogTitle className="text-lg font-black">{dist.name} · stores in the scheme</DialogTitle>
+                    <DialogDescription>Only the stores switched on show to this distributor.</DialogDescription>
+                </DialogHeader>
+                {!rows ? <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div> : (
+                    <div className="space-y-4">
+                        <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-3">
+                            <span><span className="block text-sm font-semibold text-slate-900">Let this distributor add invoices</span><span className="block text-xs text-slate-500">When off, it can see its stores but cannot add an invoice</span></span>
+                            <Switch checked={canAdd} onCheckedChange={setCanAdd} aria-label="Let this distributor add invoices" />
+                        </label>
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-bold text-slate-800">{rows.length} stores · {on} switched on</p>
+                            <span className="flex gap-2"><Button size="sm" variant="outline" onClick={() => all(true)}>Select all</Button><Button size="sm" variant="outline" onClick={() => all(false)}>Clear all</Button></span>
+                        </div>
+                        <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200">
+                            {rows.map(r => (
+                                <li key={r.store_id} className="flex items-center gap-3 px-3 py-2.5">
+                                    <Switch checked={r.shown} onCheckedChange={v => flip(r.store_id, v)} aria-label={`${r.store_name} takes part`} />
+                                    <span className="min-w-0 text-sm"><span className="block font-semibold text-slate-900">{r.store_name}</span><span className="block text-xs text-slate-500">{[r.store_code, r.city].filter(Boolean).join(" · ")}</span></span>
+                                </li>
+                            ))}
+                            {!rows.length && <li className="px-3 py-8 text-center text-sm text-slate-500">None of this distributor's stores are on Option 2.</li>}
+                        </ul>
+                    </div>
+                )}
+                <DialogFooter className="gap-2">
+                    <Button variant="outline" disabled={saving} onClick={onClose}>Cancel</Button>
+                    <Button className="bg-orange-500 font-bold hover:bg-orange-600" disabled={saving || !rows} onClick={save}>{saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}Save</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+/** Distributors ranked by the sets their stores have approved, to compare and to see who has idle stores. */
+function DistributorsRanking({ rows, schemeId, onChanged }: { rows: AdminBuyMoreDistributor[]; schemeId: string; onChanged: () => void }) {
+    const [managing, setManaging] = useState<AdminBuyMoreDistributor | null>(null);
+    const [by, setBy] = useState<"approved_sets" | "waiting_sets" | "ready" | "free_sets">("approved_sets");
+    const sorted = useMemo(() => [...rows].sort((a, b) => b[by] - a[by] || a.name.localeCompare(b.name)), [rows, by]);
+    const sum = (k: keyof AdminBuyMoreDistributor) => rows.reduce((n, r) => n + (Number(r[k]) || 0), 0);
+    const exportRows = () => downloadCSV(sorted.map((r, i) => ({
+        "Rank": i + 1, "Distributor": r.name, "City": r.city ?? "", "Stores in scheme": r.stores, "Shown to distributor": r.shown, "Stores with an approved invoice": r.stores_active,
+        "Approved sets": r.approved_sets, "Waiting sets": r.waiting_sets, "Available sets": r.available_sets, "Stores ready to redeem": r.ready,
+        "Free sets given": r.free_sets, "Invoices added by distributor": r.invoices_added, "Invoices sent by stores": r.invoices_by_stores,
+    })), "buy_more_distributors.csv");
+    const head = (k: typeof by, text: string) => (
+        <th className="px-3 py-2.5 text-right font-semibold"><button type="button" onClick={() => setBy(k)} className={cn("font-semibold", by === k ? "text-orange-700 underline" : "hover:text-slate-800")}>{text}</button></th>
+    );
+    return (
+        <>
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 sm:grid-cols-4 [&>div]:bg-white [&>div]:px-4 [&>div]:py-3">
+                <div><p className="text-xs text-slate-500">Distributors with stores in</p><p className="text-2xl font-bold tabular-nums">{rows.length}</p></div>
+                <div><p className="text-xs text-slate-500">Approved sets</p><p className="text-2xl font-bold tabular-nums">{sum("approved_sets")}</p></div>
+                <div><p className="text-xs text-slate-500">Invoices added by distributors</p><p className="text-2xl font-bold tabular-nums">{sum("invoices_added")}</p></div>
+                <div><p className="text-xs text-slate-500">Free sets given</p><p className="text-2xl font-bold tabular-nums">{sum("free_sets")}</p></div>
+            </div>
+            <div className="flex justify-end"><Button variant="outline" size="sm" className="h-9" onClick={exportRows} disabled={!rows.length}><Download className="mr-1.5 h-4 w-4" /> Export</Button></div>
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                <table className="w-full min-w-[900px] text-sm">
+                    <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                        <tr>
+                            <th className="w-10 px-3 py-2.5 font-semibold">#</th>
+                            <th className="px-3 py-2.5 font-semibold">Distributor</th>
+                            <th className="px-3 py-2.5 text-right font-semibold">Stores in scheme</th>
+                            <th className="px-3 py-2.5 text-right font-semibold">Shown to it</th>
+                            <th className="px-3 py-2.5 text-right font-semibold">With an approved invoice</th>
+                            {head("approved_sets", "Approved sets")}
+                            {head("waiting_sets", "Waiting sets")}
+                            <th className="px-3 py-2.5 text-right font-semibold">Available</th>
+                            {head("ready", "Ready to redeem")}
+                            {head("free_sets", "Free given")}
+                            <th className="px-3 py-2.5 font-semibold">Invoices added by</th>
+                            <th className="px-3 py-2.5" />
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {sorted.map((r, i) => (
+                            <tr key={r.id} className="hover:bg-orange-50/40">
+                                <td className="px-3 py-2 font-bold tabular-nums text-slate-500">{i + 1}</td>
+                                <td className="px-3 py-2"><p className="font-semibold text-slate-900">{r.name}</p>{r.city && <p className="text-xs text-slate-500">{r.city}</p>}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{r.stores}</td>
+                                <td className={cn("px-3 py-2 text-right tabular-nums", !r.shown && "text-slate-300")}>{r.shown}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{r.stores_active}<span className="text-xs text-slate-400"> / {r.stores}</span></td>
+                                <td className="px-3 py-2 text-right font-bold tabular-nums">{r.approved_sets}</td>
+                                <td className={cn("px-3 py-2 text-right tabular-nums", r.waiting_sets ? "font-semibold text-amber-700" : "text-slate-300")}>{r.waiting_sets}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{r.available_sets}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{r.ready}</td>
+                                <td className="px-3 py-2 text-right font-bold tabular-nums">{r.free_sets}</td>
+                                <td className="px-3 py-2 text-xs text-slate-600">Distributor {r.invoices_added} · Stores {r.invoices_by_stores}</td>
+                                <td className="px-3 py-2 text-right"><Button size="sm" variant="outline" className="h-8" onClick={() => setManaging(r)}>Manage stores</Button></td>
+                            </tr>
+                        ))}
+                        {!rows.length && <tr><td colSpan={12} className="px-4 py-10 text-center text-sm text-slate-500">No store in the scheme has a distributor yet.</td></tr>}
+                    </tbody>
+                </table>
+            </div>
+            {managing && <ManageStores schemeId={schemeId} dist={managing} onClose={() => setManaging(null)} onSaved={onChanged} />}
+        </>
+    );
+}
+
 type Review = (inv: AdminBuyMoreInvoice, status: "approved" | "rejected" | "pending", sets: Sets, note: string) => Promise<boolean>;
 
 /** The invoice being reviewed: the file on one side, the sets and the decision on the other. */
@@ -65,7 +195,7 @@ function ReviewPanel({ inv, store, onReview }: { inv: AdminBuyMoreInvoice; store
             <div className="space-y-3">
                 <div>
                     <p className="font-semibold text-slate-900">{inv.store_name}{inv.city ? ` · ${inv.city}` : ""}</p>
-                    <p className="text-xs text-slate-500">Invoice {inv.invoice_no} · dated {shortDay(inv.invoice_date)} · sent {stampDay(inv.created_at)}</p>
+                    <p className="text-xs text-slate-500">Invoice {inv.invoice_no} · dated {shortDay(inv.invoice_date)} · sent {stampDay(inv.created_at)}{inv.added_by ? ` · added by distributor ${inv.added_by}` : ""}</p>
                 </div>
                 {inv.read_sets === null && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">The store filled these in by hand. The reader didn't read this invoice.</p>}
                 {changed && changed.length > 0 && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">The store changed what the reader found: {changed.map(k => `${label(k)} ${inv.read_sets![k]} to ${inv.sets[k]}`).join(", ")}.</p>}
@@ -175,7 +305,7 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
     const { toast } = useToast();
     const [d, setD] = useState<AdminBuyMore | null>(null);
     const [q, setQ] = useState("");
-    const [view, setView] = useState<"review" | "redeem" | "stores" | "history">("review");
+    const [view, setView] = useState<"review" | "redeem" | "stores" | "distributors" | "history">("review");
     const [at, setAt] = useState(0);
     const [open, setOpen] = useState<string | null>(null);
 
@@ -219,13 +349,13 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
     };
 
     const exportRows = () => downloadCSV(stores.map(s => ({
-        "Store": s.store_name, "Code": s.store_code ?? "", "City": s.city ?? "", "State": s.state ?? "", "Brand": s.brand, "Opted on": stampDay(s.opted_at),
+        "Store": s.store_name, "Code": s.store_code ?? "", "City": s.city ?? "", "State": s.state ?? "", "Brand": s.brand, "Distributor": (s.distributors ?? []).join(", "), "Opted on": stampDay(s.opted_at),
         ...Object.fromEntries(SET_KINDS.map(k => [`${label(k)} available`, s.available[k]])),
         "Approved sets": total(s.approved), "Used sets": total(s.used), "Available sets": s.eligibility.total, "Waiting sets": s.waiting_sets,
         "Offer 1 ready": s.eligibility.offer1.ready ? "Yes" : "No", "Offer 2 ready": s.eligibility.offer2_ready ? "Yes" : "No", "Free sets given": s.rewards,
     })), "buy_more_get_more.csv");
 
-    const tabs = [["review", `Invoices to review (${queue.length})`], ["redeem", `Redeem requests (${requests.length})`], ["stores", `Stores (${d.stores.length})`], ["history", "All invoices"]] as const;
+    const tabs = [["review", `Invoices to review (${queue.length})`], ["redeem", `Redeem requests (${requests.length})`], ["stores", `Stores (${d.stores.length})`], ["distributors", `Distributors (${(d.distributors ?? []).length})`], ["history", "All invoices"]] as const;
 
     return (
         <div className="space-y-4">
@@ -271,23 +401,26 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
             {view === "history" && (
                 <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                     <table className="w-full min-w-[720px] text-sm">
-                        <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="px-3 py-2.5 font-semibold">Sent</th><th className="px-3 py-2.5 font-semibold">Store</th><th className="px-3 py-2.5 font-semibold">Invoice</th><th className="px-3 py-2.5 font-semibold">Sets</th><th className="px-3 py-2.5 font-semibold">Status</th><th className="px-3 py-2.5" /></tr></thead>
+                        <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="px-3 py-2.5 font-semibold">Sent</th><th className="px-3 py-2.5 font-semibold">Store</th><th className="px-3 py-2.5 font-semibold">Invoice</th><th className="px-3 py-2.5 font-semibold">Added by</th><th className="px-3 py-2.5 font-semibold">Sets</th><th className="px-3 py-2.5 font-semibold">Status</th><th className="px-3 py-2.5" /></tr></thead>
                         <tbody className="divide-y divide-slate-100">
                             {d.invoices.map(inv => (
                                 <tr key={inv.id}>
                                     <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-600">{stampDay(inv.created_at)}</td>
                                     <td className="px-3 py-2 font-medium text-slate-900">{inv.store_name}</td>
                                     <td className="px-3 py-2">{inv.invoice_no}<span className="block text-xs text-slate-500">{shortDay(inv.invoice_date)} · {inv.files.map(f => <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="mr-2 text-orange-700 underline">{f.name}</a>)}</span></td>
+                                    <td className="px-3 py-2 text-xs text-slate-600">{inv.added_by ? `Distributor: ${inv.added_by}` : "Store"}</td>
                                     <td className="px-3 py-2 text-slate-700">{setsLine(inv.sets, "Other")}</td>
                                     <td className="whitespace-nowrap px-3 py-2"><span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", inv.status === "approved" ? "bg-emerald-100 text-emerald-800" : inv.status === "rejected" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800")}>{inv.status === "approved" ? "Approved" : inv.status === "rejected" ? "Rejected" : "Waiting"}</span>{inv.review_note && <span className="block text-xs text-slate-500">{inv.review_note}</span>}</td>
                                     <td className="px-3 py-2 text-right">{inv.status !== "pending" && <button type="button" className="text-xs text-slate-400 hover:text-orange-600" onClick={() => review(inv, "pending", inv.sets, "")}>Undo</button>}</td>
                                 </tr>
                             ))}
-                            {!d.invoices.length && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-500">No invoices yet.</td></tr>}
+                            {!d.invoices.length && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-500">No invoices yet.</td></tr>}
                         </tbody>
                     </table>
                 </section>
             )}
+
+            {view === "distributors" && <DistributorsRanking rows={d.distributors ?? []} schemeId={schemeId} onChanged={load} />}
 
             {view === "stores" && (
                 <>
@@ -299,11 +432,12 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
                         <Button variant="outline" size="sm" className="h-9" onClick={exportRows} disabled={!stores.length}><Download className="mr-1.5 h-4 w-4" /> Export</Button>
                     </div>
                     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                        <table className="w-full min-w-[920px] text-sm">
+                        <table className="w-full min-w-[1020px] text-sm">
                             <thead className="bg-slate-50 text-left text-xs text-slate-500">
                                 <tr>
                                     <th className="w-8 px-2 py-2.5" />
                                     <th className="px-3 py-2.5 font-semibold">Store</th>
+                                    <th className="px-3 py-2.5 font-semibold">Distributor</th>
                                     {SET_KINDS.map(k => <th key={k} className="px-3 py-2.5 text-right font-semibold">{label(k)}</th>)}
                                     <th className="px-3 py-2.5 text-right font-semibold">Available</th>
                                     <th className="px-3 py-2.5 text-right font-semibold">Approved</th>
@@ -329,6 +463,7 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
                                                     <p className="font-semibold text-slate-900">{s.store_name}</p>
                                                     <p className="text-xs text-slate-500">{[s.store_code, s.city, s.state, s.brand === "AFAC" ? "AF+AC" : s.brand].filter(Boolean).join(" · ")}</p>
                                                 </td>
+                                                <td className="px-3 py-2 text-xs text-slate-700">{s.distributors?.length ? s.distributors.join(", ") : <span className="text-slate-400">None</span>}</td>
                                                 {SET_KINDS.map(k => <td key={k} className="px-3 py-2 text-right tabular-nums">{s.available[k]}</td>)}
                                                 <td className="px-3 py-2 text-right font-bold tabular-nums">{s.eligibility.total}</td>
                                                 <td className="px-3 py-2 text-right tabular-nums">{total(s.approved)}</td>
@@ -339,7 +474,7 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
                                             </tr>
                                             {open === s.store_id && (
                                                 <tr className="bg-slate-50">
-                                                    <td colSpan={SET_KINDS.length + 8} className="px-4 py-3">
+                                                    <td colSpan={SET_KINDS.length + 9} className="px-4 py-3">
                                                         {mine.length || claims.length ? (
                                                             <table className="w-full rounded-lg bg-white text-xs">
                                                                 <thead className="text-left text-slate-400"><tr><th className="px-3 py-1.5 font-semibold">Date</th><th className="px-3 py-1.5 font-semibold">What</th><th className="px-3 py-1.5 font-semibold">Sets</th><th className="px-3 py-1.5 text-right font-semibold">Balance</th><th className="px-3 py-1.5 font-semibold">Status</th></tr></thead>
@@ -362,7 +497,7 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
                                         </Fragment>
                                     );
                                 })}
-                                {!stores.length && <tr><td colSpan={SET_KINDS.length + 8} className="px-4 py-10 text-center text-sm text-slate-500">{d.stores.length ? "No store matches." : "No store has opted yet."}</td></tr>}
+                                {!stores.length && <tr><td colSpan={SET_KINDS.length + 9} className="px-4 py-10 text-center text-sm text-slate-500">{d.stores.length ? "No store matches." : "No store has opted yet."}</td></tr>}
                             </tbody>
                         </table>
                     </div>

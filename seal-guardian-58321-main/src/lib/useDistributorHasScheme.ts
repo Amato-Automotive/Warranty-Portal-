@@ -7,8 +7,8 @@ export function useDistributorHasScheme(isDistributorOnly: boolean) {
     useEffect(() => {
         if (!isDistributorOnly) { setHas(false); return; }
         let on = true;
-        api.get("/schemes")
-            .then(r => { if (on) setHas((r.data?.schemes ?? []).length > 0); })
+        Promise.all([api.get("/schemes"), api.get("/schemes/distributor").catch(() => null)])
+            .then(([own, stores]) => { if (on) setHas((own.data?.schemes ?? []).length > 0 || (stores?.data?.schemes ?? []).length > 0); })
             .catch(() => undefined);
         return () => { on = false; };
     }, [isDistributorOnly]);

@@ -695,6 +695,7 @@ const readInvoice = (r: any) => ({
     files: json<EntryFile[]>(r.files, []).map(f => ({ name: f.name, url: f.url, sha256: f.sha256 })),
     sets: readSets(json(r.sets, {})), read_sets: r.read_sets ? readSets(json(r.read_sets, {})) : null,
     status: r.status as 'pending' | 'approved' | 'rejected', review_note: r.review_note, reviewed_at: r.reviewed_at, created_at: r.created_at,
+    added_by_distributor_id: r.added_by_distributor_id ? String(r.added_by_distributor_id) : null,
 });
 
 /** The seat cover names the invoice reader looks for: every warranty product and every series' products. */
@@ -724,6 +725,63 @@ async function buyMoreForStore(scheme: Scheme, storeId: string) {
         claims: claimRows.map((c: any) => ({ ...c, used: c.used ? readSets(json(c.used, {})) : null })),
         products: await seatCoverNames(scheme),
     };
+}
+
+/** The distributor record of the signed-in user, if they are one. */
+async function myDistributor(req: Request) {
+    const userId = (req as any).user?.id;
+    if (!userId) return null;
+    const [[d]]: any = await db.execute('SELECT id, name FROM distributors WHERE profile_id = ? LIMIT 1', [userId]);
+    return d ? { id: String(d.id), name: String(d.name) } : null;
+}
+
+/** The stores mapped to a distributor that are in this scheme on Buy More Get More. */
+async function distributorStores(scheme: Scheme, distributorId: string) {
+    const [rows]: any = await db.execute(
+        `SELECT vd.id AS store_id, vd.store_name, vd.store_code, vd.city, vd.state, sp.terms
+           FROM franchise_distributors fd
+           JOIN vendor_details vd ON vd.user_id = fd.franchise_user_id
+           JOIN scheme_participants sp ON sp.store_id = vd.id AND sp.scheme_id = ?
+           JOIN scheme_distributor_stores sds ON sds.scheme_id = sp.scheme_id AND sds.distributor_id = fd.distributor_id AND sds.store_id = vd.id
+          WHERE fd.distributor_id = ? ORDER BY vd.store_name`,
+        [scheme.id, distributorId]
+    );
+    return rows.filter((r: any) => optionOf(json<any>(r.terms, {})) === 'buy_more')
+        .map((r: any) => ({ store_id: String(r.store_id), store_name: String(r.store_name ?? '').trim(), store_code: r.store_code ?? null, city: r.city ?? null, state: r.state ?? null }));
+}
+
+/** Whether the admin lets this distributor add invoices in this scheme (on unless switched off). */
+async function distributorMayAdd(schemeId: string, distributorId: string) {
+    const [[a]]: any = await db.execute('SELECT can_add FROM scheme_distributor_access WHERE scheme_id = ? AND distributor_id = ?', [schemeId, distributorId]);
+    return a ? Boolean(a.can_add) : true;
+}
+
+/** Checks and saves one Buy More invoice for a store. `addedBy` is the distributor that sent it, if one did. */
+async function saveBuyInvoice(req: Request, res: Response, scheme: Scheme, storeId: string, addedBy: string | null) {
+    const files = (uploadedFiles(req).invoice ?? []);
+    const allowed = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'];
+    const bad = files.find(f => !allowed.includes(f.ext) || f.size > 10 * 1024 * 1024);
+    if (bad) return res.status(400).json({ error: `${bad.name}: send a photo or PDF of up to 10 MB` });
+    if (files.length > 10) return res.status(400).json({ error: 'Up to 10 files' });
+    const invoice_no = String(req.body?.invoice_no ?? '').trim().slice(0, 60);
+    const invoice_date = String(req.body?.invoice_date ?? '').trim();
+    const sets = readSets(req.body?.sets);
+    const problems = invoiceProblems({ invoice_no, invoice_date, sets, files: files.length }, scheme.starts_on, scheme.ends_on, dayOf(new Date()));
+    if (problems.length) return res.status(400).json({ error: problems[0] });
+
+    /* One invoice counts once: the same file or number again is refused, unless it was rejected. */
+    const [mine]: any = await db.execute("SELECT invoice_no, files, created_at FROM scheme_buy_invoices WHERE scheme_id = ? AND store_id = ? AND status <> 'rejected'", [scheme.id, storeId]);
+    const hashes = new Set(files.map(f => f.sha256).filter(Boolean));
+    for (const r of mine) {
+        if (invoiceKey(r.invoice_no) === invoiceKey(invoice_no)) return res.status(400).json({ error: `Invoice ${invoice_no} was already sent on ${dayOf(r.created_at)}` });
+        const same = json<EntryFile[]>(r.files, []).find(f => f.sha256 && hashes.has(f.sha256));
+        if (same) return res.status(400).json({ error: `"${same.name}" was already sent on ${dayOf(r.created_at)}` });
+    }
+    await db.execute(
+        'INSERT INTO scheme_buy_invoices (id, scheme_id, store_id, invoice_no, invoice_date, files, sets, read_sets, added_by_distributor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [uuidv4(), scheme.id, storeId, invoice_no, invoice_date, JSON.stringify(files), JSON.stringify(sets), req.body?.read_sets ? JSON.stringify(readSets(req.body.read_sets)) : null, addedBy]
+    );
+    res.json({ success: true });
 }
 
 /** One store's own view: its choice, its plain points by day and month, each month's reward. Never its store type or calculated score. */
@@ -1458,7 +1516,7 @@ export class SchemeController {
             const scheme = await loadScheme(req.params.id);
             if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
             const [parts]: any = await db.execute(
-                `SELECT sp.store_id, sp.joined_at, sp.terms, vd.store_name, vd.store_code, vd.city, vd.state, COALESCE(vd.allowed_brands, 'AF') AS brand
+                `SELECT sp.store_id, sp.joined_at, sp.terms, vd.user_id, vd.store_name, vd.store_code, vd.city, vd.state, COALESCE(vd.allowed_brands, 'AF') AS brand
                    FROM scheme_participants sp JOIN vendor_details vd ON vd.id = sp.store_id WHERE sp.scheme_id = ?`,
                 [scheme.id]
             );
@@ -1468,6 +1526,16 @@ export class SchemeController {
             const invoices = invoiceRows.map(readInvoice);
             const [claimRows]: any = await db.execute("SELECT id, store_id, offer, used, status, note, requested_at, sent_at FROM scheme_free_sets WHERE scheme_id = ? ORDER BY status = 'requested' DESC, requested_at DESC", [scheme.id]);
             const label = (id: string) => ({ store_name: String(names.get(id)?.store_name ?? 'Store').trim(), city: names.get(id)?.city ?? null });
+            /* Which distributors each store is mapped to, and who added each invoice. */
+            const [maps]: any = await db.execute('SELECT fd.franchise_user_id, d.id, d.name, d.city FROM franchise_distributors fd JOIN distributors d ON d.id = fd.distributor_id');
+            const distsOf = new Map<string, { id: string; name: string; city: string | null }[]>();
+            for (const m of maps) distsOf.set(String(m.franchise_user_id), [...(distsOf.get(String(m.franchise_user_id)) ?? []), { id: String(m.id), name: m.name, city: m.city ?? null }]);
+            const [allDists]: any = await db.execute('SELECT id, name FROM distributors');
+            const [shownRows]: any = await db.execute('SELECT distributor_id, COUNT(*) AS n FROM scheme_distributor_stores WHERE scheme_id = ? GROUP BY distributor_id', [scheme.id]);
+            const shownBy = new Map<string, number>(shownRows.map((r: any) => [String(r.distributor_id), Number(r.n)]));
+            const [addRows]: any = await db.execute('SELECT distributor_id, can_add FROM scheme_distributor_access WHERE scheme_id = ?', [scheme.id]);
+            const addBy = new Map<string, boolean>(addRows.map((r: any) => [String(r.distributor_id), Boolean(r.can_add)]));
+            const distName = new Map<string, string>(allDists.map((d: any) => [String(d.id), String(d.name)]));
             const balances = new Map<string, ReturnType<typeof buyBalance>>();
             const balanceOf = (id: string) => {
                 if (!balances.has(id)) balances.set(id, buyBalance(invoices.filter((i: any) => i.store_id === id), claimRows.filter((c: any) => String(c.store_id) === id)));
@@ -1481,12 +1549,36 @@ export class SchemeController {
                     const b = balanceOf(id);
                     return {
                         store_id: id, store_name: String(p.store_name ?? '').trim(), store_code: p.store_code ?? null, city: p.city ?? null, state: p.state ?? null, brand: p.brand,
+                        distributors: (distsOf.get(String(p.user_id)) ?? []).map(d => d.name),
                         opted_at: p.terms.opted_at ?? p.joined_at, approved: b.approved, used: b.used, available: b.available, eligibility: b.eligibility, rewards: b.rewards,
                         waiting_sets: invoices.filter((i: any) => i.store_id === id && i.status === 'pending').reduce((n: number, i: any) => n + setsTotal(i.sets), 0),
                         requests: claims.filter((c: any) => c.status === 'requested').length,
                     };
                 }),
-                invoices: invoices.map((i: any) => ({ ...i, ...label(i.store_id), files: i.files.map(({ sha256: _h, ...f }: any) => f) })),
+                invoices: invoices.map((i: any) => ({ ...i, ...label(i.store_id), added_by: i.added_by_distributor_id ? (distName.get(i.added_by_distributor_id) ?? 'Distributor') : null, files: i.files.map(({ sha256: _h, ...f }: any) => f) })),
+                distributors: (() => {
+                    const rows = new Map<string, { id: string; name: string; city: string | null; stores: Set<string> }>();
+                    for (const p of opted) for (const d of distsOf.get(String(p.user_id)) ?? []) {
+                        if (!rows.has(d.id)) rows.set(d.id, { ...d, stores: new Set() });
+                        rows.get(d.id)!.stores.add(String(p.store_id));
+                    }
+                    return [...rows.values()].map(r => {
+                        const ids = [...r.stores];
+                        const mine = invoices.filter((i: any) => ids.includes(i.store_id));
+                        const approved = ids.reduce((n, id) => n + setsTotal(balanceOf(id).approved), 0);
+                        return {
+                            id: r.id, name: r.name, city: r.city, stores: ids.length, shown: shownBy.get(r.id) ?? 0, can_add: addBy.get(r.id) ?? true,
+                            stores_active: ids.filter(id => mine.some((i: any) => i.store_id === id && i.status === 'approved')).length,
+                            approved_sets: approved,
+                            waiting_sets: mine.filter((i: any) => i.status === 'pending').reduce((n: number, i: any) => n + setsTotal(i.sets), 0),
+                            available_sets: ids.reduce((n, id) => n + balanceOf(id).eligibility.total, 0),
+                            ready: ids.filter(id => balanceOf(id).eligibility.offer1.ready || balanceOf(id).eligibility.offer2_ready).length,
+                            free_sets: ids.reduce((n, id) => n + balanceOf(id).rewards, 0),
+                            invoices_added: invoices.filter((i: any) => i.added_by_distributor_id === r.id).length,
+                            invoices_by_stores: mine.filter((i: any) => !i.added_by_distributor_id).length,
+                        };
+                    });
+                })(),
                 free_sets: claimRows.map((c: any) => {
                     const id = String(c.store_id);
                     const available = balanceOf(id).available;
@@ -1532,6 +1624,65 @@ export class SchemeController {
      * Approve a redeem request, which uses up the sets (the admin may change how
      * many) and leaves the rest as balance; reject it with a reason; or undo.
      */
+    static async adminDistributorStores(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const [[dist]]: any = await db.execute('SELECT id, name FROM distributors WHERE id = ?', [req.params.distributorId]);
+            if (!dist) return res.status(404).json({ error: 'Distributor not found' });
+            const [rows]: any = await db.execute(
+                `SELECT vd.id AS store_id, vd.store_name, vd.store_code, vd.city, sp.terms,
+                        EXISTS(SELECT 1 FROM scheme_distributor_stores sds WHERE sds.scheme_id = sp.scheme_id AND sds.distributor_id = fd.distributor_id AND sds.store_id = vd.id) AS shown
+                   FROM franchise_distributors fd
+                   JOIN vendor_details vd ON vd.user_id = fd.franchise_user_id
+                   JOIN scheme_participants sp ON sp.store_id = vd.id AND sp.scheme_id = ?
+                  WHERE fd.distributor_id = ? ORDER BY vd.store_name`,
+                [scheme.id, dist.id]
+            );
+            const stores = rows.filter((r: any) => optionOf(json<any>(r.terms, {})) === 'buy_more')
+                .map((r: any) => ({ store_id: String(r.store_id), store_name: String(r.store_name ?? '').trim(), store_code: r.store_code ?? null, city: r.city ?? null, shown: Boolean(r.shown) }));
+            res.json({ success: true, distributor: dist.name, can_add: await distributorMayAdd(scheme.id, dist.id), stores });
+        } catch (error: any) {
+            console.error('[Schemes] distributor stores:', error);
+            res.status(500).json({ error: 'Could not load the stores' });
+        }
+    }
+
+    /** Sets which of a distributor's Buy More stores it sees, and whether it may add invoices. */
+    static async adminDistributorStoresSave(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
+            const [[dist]]: any = await db.execute('SELECT id, name FROM distributors WHERE id = ?', [req.params.distributorId]);
+            if (!dist) return res.status(404).json({ error: 'Distributor not found' });
+            const wanted: string[] = Array.isArray(req.body?.store_ids) ? req.body.store_ids.map(String) : [];
+            const canAdd = req.body?.can_add === undefined ? true : Boolean(req.body.can_add);
+            /* Only stores that are this distributor's and on Option 2 can be switched on. */
+            const [rows]: any = await db.execute(
+                `SELECT vd.id AS store_id, sp.terms FROM franchise_distributors fd
+                   JOIN vendor_details vd ON vd.user_id = fd.franchise_user_id
+                   JOIN scheme_participants sp ON sp.store_id = vd.id AND sp.scheme_id = ?
+                  WHERE fd.distributor_id = ?`, [scheme.id, dist.id]);
+            const allowed = new Set<string>(rows.filter((r: any) => optionOf(json<any>(r.terms, {})) === 'buy_more').map((r: any) => String(r.store_id)));
+            const ids = [...new Set(wanted)].filter(id => allowed.has(id));
+            const conn = await (db as any).getConnection();
+            try {
+                await conn.beginTransaction();
+                await conn.execute('DELETE FROM scheme_distributor_stores WHERE scheme_id = ? AND distributor_id = ?', [scheme.id, dist.id]);
+                for (const id of ids) await conn.execute('INSERT INTO scheme_distributor_stores (scheme_id, distributor_id, store_id) VALUES (?, ?, ?)', [scheme.id, dist.id, id]);
+                await conn.execute(
+                    'INSERT INTO scheme_distributor_access (scheme_id, distributor_id, can_add) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE can_add = VALUES(can_add)',
+                    [scheme.id, dist.id, canAdd ? 1 : 0]);
+                await conn.commit();
+            } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
+            log(req, 'SCHEME_BUY_DISTRIBUTOR_STORES', scheme, { distributor_id: dist.id, distributor: dist.name, stores: ids.length, can_add: canAdd });
+            res.json({ success: true, shown: ids.length });
+        } catch (error: any) {
+            console.error('[Schemes] distributor stores save:', error);
+            res.status(500).json({ error: 'Could not save' });
+        }
+    }
+
     static async adminBuyMoreFreeSet(req: Request, res: Response) {
         try {
             const scheme = await loadScheme(req.params.id);
@@ -2458,33 +2609,73 @@ export class SchemeController {
             }
             const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, store.id]);
             if (optionOf(json<any>(p?.terms, {})) !== 'buy_more') return res.status(400).json({ error: 'Choose Buy More Get More first' });
-
-            const files = (uploadedFiles(req).invoice ?? []);
-            const allowed = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'];
-            const bad = files.find(f => !allowed.includes(f.ext) || f.size > 10 * 1024 * 1024);
-            if (bad) return res.status(400).json({ error: `${bad.name}: send a photo or PDF of up to 10 MB` });
-            if (files.length > 10) return res.status(400).json({ error: 'Up to 10 files' });
-            const invoice_no = String(req.body?.invoice_no ?? '').trim().slice(0, 60);
-            const invoice_date = String(req.body?.invoice_date ?? '').trim();
-            const sets = readSets(req.body?.sets);
-            const problems = invoiceProblems({ invoice_no, invoice_date, sets, files: files.length }, scheme.starts_on, scheme.ends_on, dayOf(new Date()));
-            if (problems.length) return res.status(400).json({ error: problems[0] });
-
-            /* One invoice counts once: the same file or number again is refused, unless it was rejected. */
-            const [mine]: any = await db.execute("SELECT invoice_no, files, created_at FROM scheme_buy_invoices WHERE scheme_id = ? AND store_id = ? AND status <> 'rejected'", [scheme.id, store.id]);
-            const hashes = new Set(files.map(f => f.sha256).filter(Boolean));
-            for (const r of mine) {
-                if (invoiceKey(r.invoice_no) === invoiceKey(invoice_no)) return res.status(400).json({ error: `Invoice ${invoice_no} was already sent on ${dayOf(r.created_at)}` });
-                const same = json<EntryFile[]>(r.files, []).find(f => f.sha256 && hashes.has(f.sha256));
-                if (same) return res.status(400).json({ error: `"${same.name}" was already sent on ${dayOf(r.created_at)}` });
-            }
-            await db.execute(
-                'INSERT INTO scheme_buy_invoices (id, scheme_id, store_id, invoice_no, invoice_date, files, sets, read_sets) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                [uuidv4(), scheme.id, store.id, invoice_no, invoice_date, JSON.stringify(files), JSON.stringify(sets), req.body?.read_sets ? JSON.stringify(readSets(req.body.read_sets)) : null]
-            );
-            res.json({ success: true });
+            await saveBuyInvoice(req, res, scheme, store.id, null);
         } catch (error: any) {
             console.error('[Schemes] buy invoice:', error);
+            res.status(500).json({ error: 'Could not send the invoice' });
+        }
+    }
+
+    /** The Buy More schemes that have a store of this distributor in them. */
+    static async distributorBuyMoreList(req: Request, res: Response) {
+        try {
+            const dist = await myDistributor(req);
+            if (!dist) return res.json({ success: true, schemes: [] });
+            const [rows]: any = await db.execute("SELECT * FROM schemes WHERE status IN ('published', 'ended') AND deleted_at IS NULL ORDER BY starts_on DESC");
+            const out = [];
+            for (const r of rows) {
+                const scheme = readScheme(r);
+                if (!isSellMore(scheme.id)) continue;
+                const stores = await distributorStores(scheme, dist.id);
+                if (!stores.length) continue;
+                out.push({ id: scheme.id, title: scheme.title, starts_on: scheme.starts_on, ends_on: scheme.ends_on, status: scheme.status, stores: stores.length });
+            }
+            res.json({ success: true, distributor: dist.name, schemes: out });
+        } catch (error: any) {
+            console.error('[Schemes] distributor list:', error);
+            res.status(500).json({ error: 'Could not load the schemes' });
+        }
+    }
+
+    /** One Buy More scheme for a distributor: only its own stores that are in it, each with its sets and invoices. */
+    static async distributorBuyMore(req: Request, res: Response) {
+        try {
+            const dist = await myDistributor(req);
+            const scheme = await loadScheme(req.params.id);
+            if (!dist || !scheme || !isSellMore(scheme.id) || scheme.status === 'draft') return res.status(404).json({ error: 'Scheme not found' });
+            const mine = await distributorStores(scheme, dist.id);
+            const stores = [];
+            for (const st of mine) {
+                const b = await buyMoreForStore(scheme, st.store_id);
+                stores.push({
+                    ...st, approved: b.approved, used: b.used, available: b.available, eligibility: b.eligibility, rewards: b.rewards, waiting_sets: b.waiting_sets,
+                    invoices: b.invoices,
+                });
+            }
+            res.json({
+                success: true, distributor: dist.name,
+                scheme: { id: scheme.id, title: scheme.title, starts_on: scheme.starts_on, ends_on: scheme.ends_on, status: scheme.status },
+                can_add: scheme.status === 'published' && await distributorMayAdd(scheme.id, dist.id), stores, products: await seatCoverNames(scheme),
+            });
+        } catch (error: any) {
+            console.error('[Schemes] distributor buy more:', error);
+            res.status(500).json({ error: 'Could not load your stores' });
+        }
+    }
+
+    /** A distributor sends an invoice for one of its stores in the scheme. The admin approves it like any other. */
+    static async distributorBuyInvoice(req: Request, res: Response) {
+        try {
+            const dist = await myDistributor(req);
+            const scheme = await loadScheme(req.params.id);
+            if (!dist || !scheme || !isSellMore(scheme.id) || scheme.status !== 'published') return res.status(404).json({ error: 'Scheme not found' });
+            if (!(await distributorMayAdd(scheme.id, dist.id))) return res.status(403).json({ error: 'Head office has not let you add invoices for now' });
+            const storeId = String(req.body?.store_id ?? '');
+            const mine = await distributorStores(scheme, dist.id);
+            if (!mine.some((s: { store_id: string }) => s.store_id === storeId)) return res.status(400).json({ error: 'This store is not one of yours in the scheme' });
+            await saveBuyInvoice(req, res, scheme, storeId, dist.id);
+        } catch (error: any) {
+            console.error('[Schemes] distributor invoice:', error);
             res.status(500).json({ error: 'Could not send the invoice' });
         }
     }

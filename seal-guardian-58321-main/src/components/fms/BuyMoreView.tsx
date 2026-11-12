@@ -24,7 +24,7 @@ const MAX_FILES = 10;
 const MAX_MB = 10;
 const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
 
-function InvoiceForm({ open, schemeId, products, again, onClose, onDone }: { open: boolean; schemeId: string; products: string[]; again: { invoice_no: string; invoice_date: string } | null; onClose: () => void; onDone: () => Promise<unknown> }) {
+export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, forStore }: { open: boolean; schemeId: string; products: string[]; forStore?: { id: string; name: string }; again: { invoice_no: string; invoice_date: string } | null; onClose: () => void; onDone: () => Promise<unknown> }) {
     const { toast } = useToast();
     const { t, tr } = useLanguage();
     const [files, setFiles] = useState<File[]>([]);
@@ -86,7 +86,8 @@ function InvoiceForm({ open, schemeId, products, again, onClose, onDone }: { ope
             form.append("invoice_date", invoiceDate);
             form.append("sets", JSON.stringify(sets));
             if (read) form.append("read_sets", JSON.stringify(read));
-            await api.post(`/schemes/${schemeId}/invoices`, form, { headers: { "Content-Type": "multipart/form-data" } });
+            if (forStore) form.append("store_id", forStore.id);
+            await api.post(forStore ? `/schemes/distributor/${schemeId}/invoices` : `/schemes/${schemeId}/invoices`, form, { headers: { "Content-Type": "multipart/form-data" } });
             toast({ title: tr("Invoice sent for approval", "इनवॉइस मंज़ूरी के लिए भेज दिया गया") });
             reset();
             onClose();
@@ -100,7 +101,7 @@ function InvoiceForm({ open, schemeId, products, again, onClose, onDone }: { ope
         <Dialog open={open} onOpenChange={v => { if (!v && !sending) onClose(); }}>
             <DialogContent className="max-h-[92vh] max-w-[calc(100%-2rem)] overflow-y-auto rounded-2xl sm:max-w-lg">
                 <DialogHeader>
-                    <DialogTitle className="text-xl font-black">{tr("Add an invoice", "इनवॉइस जोड़ें")}</DialogTitle>
+                    <DialogTitle className="text-xl font-black">{forStore ? `${tr("Add an invoice for", "इनवॉइस जोड़ें:")} ${forStore.name}` : tr("Add an invoice", "इनवॉइस जोड़ें")}</DialogTitle>
                     <DialogDescription>{tr("Upload it and check the sets we read before you send it.", "अपलोड करें और भेजने से पहले पढ़े गए सेट जाँच लें।")}</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
