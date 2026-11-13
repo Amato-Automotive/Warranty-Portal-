@@ -99,9 +99,9 @@ export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, 
 
     return (
         <Dialog open={open} onOpenChange={v => { if (!v && !sending) onClose(); }}>
-            <DialogContent className="max-h-[92vh] max-w-[calc(100%-2rem)] overflow-y-auto rounded-2xl sm:max-w-lg">
+            <DialogContent className="max-h-[90dvh] max-w-[calc(100%-1.5rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto overflow-x-hidden rounded-2xl sm:max-w-lg">
                 <DialogHeader>
-                    <DialogTitle className="text-xl font-black">{forStore ? `${tr("Add an invoice for", "इनवॉइस जोड़ें:")} ${forStore.name}` : tr("Add an invoice", "इनवॉइस जोड़ें")}</DialogTitle>
+                    <DialogTitle className="break-words pr-8 text-lg font-black leading-snug sm:text-xl">{forStore ? `${tr("Add an invoice for", "इनवॉइस जोड़ें:")} ${forStore.name}` : tr("Add an invoice", "इनवॉइस जोड़ें")}</DialogTitle>
                     <DialogDescription>{tr("Upload it and check the sets we read before you send it.", "अपलोड करें और भेजने से पहले पढ़े गए सेट जाँच लें।")}</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
@@ -126,29 +126,29 @@ export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, 
                         {note === "error" && <p className="text-sm text-amber-700">{tr("We couldn't read this file. Please fill in the sets below.", "यह फ़ाइल पढ़ी नहीं जा सकी। कृपया नीचे सेट भरें।")}</p>}
                         {note === "error" && readError && <p className="break-words text-xs text-amber-800/80">Reader error: {readError}</p>}
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="space-y-1"><span className="block text-sm font-semibold text-slate-800">{tr("Invoice number", "इनवॉइस नंबर")}</span>
-                            <Input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} maxLength={60} className="h-11" /></label>
-                        <label className="space-y-1"><span className="block text-sm font-semibold text-slate-800">{tr("Invoice date", "इनवॉइस की तारीख")}</span>
-                            <Input type="date" value={invoiceDate} min="2026-11-01" max={istToday()} onChange={e => setInvoiceDate(e.target.value)} className="h-11" /></label>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="min-w-0 space-y-1"><span className="block text-sm font-semibold text-slate-800">{tr("Invoice number", "इनवॉइस नंबर")}</span>
+                            <Input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} maxLength={60} className="h-11 w-full min-w-0" /></label>
+                        <label className="min-w-0 space-y-1"><span className="block text-sm font-semibold text-slate-800">{tr("Invoice date", "इनवॉइस की तारीख")}</span>
+                            <Input type="date" value={invoiceDate} min="2026-11-01" max={istToday()} onChange={e => setInvoiceDate(e.target.value)} className="h-11 w-full min-w-0 appearance-none" /></label>
                     </div>
                     <div className="space-y-2">
                         <p className="text-sm font-semibold text-slate-800">{tr("Sets on this invoice", "इस इनवॉइस में सेट")}</p>
                         {SET_KINDS.map(k => (
                             <label key={k} className="flex items-center justify-between gap-3">
-                                <span className="text-sm text-slate-700">{k === "other" ? tr("Any other seat cover", "कोई अन्य सीट कवर") : SET_LABEL[k]}
+                                <span className="min-w-0 flex-1 text-sm text-slate-700">{k === "other" ? tr("Any other seat cover", "कोई अन्य सीट कवर") : SET_LABEL[k]}
                                     {check.includes(k) && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">{tr("Please check", "जाँच लें")}</span>}</span>
                                 <Input type="number" inputMode="numeric" min={0} max={500} value={sets[k] || ""} placeholder="0"
                                     onChange={e => setSets(s => ({ ...s, [k]: Math.max(0, Math.min(500, Math.floor(Number(e.target.value) || 0))) }))}
-                                    className="h-10 w-24 text-right" aria-label={SET_LABEL[k]} />
+                                    className="h-10 w-20 shrink-0 text-right sm:w-24" aria-label={SET_LABEL[k]} />
                             </label>
                         ))}
                         <p className="text-right text-sm font-bold text-slate-900">{tr("Total", "कुल")}: {total}</p>
                     </div>
                 </div>
-                <DialogFooter className="gap-2">
-                    <Button variant="outline" disabled={sending} onClick={onClose}>{t("Cancel")}</Button>
-                    <Button className="bg-orange-500 font-bold hover:bg-orange-600" disabled={!ready || sending} onClick={send}>
+                <DialogFooter className="gap-2 sm:gap-0">
+                    <Button variant="outline" className="w-full sm:w-auto" disabled={sending} onClick={onClose}>{t("Cancel")}</Button>
+                    <Button className="w-full bg-orange-500 font-bold hover:bg-orange-600 sm:w-auto" disabled={!ready || sending} onClick={send}>
                         {sending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}{tr("Send for approval", "मंज़ूरी के लिए भेजें")}
                     </Button>
                 </DialogFooter>

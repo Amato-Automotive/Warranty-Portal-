@@ -868,8 +868,9 @@ const FranchiseDashboard = () => {
             case 'offers':
                 return (
                     <div className="-mt-8 md:-mt-14">
-                        {isDistributor && <div className="mb-8"><DistributorBuyMore /></div>}
-                        <FranchiseSchemes key={openSchemeId ?? 'all'} initialOpenId={openSchemeId} />
+                        {isDistributor
+                            ? <DistributorBuyMore><FranchiseSchemes key={openSchemeId ?? 'all'} initialOpenId={openSchemeId} /></DistributorBuyMore>
+                            : <FranchiseSchemes key={openSchemeId ?? 'all'} initialOpenId={openSchemeId} />}
                     </div>
                 );
             case 'audit':

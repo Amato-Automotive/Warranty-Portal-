@@ -128,6 +128,7 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
   const uidScannerCheckingRef = useRef(false);
   const uidScannerLastValueRef = useRef("");
   const [showExistingInvoice, setShowExistingInvoice] = useState(false);
+  const [showInvoiceExample, setShowInvoiceExample] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
   const [formData, setFormData] = useState(initialData ? {
     uid: initialData.product_details?.uid || "",
@@ -618,8 +619,8 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
       if (!warrantyId) {
         if (!formData.invoiceFile) {
           toast({
-            title: "GST Invoice Required",
-            description: "Please upload proof of purchase (GST Invoice)",
+            title: "GST Invoice / Estimate Bill Required",
+            description: "Please upload proof of purchase (GST Invoice/Estimate Bill)",
             variant: "destructive",
           });
           setLoading(false);
@@ -1317,6 +1318,36 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
         </p>
       </div>
 
+      {/* Example bills for the proof of purchase */}
+      <Dialog open={showInvoiceExample} onOpenChange={setShowInvoiceExample}>
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-24px)] max-w-md overflow-y-auto p-0">
+          <DialogHeader className="px-4 pt-4 pb-2">
+            <DialogTitle className="text-sm font-semibold">Proof of Purchase - Examples</DialogTitle>
+            <DialogDescription className="text-xs">Upload either 1 or 2. It must show the store name, the product and the UID.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 px-4 pb-4">
+            {[
+              { src: "/images/warranty/invoice-example-gst-invoice.jpg", title: "GST Invoice" },
+              { src: "/images/warranty/invoice-example-estimate-bill.jpg", title: "Estimate Bill" },
+            ].map((ex, i) => (
+              <div key={ex.src} className="space-y-4">
+                {i > 0 && (
+                  <div className="flex items-center gap-3 text-xs font-semibold uppercase text-slate-400">
+                    <span className="h-px flex-1 bg-slate-200" />
+                    or
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+                )}
+                <figure className="space-y-1">
+                  <figcaption className="text-xs font-semibold text-slate-700">{i + 1}. {ex.title}</figcaption>
+                  <img src={ex.src} alt={`Example ${ex.title}`} className="w-full rounded-md border object-contain" loading="lazy" />
+                </figure>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Existing Invoice Dialog */}
       <Dialog open={showExistingInvoice} onOpenChange={setShowExistingInvoice}>
           <DialogContent className="max-w-sm p-0 overflow-hidden">
@@ -1844,18 +1875,28 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
               <div className="space-y-3 md:col-span-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Label htmlFor="invoiceFile" className="text-sm font-medium text-slate-700 shrink-0">
-                    Proof of Purchase (GST Invoice) <span className="text-destructive">*</span>
+                    Proof of Purchase (GST Invoice/Estimate Bill) <span className="text-destructive">*</span>
                   </Label>
-                  {isEditing && !hideExisting && initialData?.product_details?.invoiceFileName && (
+                  <div className="flex items-center gap-4">
+                    {isEditing && !hideExisting && initialData?.product_details?.invoiceFileName && (
+                      <button
+                        type="button"
+                        onClick={() => setShowExistingInvoice(true)}
+                        className="flex items-center gap-1 text-xs text-emerald-600 font-medium hover:text-emerald-800 transition-colors"
+                      >
+                        <ImageIcon className="h-3 w-3" />
+                        View Existing
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setShowExistingInvoice(true)}
-                      className="flex items-center gap-1 text-xs text-emerald-600 font-medium hover:text-emerald-800 transition-colors"
+                      onClick={() => setShowInvoiceExample(true)}
+                      className="flex items-center gap-1 text-xs text-orange-600 font-medium hover:text-orange-800 transition-colors"
                     >
                       <ImageIcon className="h-3 w-3" />
-                      View Existing
+                      See Example
                     </button>
-                  )}
+                  </div>
                 </div>
                 <div className={`mt-2 border-2 border-dashed rounded-xl p-4 sm:p-6 transition-all duration-200 text-center relative ${formData.invoiceFile ? 'border-orange-300 bg-orange-50/30' : 'border-slate-200 hover:border-orange-300 hover:bg-slate-50'}`}>
                   <div className="flex flex-col items-center gap-2">
@@ -1908,7 +1949,10 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
                 value={formData.mrpLabelFile}
                 onChange={(file) => handleCameraCapture(file, 'mrpLabelFile')}
                 selectedIcon={<Tag className="h-6 w-6" />}
-                sampleImageUrl="/images/warranty/uid-ref-01.jpeg"
+                sampleImages={[
+                  { src: "/images/warranty/uid-ref-01.jpeg", title: "MRP Sticker" },
+                  { src: "/images/warranty/label-example-taffeta.jpg", title: "Taffeta Label" },
+                ]}
                 existingImageUrl={isEditing && !hideExisting && initialData?.product_details?.photos?.mrpLabel ? initialData.product_details.photos.mrpLabel : null}
               />
 

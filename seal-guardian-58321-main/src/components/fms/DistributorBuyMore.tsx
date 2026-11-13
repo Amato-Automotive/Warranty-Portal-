@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, Clock, Download, Loader2, Plus, XCircle } from "lucide-react";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -8,6 +8,7 @@ import { cn, downloadCSV } from "@/lib/utils";
 import { SET_KINDS, type Sets } from "@/lib/buyMoreReader";
 import { SET_LABEL, setsLine, shortDay, stampDay, type DistributorBuyMore as Data } from "@/lib/sellMore";
 import { InvoiceForm } from "./BuyMoreView";
+import { Banner, terms } from "./SellMoreView";
 
 /**
  * Buy More Get More for a distributor: only its own stores that are in the
@@ -19,7 +20,8 @@ import { InvoiceForm } from "./BuyMoreView";
 const total = (s: Sets) => SET_KINDS.reduce((n, k) => n + (s[k] || 0), 0);
 type SchemeRow = { id: string; title: string; stores: number };
 
-export function DistributorBuyMore() {
+/** `children` (the other schemes) show between the stores and the terms, so the terms stay last on the page. */
+export function DistributorBuyMore({ children }: { children?: ReactNode }) {
     const { toast } = useToast();
     const { tr, locale } = useLanguage();
     const [schemes, setSchemes] = useState<SchemeRow[] | null>(null);
@@ -54,8 +56,8 @@ export function DistributorBuyMore() {
         };
     }, [d]);
 
-    if (schemes === null || (schemeId && !d)) return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>;
-    if (!schemes.length || !d) return null;
+    if (schemes === null || (schemeId && !d)) return <><div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>{children}</>;
+    if (!schemes.length || !d) return <>{children}</>;
     const adder = d.stores.find(s => s.store_id === adding);
 
     const readyFor = (s: Data["stores"][number]) => {
@@ -72,8 +74,9 @@ export function DistributorBuyMore() {
         <div className="space-y-5">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                    <h1 className="text-2xl font-black text-slate-900">{d.scheme.title}</h1>
-                    <p className="text-sm text-slate-600">{tr("Your stores that are in this scheme", "आपके स्टोर जो इस स्कीम में हैं")}</p>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-orange-700">{tr("1 Nov 2026 to 31 Mar 2027", "1 नवंबर 2026 से 31 मार्च 2027")}</p>
+                    <h1 className="mt-1 text-2xl font-black text-slate-900 sm:text-3xl">{d.scheme.title}</h1>
+                    <p className="mt-1 text-sm text-slate-600">Buy More Get More · {tr("Your stores that are in this scheme", "आपके स्टोर जो इस स्कीम में हैं")}</p>
                 </div>
                 {schemes.length > 1 && (
                     <select value={schemeId ?? ""} onChange={e => setSchemeId(e.target.value)} aria-label={tr("Scheme", "स्कीम")} className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm">
@@ -81,6 +84,8 @@ export function DistributorBuyMore() {
                     </select>
                 )}
             </div>
+
+            {d.scheme.banner_url && <Banner url={d.scheme.banner_url} title={d.scheme.title} />}
 
             <section className="flex flex-col gap-5 rounded-3xl bg-slate-900 p-6 text-white lg:flex-row lg:items-center lg:justify-between">
                 <div>
@@ -174,6 +179,20 @@ export function DistributorBuyMore() {
                         </tbody>
                     </table>
                 </div>
+            </section>
+
+            {children && <div className="pt-3">{children}</div>}
+
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-700">
+                <h2 className="mb-2 text-base font-extrabold text-slate-900">{tr("Terms and conditions", "नियम और शर्तें")}</h2>
+                <ol className="list-decimal space-y-1.5 pl-5">
+                    {/* The franchise rules that also apply here: period, the two offers, no points, eligibility, claims. */}
+                    {terms(tr, "buy_more").filter((_, i) => [0, 2, 3].includes(i)).map(line => <li key={line}>{line}</li>)}
+                    <li>{tr("Add invoices for your stores in the scheme on this page. Only sets on invoices approved by head office count.", "स्कीम में अपने स्टोर के इनवॉइस इसी पेज पर जोड़ें। हेड ऑफिस से मंज़ूर इनवॉइस के सेट ही गिने जाएँगे।")}</li>
+                    <li>{tr("Each store redeems its own free set. A distributor can't redeem.", "हर स्टोर अपना मुफ़्त सेट खुद रिडीम करता है। डिस्ट्रीब्यूटर रिडीम नहीं कर सकता।")}</li>
+                    {terms(tr, "buy_more").filter((_, i) => [6, 7, 8].includes(i)).map(line => <li key={line}>{line}</li>)}
+                </ol>
+                {d.scheme.terms && <p className="mt-3 whitespace-pre-line">{d.scheme.terms}</p>}
             </section>
 
             {adder && (

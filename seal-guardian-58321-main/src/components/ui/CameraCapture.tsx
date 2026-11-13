@@ -34,6 +34,8 @@ interface CameraCaptureProps {
     id: string;
     /** Optional sample image URL shown as a reference example for users */
     sampleImageUrl?: string;
+    /** Several examples, shown one under the other as 1, OR, 2. Used instead of sampleImageUrl. */
+    sampleImages?: { src: string; title: string }[];
     /** Label for the sample image (defaults to 'See Example') */
     sampleImageLabel?: string;
     /** Optional existing image URL to show if no new file is selected */
@@ -85,6 +87,7 @@ const CameraCapture = ({
     defaultIcon,
     id,
     sampleImageUrl,
+    sampleImages,
     sampleImageLabel = "See Example",
     existingImageUrl,
 }: CameraCaptureProps) => {
@@ -252,11 +255,31 @@ const CameraCapture = ({
                         <DialogTitle className="text-sm font-semibold">{label} — Sample</DialogTitle>
                         <DialogDescription className="text-xs">Use this as a reference for your photo</DialogDescription>
                     </DialogHeader>
-                    <img
-                        src={sampleImageUrl}
-                        alt={`Sample ${label}`}
-                        className="w-full object-contain"
-                    />
+                    {sampleImages?.length ? (
+                        <div className="max-h-[75vh] space-y-4 overflow-y-auto px-4 pb-4">
+                            {sampleImages.map((ex, i) => (
+                                <div key={ex.src} className="space-y-4">
+                                    {i > 0 && (
+                                        <div className="flex items-center gap-3 text-xs font-semibold uppercase text-slate-400">
+                                            <span className="h-px flex-1 bg-slate-200" />
+                                            or
+                                            <span className="h-px flex-1 bg-slate-200" />
+                                        </div>
+                                    )}
+                                    <figure className="space-y-1">
+                                        <figcaption className="text-xs font-semibold text-slate-700">{i + 1}. {ex.title}</figcaption>
+                                        <img src={ex.src} alt={`Sample ${ex.title}`} className="w-full rounded-md border object-contain" loading="lazy" />
+                                    </figure>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <img
+                            src={sampleImageUrl}
+                            alt={`Sample ${label}`}
+                            className="w-full object-contain"
+                        />
+                    )}
                 </DialogContent>
             </Dialog>
 
@@ -294,7 +317,7 @@ const CameraCapture = ({
                                 View Existing
                             </button>
                         )}
-                        {sampleImageUrl && (
+                        {(sampleImageUrl || sampleImages?.length) && (
                             <button
                                 type="button"
                                 onClick={() => setShowSample(true)}

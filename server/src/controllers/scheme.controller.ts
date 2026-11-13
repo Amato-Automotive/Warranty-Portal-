@@ -2658,7 +2658,10 @@ export class SchemeController {
             }
             res.json({
                 success: true, distributor: dist.name,
-                scheme: { id: scheme.id, title: scheme.title, starts_on: scheme.starts_on, ends_on: scheme.ends_on, status: scheme.status },
+                scheme: {
+                    id: scheme.id, title: scheme.title, starts_on: scheme.starts_on, ends_on: scheme.ends_on, status: scheme.status,
+                    terms: scheme.terms, banner_url: scheme.settings.option_banners?.option2 || scheme.banner_url || null,
+                },
                 can_add: scheme.status === 'published' && await distributorMayAdd(scheme.id, dist.id), stores, products: await seatCoverNames(scheme),
             });
         } catch (error: any) {

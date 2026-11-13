@@ -18,7 +18,7 @@ import { BuyMoreView } from "./BuyMoreView";
 type T = (en: string, hi: string) => string;
 
 /** The poster's rules, plus the choice being final. */
-const terms = (tr: T, option: "sell_more" | "buy_more") => option === "buy_more" ? [
+export const terms = (tr: T, option: "sell_more" | "buy_more") => option === "buy_more" ? [
     tr("Program period: 1 Nov 2026 to 31 Mar 2027.", "प्रोग्राम अवधि: 1 नवंबर 2026 से 31 मार्च 2027।"),
     tr("A franchise can choose only one option: Sell More or Buy More. Once chosen, it can't be changed.", "फ्रैंचाइज़ी केवल एक विकल्प चुन सकती है: Sell More या Buy More। एक बार चुनने के बाद इसे बदला नहीं जा सकता।"),
     tr("Offer 1: buy any 12 seat cover sets and get 1 set of 2-row Amaze free.", "ऑफ़र 1: कोई भी 12 सीट कवर सेट खरीदें और 1 सेट 2-रो Amaze मुफ़्त पाएँ।"),
@@ -42,7 +42,7 @@ const terms = (tr: T, option: "sell_more" | "buy_more") => option === "buy_more"
 ];
 
 /** A banner that opens the full poster. */
-function Banner({ url, title, small }: { url: string; title: string; small?: boolean }) {
+export function Banner({ url, title, small }: { url: string; title: string; small?: boolean }) {
     const { t } = useLanguage();
     const [open, setOpen] = useState(false);
     return (

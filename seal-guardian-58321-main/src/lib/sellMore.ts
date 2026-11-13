@@ -59,7 +59,7 @@ export interface DistributorBuyMoreStore {
     approved: Sets; used: Sets; available: Sets; eligibility: BuyEligibility; rewards: number; waiting_sets: number; invoices: BuyMoreInvoice[];
 }
 export interface DistributorBuyMore {
-    distributor: string; scheme: { id: string; title: string; starts_on: string; ends_on: string; status: string }; can_add: boolean;
+    distributor: string; scheme: { id: string; title: string; starts_on: string; ends_on: string; status: string; terms?: string | null; banner_url?: string | null }; can_add: boolean;
     stores: DistributorBuyMoreStore[]; products: string[];
 }
 
