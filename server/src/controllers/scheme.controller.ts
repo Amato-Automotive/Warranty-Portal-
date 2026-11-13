@@ -1603,7 +1603,7 @@ export class SchemeController {
             if (!scheme || !isSellMore(scheme.id)) return res.status(404).json({ error: 'Scheme not found' });
             const status = String(req.body?.status ?? '');
             if (!['approved', 'rejected', 'pending'].includes(status)) return res.status(400).json({ error: 'Pick a status' });
-            const note = String(req.body?.note ?? '').trim().slice(0, 500) || null;
+            const note = String(req.body?.note ?? '').trim().slice(0, 3000) || null; // room for head office's standard rejection messages
             if (status === 'rejected' && !note) return res.status(400).json({ error: 'Give a reason; the store sees it' });
             const [[inv]]: any = await db.execute('SELECT id, sets FROM scheme_buy_invoices WHERE id = ? AND scheme_id = ?', [req.params.invoiceId, scheme.id]);
             if (!inv) return res.status(404).json({ error: 'Invoice not found' });

@@ -8,6 +8,7 @@ import { cn, downloadCSV } from "@/lib/utils";
 import { SET_KINDS, type Sets } from "@/lib/buyMoreReader";
 import { SET_LABEL, setsLine, shortDay, stampDay, type DistributorBuyMore as Data } from "@/lib/sellMore";
 import { InvoiceForm } from "./BuyMoreView";
+import { RejectionNote } from "./RejectionNote";
 import { Banner, terms } from "./SellMoreView";
 
 /**
@@ -165,7 +166,7 @@ export function DistributorBuyMore({ children }: { children?: ReactNode }) {
                                                                     </span>
                                                                 </div>
                                                                 <p className="text-slate-600">{setsLine(i.sets, tr("Other", "अन्य"))}</p>
-                                                                {i.review_note && <p className="text-rose-700">{i.review_note}</p>}
+                                                                {i.review_note && <RejectionNote note={i.review_note} className="text-rose-700" />}
                                                                 <p className="flex flex-wrap gap-3 text-xs">{i.files.map(f => <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="font-medium text-orange-700 underline">{f.name}</a>)}</p>
                                                             </li>
                                                         ))}

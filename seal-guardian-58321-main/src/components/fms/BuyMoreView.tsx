@@ -4,6 +4,7 @@ import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { RejectionNote } from "./RejectionNote";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { cn } from "@/lib/utils";
@@ -306,7 +307,7 @@ export function BuyMoreView({ schemeId, data, reload }: { schemeId: string; data
                                         </span>
                                     </div>
                                     {a.sets && <p className="text-slate-600">{a.kind === "invoice" ? "+ " : "− "}{setsText(a.sets, tr("Other", "अन्य"))}{a.balance !== null ? ` · ${tr("balance", "बैलेंस")} ${a.balance}` : ""}</p>}
-                                    {a.note && <p className={a.state === "bad" ? "text-rose-700" : "text-slate-600"}>{a.note}</p>}
+                                    {a.note && <RejectionNote note={a.note} className={a.state === "bad" ? "text-rose-700" : "text-slate-600"} />}
                                     {a.invoice && (
                                         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                                             {a.invoice.files.map(f => <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="font-medium text-orange-700 underline">{f.name}</a>)}

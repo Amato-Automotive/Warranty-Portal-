@@ -8,6 +8,8 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn, downloadCSV } from "@/lib/utils";
 import { SET_KINDS, type Sets } from "@/lib/buyMoreReader";
+import { REJECTION_REASONS, rejectionLetter } from "@/lib/rejectionReasons";
+import { RejectionNote } from "@/components/fms/RejectionNote";
 import { buildActivity, OFFER_LABEL, readyAfter, setsLine, shortDay, stampDay, type AdminBuyMore, type AdminBuyMoreDistributor, type AdminBuyMoreInvoice, type AdminBuyMoreStore, type AdminFreeSet } from "@/lib/sellMore";
 
 /**
@@ -188,11 +190,13 @@ type Review = (inv: AdminBuyMoreInvoice, status: "approved" | "rejected" | "pend
 function ReviewPanel({ inv, store, onReview }: { inv: AdminBuyMoreInvoice; store: AdminBuyMoreStore | undefined; onReview: Review }) {
     const [sets, setSets] = useState<Sets>(inv.sets);
     const [note, setNote] = useState("");
+    const [reason, setReason] = useState<string>(""); // "" nothing yet, "0".."3" a standard reason, "other" written by hand
     const [rejecting, setRejecting] = useState(false);
     const [busy, setBusy] = useState(false);
+    const rejectNote = reason === "other" ? note.trim() : reason === "" ? "" : rejectionLetter(Number(reason));
     const go = async (status: "approved" | "rejected") => {
         setBusy(true);
-        try { await onReview(inv, status, sets, note); } finally { setBusy(false); }
+        try { await onReview(inv, status, sets, status === "rejected" ? rejectNote : ""); } finally { setBusy(false); }
     };
     const changed = inv.read_sets && SET_KINDS.filter(k => inv.read_sets![k] !== inv.sets[k]);
     const after = store ? readyAfter(store.available, sets) : null;
@@ -228,9 +232,15 @@ function ReviewPanel({ inv, store, onReview }: { inv: AdminBuyMoreInvoice; store
                 {after && <p className="text-sm text-slate-600">After approval this store has <b className="tabular-nums">{after.total}</b> available{after.offer1 || after.offer2 ? ` and can redeem ${[after.offer1 && "Offer 1", after.offer2 && "Offer 2"].filter(Boolean).join(" or ")}` : ""}.</p>}
                 {rejecting ? (
                     <div className="space-y-2">
-                        <Input value={note} onChange={e => setNote(e.target.value)} placeholder="Why it is rejected. The store sees this." className="h-10" aria-label="Rejection reason" />
+                        <select value={reason} onChange={e => setReason(e.target.value)} aria-label="Rejection reason" className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm">
+                            <option value="">Choose a reason</option>
+                            {REJECTION_REASONS.map((r, i) => <option key={r.label} value={String(i)}>{r.label}</option>)}
+                            <option value="other">Other (write your own)</option>
+                        </select>
+                        {reason === "other" && <Input value={note} onChange={e => setNote(e.target.value)} placeholder="Why it is rejected. The store sees this." className="h-10" aria-label="Your own rejection reason" />}
+                        {reason !== "" && reason !== "other" && <RejectionNote note={rejectNote} className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800" />}
                         <div className="flex gap-2">
-                            <Button variant="destructive" disabled={busy || !note.trim()} onClick={() => go("rejected")}>Reject and next</Button>
+                            <Button variant="destructive" disabled={busy || !rejectNote} onClick={() => go("rejected")}>Reject and next</Button>
                             <Button variant="ghost" onClick={() => setRejecting(false)}>Cancel</Button>
                         </div>
                     </div>
@@ -417,7 +427,7 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
                                     <td className="px-3 py-2">{inv.invoice_no}<span className="block text-xs text-slate-500">{shortDay(inv.invoice_date)} · {inv.files.map(f => <a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="mr-2 text-orange-700 underline">{f.name}</a>)}</span></td>
                                     <td className="px-3 py-2 text-xs text-slate-600">{inv.added_by ? `Distributor: ${inv.added_by}` : "Store"}</td>
                                     <td className="px-3 py-2 text-slate-700">{setsLine(inv.sets, "Other")}</td>
-                                    <td className="whitespace-nowrap px-3 py-2"><span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", inv.status === "approved" ? "bg-emerald-100 text-emerald-800" : inv.status === "rejected" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800")}>{inv.status === "approved" ? "Approved" : inv.status === "rejected" ? "Rejected" : "Waiting"}</span>{inv.review_note && <span className="block text-xs text-slate-500">{inv.review_note}</span>}</td>
+                                    <td className="whitespace-nowrap px-3 py-2"><span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", inv.status === "approved" ? "bg-emerald-100 text-emerald-800" : inv.status === "rejected" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800")}>{inv.status === "approved" ? "Approved" : inv.status === "rejected" ? "Rejected" : "Waiting"}</span>{inv.review_note && <RejectionNote note={inv.review_note} className="text-xs text-slate-500" />}</td>
                                     <td className="px-3 py-2 text-right">{inv.status !== "pending" && <button type="button" className="text-xs text-slate-400 hover:text-orange-600" onClick={() => review(inv, "pending", inv.sets, "")}>Undo</button>}</td>
                                 </tr>
                             ))}
