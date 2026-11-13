@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { Router } from 'express';
+import { StoreRatingsController } from '../controllers/storeRatings.controller.js';
 import { AdminController } from '../controllers/admin.controller.js';
 import { DiagnosticController } from '../controllers/diagnostic.controller.js';
 import { ProductController } from '../controllers/product.controller.js';
@@ -83,6 +84,10 @@ router.delete('/manpower/:id', ...adminAuth, requirePermission('vendors', 'write
 // WhatsApp notification toggles
 router.get('/notification-settings', ...adminAuth, requirePermission('announcements', 'read'), AdminController.getNotificationSettings);
 router.put('/notification-settings', ...adminAuth, requirePermission('announcements', 'write'), AdminController.updateNotificationSettings);
+router.get('/store-ratings', ...adminAuth, requirePermission('feedback', 'read'), StoreRatingsController.overview);
+router.get('/store-ratings/:storeId', ...adminAuth, requirePermission('feedback', 'read'), StoreRatingsController.store);
+router.get('/rating-display', ...adminAuth, requirePermission('announcements', 'read'), AdminController.getRatingDisplaySettings);
+router.put('/rating-display', ...adminAuth, requirePermission('announcements', 'write'), AdminController.updateRatingDisplaySettings);
 router.put('/notification-settings/:key/window', ...adminAuth, requirePermission('announcements', 'write'), AdminController.updateNotificationWindow);
 
 // Warranty rejection reminders. Gated on 'warranties' write rather than

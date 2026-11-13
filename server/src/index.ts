@@ -50,7 +50,8 @@ import { ensureCustomerMobileLimitTable } from './utils/customerMobileLimits.js'
 import { ensureAsmExpenseTables } from './controllers/asmExpense.controller.js';
 import { backfillWarrantyStores } from './services/warrantyStore.js';
 import { PORTAL_ACTIVITY_TABLE } from './services/portalActivity.service.js';
-import { APP_ORIGINS } from './config/appOrigins.js';
+import { APP_ORIGINS } from './config/appOrigins.js';
+import { runStoreRatingRequests } from './services/storeRatingRequest.service.js';
 
 // Keep the process alive on stray async errors. A single unhandled promise
 // rejection (e.g. a transient DB error in a background task) would otherwise
@@ -533,6 +534,12 @@ async function runMigrations() {
     /* Which of a distributor's stores the admin shows it in Buy More Get More, and whether it may add invoices. */
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_stores (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, store_id VARCHAR(36) NOT NULL, PRIMARY KEY (scheme_id, distributor_id, store_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_access (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, can_add TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (scheme_id, distributor_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* A request to rate the store, one per warranty; the customer's tap on the template turns it into a rating. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS store_rating_requests (id CHAR(36) NOT NULL PRIMARY KEY, warranty_uid VARCHAR(64) NOT NULL, store_id VARCHAR(36) NOT NULL, customer_name VARCHAR(120) NULL, customer_phone VARCHAR(20) NULL, product VARCHAR(60) NULL, status VARCHAR(12) NOT NULL DEFAULT 'sending', error VARCHAR(250) NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TIMESTAMP NULL, rated_at TIMESTAMP NULL, UNIQUE KEY uq_srr_warranty (warranty_uid), KEY idx_srr_status (status, created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* One row per rating a customer gave their store; a warranty is rated once. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS store_ratings (id CHAR(36) NOT NULL PRIMARY KEY, store_id VARCHAR(36) NOT NULL, warranty_uid VARCHAR(64) NULL, customer_name VARCHAR(120) NULL, customer_phone VARCHAR(20) NULL, stars TINYINT NOT NULL, product VARCHAR(60) NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_sr_warranty (warranty_uid), KEY idx_sr_store (store_id, created_at), KEY idx_sr_day (created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* Each store's average rating and how many ratings stand behind it (shown from a minimum count). */
+    await pool.query(`CREATE TABLE IF NOT EXISTS store_rating_summary (store_id VARCHAR(36) NOT NULL PRIMARY KEY, avg_rating DECIMAL(3,2) NOT NULL DEFAULT 0, rating_count INT NOT NULL DEFAULT 0, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     /* Whether this distributor supplies the store's seat covers, accessories and mats (SAM). Buy More invoices come only from those; EV and care distributors stay mapped. */
     const [fdSam]: any = await pool.query("SHOW COLUMNS FROM franchise_distributors LIKE 'supplies_sam'");
     if (!fdSam.length) await pool.query('ALTER TABLE franchise_distributors ADD COLUMN supplies_sam TINYINT(1) NOT NULL DEFAULT 1');
@@ -745,6 +752,11 @@ if (process.env.DISABLE_SCHEDULERS === '1') {
   const remind = () => runSchemeReminders().catch(err => console.error('[Schemes] reminders failed:', err?.message));
   setTimeout(remind, 90_000);
   setInterval(remind, 60 * 60 * 1000).unref?.();
+
+  // A day after a warranty is approved, the customer is asked to rate their store (when switched on).
+  const askRatings = () => runStoreRatingRequests().catch(err => console.error('[Ratings] requests failed:', err?.message));
+  setTimeout(askRatings, 120_000);
+  setInterval(askRatings, 10 * 60 * 1000).unref?.();
 }
 
 // Get current directory for ES modules

@@ -14,7 +14,8 @@ import { checkPurchaseDate } from '../services/purchaseDateWindow.service.js';
 import { recordRegistrationEvent } from '../services/analyticsEvents.service.js';
 import { parseRolls, reserveRolls, nextWarrantyUidForRoll, RollUnavailableError, withRollRetry, findSerialNotIssuedToStore } from '../services/ppfRoll.service.js';
 import { withTransaction } from '../utils/transaction.js';
-import { resolveWarrantyStore } from '../services/warrantyStore.js';
+import { resolveWarrantyStore } from '../services/warrantyStore.js';
+import { getRatingDisplay, showableRating } from '../services/storeRatings.service.js';
 
 export class PublicController {
     static async getStores(req: Request, res: Response) {
@@ -39,6 +40,16 @@ export class PublicController {
         AND COALESCE(vv.is_active, TRUE) = TRUE
         ORDER BY vd.store_name ASC
       `);
+
+            const display = await getRatingDisplay();
+            const min = display.min_count;
+            const [sums]: any = await db.execute('SELECT store_id, avg_rating, rating_count FROM store_rating_summary');
+            const sumOf = new Map<string, any>(sums.map((r: any) => [String(r.store_id), r]));
+            for (const s of stores) {
+                const r = sumOf.get(String(s.vendor_details_id));
+                s.rating_count = r ? Number(r.rating_count) : 0;
+                s.rating_avg = r && display.website ? showableRating(r.avg_rating, r.rating_count, min) : null;
+            }
 
             res.json({
                 success: true,
@@ -93,6 +104,11 @@ export class PublicController {
                 'SELECT id, name, manpower_id, applicator_type FROM manpower WHERE vendor_id = ? AND is_active = TRUE AND is_approved = TRUE ORDER BY name ASC',
                 [stores[0].vendor_details_id]
             );
+
+            const [[sum]]: any = await db.execute('SELECT avg_rating, rating_count FROM store_rating_summary WHERE store_id = ?', [stores[0].vendor_details_id]);
+            stores[0].rating_count = sum ? Number(sum.rating_count) : 0;
+            const display = await getRatingDisplay();
+            stores[0].rating_avg = sum && display.website ? showableRating(sum.avg_rating, sum.rating_count, display.min_count) : null;
 
             res.json({
                 success: true,

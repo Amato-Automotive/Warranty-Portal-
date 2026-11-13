@@ -1,6 +1,7 @@
 import db from '../config/database.js';
 import { findAsmForPincode } from './asmTerritoryQuery.js';
-import { findState } from './indianStates.js';
+import { findState } from './indianStates.js';
+import { ratingsFor } from './storeRatings.service.js';
 import {
     storesToOffer,
     isTestAccount,
@@ -215,6 +216,8 @@ export interface OfferedStoreRow {
     warranties: number;
     distance_km: number;
     distance_label: string;
+    /** Average rating, only when the store has enough ratings to show one. */
+    rating: number | null;
 }
 
 /** Someone a customer can be put in touch with when no store is near. */
@@ -396,6 +399,7 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
         minWarranties: settings.min_warranties,
     }, inCity);
 
+    const ratings = await ratingsFor(offered.map(o => String(o.store.row.id)));
     return {
         pincode,
         found: true,
@@ -413,6 +417,7 @@ export async function findStoresForPincode(rawPincode: string): Promise<LocatorR
             warranties: store.warranties,
             distance_km: Number(distanceKm.toFixed(2)),
             distance_label: formatDistance(distanceKm),
+            rating: ratings.get(String(store.row.id)) ?? null,
         })),
         fallback: offered.length ? null : await fallbackFor(pincode, customer, settings),
         reason: offered.length ? undefined

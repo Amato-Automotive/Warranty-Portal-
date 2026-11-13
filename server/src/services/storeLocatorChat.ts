@@ -4,7 +4,8 @@ import { WhatsAppService } from './whatsapp.service.js';
 import { findState } from './indianStates.js';
 import { phoneKey, normaliseProduct, asmLeadNumber } from './asmRouting.service.js';
 import { isPincode, extractPincode, localPhone } from './storeLocator.js';
-import { findStoresForPincode, getLocatorSettings, repliesTo, type LocatorResult } from './storeLocatorQuery.js';
+import { findStoresForPincode, getLocatorSettings, repliesTo, type LocatorResult } from './storeLocatorQuery.js';
+import { ratingsFor } from './storeRatings.service.js';
 import {
     storeList,
     distributorList,
@@ -277,7 +278,7 @@ async function sendResult(phone: string, leadId: string, result: LocatorResult, 
     if (store) {
         const { support_phone } = await getLocatorSettings();
         return reply(phone, 'Text', text(storeDetailsText({
-            store_name: store.store_name, address: store.address, city: store.city, pincode: store.pincode, phone: store.phone,
+            store_name: store.store_name, address: store.address, city: store.city, pincode: store.pincode, phone: store.phone, rating: store.rating,
         }, support_phone, true)), leadId);
     }
     const dist = page === 1 ? onlyDistributor(result) : null;
@@ -355,6 +356,7 @@ export async function handleLocatorReply(senderPhone: string, tap: LocatorReply)
             city: store.city,
             pincode: store.pincode,
             phone: store.phone_number,
+            rating: (await ratingsFor([String(store.id)])).get(String(store.id)) ?? null,
         }, settings.support_phone)), lead.id);
 
         await recordStorePick(lead, store.id, store.phone_number, store.store_name, settings.whatsapp_live, false);
@@ -553,6 +555,7 @@ export async function resendAnswer(senderPhone: string, product: string | null =
         if (s) {
             await reply(senderPhone, 'Text', text(storeDetailsText({
                 store_name: s.store_name, address: s.address, city: s.city, pincode: s.pincode, phone: s.phone_number,
+                rating: (await ratingsFor([String(lead.store_id)])).get(String(lead.store_id)) ?? null,
             }, settings.support_phone)), lead.id);
             console.log(`[Locator] ${phoneKey(senderPhone)} wrote again — resent their store, lead ${lead.id}`);
             return true;

@@ -1,5 +1,6 @@
 ﻿import { withEmailBrand } from '../services/emailBrand.js';
-import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
+import { brandOfEmail, brandOfStore, brandOfUser, brandOfWarranty } from '../services/storeBrand.js';
+import { getRatingDisplay, saveRatingDisplay } from '../services/storeRatings.service.js';
 import { Request, Response } from 'express';
 import db, { getISTTimestamp } from '../config/database.js';
 import { EmailService } from '../services/email.service.js';
@@ -805,6 +806,23 @@ export class AdminController {
     }
 
     /** Flip one or more message-type toggles. Takes effect within ~30s. */
+    /** Where ratings show (WhatsApp, website) and from how many ratings an average shows. */
+    static async getRatingDisplaySettings(_req: Request, res: Response) {
+        res.json({ success: true, settings: await getRatingDisplay() });
+    }
+
+    static async updateRatingDisplaySettings(req: Request, res: Response) {
+        try {
+            const admin = (req as any).user;
+            const b = req.body || {};
+            const saved = await saveRatingDisplay({ whatsapp: b.whatsapp, website: b.website, min_count: b.min_count }, admin?.email || 'admin');
+            res.json({ success: true, settings: saved });
+        } catch (error: any) {
+            console.error('[Ratings] display settings:', error);
+            res.status(500).json({ error: 'Could not save' });
+        }
+    }
+
     static async updateNotificationSettings(req: Request, res: Response) {
         try {
             const { updates } = req.body || {};

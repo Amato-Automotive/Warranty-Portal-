@@ -11,6 +11,7 @@ import {
     Loader2, MessageSquare, RefreshCw, AlertTriangle, CheckCircle2, PowerOff, ChevronDown, CalendarRange, X
 } from "lucide-react";
 import { WarrantyReminderSchedule } from "./WarrantyReminderPanel";
+import { Input } from "@/components/ui/input";
 
 interface NotificationWindow {
     startDate: string | null;
@@ -47,6 +48,46 @@ interface NotificationTypeRow {
  */
 const REMINDER_KEYS = ['warranty_reject_reminder_customer', 'warranty_reject_reminder_store'];
 const REMINDER_SECTION = 'rejection-reminders';
+
+/** Where a store's rating shows, each on or off, and from how many ratings an average shows. */
+function RatingDisplay() {
+    const { toast } = useToast();
+    const [d, setD] = useState<{ whatsapp: boolean; website: boolean; min_count: number } | null>(null);
+    const [min, setMin] = useState("5");
+    useEffect(() => {
+        api.get("/admin/rating-display").then(r => { setD(r.data.settings); setMin(String(r.data.settings.min_count)); }).catch(() => undefined);
+    }, []);
+    const save = async (patch: Partial<{ whatsapp: boolean; website: boolean; min_count: number }>) => {
+        try {
+            const r = await api.put("/admin/rating-display", patch);
+            setD(r.data.settings); setMin(String(r.data.settings.min_count));
+            toast({ title: "Saved", description: "Takes effect within a minute." });
+        } catch (e: any) {
+            toast({ title: "Could not save", description: getErrorMessage(e, "Try again"), variant: "destructive" });
+        }
+    };
+    if (!d) return null;
+    const row = (label: string, note: string, on: boolean, key: "whatsapp" | "website") => (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+            <div className="min-w-0"><p className="text-sm font-semibold text-slate-800">{label}</p><p className="text-xs text-slate-500">{note}</p></div>
+            <Switch checked={on} onCheckedChange={v => save({ [key]: v })} aria-label={label} />
+        </div>
+    );
+    return (
+        <div className="space-y-2">
+            {row("Show the rating in WhatsApp", "On the store list and on the store details a customer receives. The average only, no count.", d.whatsapp, "whatsapp")}
+            {row("Send the rating to the website", "The website's store list gets rating_avg. Off sends none.", d.website, "website")}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                <div className="min-w-0"><p className="text-sm font-semibold text-slate-800">Show the average from</p><p className="text-xs text-slate-500">Below this many ratings, no average shows.</p></div>
+                <div className="flex items-center gap-2">
+                    <Input type="number" min={1} max={100} value={min} onChange={e => setMin(e.target.value)} className="h-9 w-20 text-right" aria-label="Show the average from this many ratings" />
+                    <span className="text-sm text-slate-600">ratings</span>
+                    <Button size="sm" className="h-9 bg-orange-600 hover:bg-orange-700" disabled={Number(min) === d.min_count || !(Number(min) >= 1)} onClick={() => save({ min_count: Number(min) })}>Save</Button>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 export const AdminNotificationSettings = () => {
     const { toast } = useToast();
@@ -348,7 +389,8 @@ export const AdminNotificationSettings = () => {
     }
 
     const reminderRows = types.filter(t => REMINDER_KEYS.includes(t.key));
-    const otherTypes = types.filter(t => !REMINDER_KEYS.includes(t.key));
+    const ratingRows = types.filter(t => t.group === "Ratings");
+    const otherTypes = types.filter(t => !REMINDER_KEYS.includes(t.key) && t.group !== "Ratings");
     const groups = Array.from(new Set(otherTypes.map(t => t.group)));
 
     return (
@@ -393,6 +435,14 @@ export const AdminNotificationSettings = () => {
                 "Chases warranties head office rejected that nobody has corrected.",
                 <WarrantyReminderSchedule refreshKey={settingsVersion} onEnabledChange={setReminderRunning} />,
                 reminderRunning ? undefined : "Schedule paused"
+            )}
+
+            {ratingRows.length > 0 && section(
+                "ratings",
+                "Store Ratings",
+                ratingRows,
+                "The rating message, and where a store's rating shows.",
+                <RatingDisplay />
             )}
 
             {groups.map(group => section(

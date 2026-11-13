@@ -86,6 +86,8 @@ export interface ListStore {
     store_name: string;
     city: string | null;
     distance_label: string;
+    /** The store's average rating, already cleared for showing; null when it should not be shown. */
+    rating?: number | null;
 }
 
 export interface ListContact {
@@ -192,7 +194,7 @@ const LIST_BODY_MORE = 'More Autoform stores near you 📍';
 function nearbyList(
     leadId: string,
     kind: 'store' | 'distributor',
-    items: { id: string | null; name: string; city?: string | null }[],
+    items: { id: string | null; name: string; city?: string | null; rating?: number | null }[],
     page: number,
 ): InteractiveList | null {
     const { rows } = paginate(
@@ -200,7 +202,7 @@ function nearbyList(
         item => ({
             id: rowId(leadId, kind, String(item.id)),
             title: item.name,
-            description: titleCase(item.city) || undefined,
+            description: [titleCase(item.city), ratingText(item.rating)].filter(Boolean).join(' · ') || undefined,
         }),
         next => ({ id: rowId(leadId, 'more', next), title: 'More stores', description: 'See more stores near you' }),
     );
@@ -210,7 +212,7 @@ function nearbyList(
 
 /** The stores near the customer, in the locator's order: their city first, then A to Z. */
 export function storeList(leadId: string, stores: ListStore[], page = 1): InteractiveList | null {
-    return nearbyList(leadId, 'store', stores.map(s => ({ id: s.id, name: s.store_name, city: s.city })), page);
+    return nearbyList(leadId, 'store', stores.map(s => ({ id: s.id, name: s.store_name, city: s.city, rating: s.rating })), page);
 }
 
 /** The state's distributors, when no store is close enough — shown as stores. */
@@ -226,6 +228,8 @@ export interface StoreDetails {
     city: string | null;
     pincode: string | null;
     phone: string | null;
+    /** The store's average rating, already cleared for showing; null when it should not be shown. */
+    rating?: number | null;
 }
 
 /** One address line, without repeating a city or pincode the address already ends in. */
@@ -236,9 +240,15 @@ function addressLine(address: string | null, city: string | null, pincode: strin
         .join(', ');
 }
 
-function card(name: string, address: string, phone: string | null): string {
+/** "★ 4.6" for a rating worth showing, nothing otherwise. No count: it is the average alone. */
+export function ratingText(rating: number | null | undefined): string {
+    return typeof rating === 'number' && Number.isFinite(rating) && rating > 0 ? `★ ${rating.toFixed(1)}` : '';
+}
+
+function card(name: string, address: string, phone: string | null, rating?: number | null): string {
     return [
         `🏪 *${name.trim()}*`,
+        ratingText(rating) ? `⭐ ${ratingText(rating).slice(2)}` : null,
         address ? `📍 ${address}` : null,
         phone ? `📞 ${formatPhone(phone)}` : null,
     ].filter(Boolean).join('\n');
@@ -264,7 +274,7 @@ export function storeDetailsText(s: StoreDetails, helpline?: string | null, only
         '',
         only ? 'Here is the Autoform store nearest to you:' : "Here are your store's details:",
         '',
-        card(s.store_name, addressLine(s.address, s.city, s.pincode), s.phone),
+        card(s.store_name, addressLine(s.address, s.city, s.pincode), s.phone, s.rating),
         '',
         HELP_LINE,
         ...helplineLines(helpline),

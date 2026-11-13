@@ -25,6 +25,7 @@ import {
     QrCode,
     ShieldCheck,
     ShoppingCart,
+    Star,
     Store,
     UserCog,
     Users,
@@ -54,6 +55,7 @@ export type AdminModule =
     | 'posm'
     | 'claims'
     | 'feedback'
+    | 'store-ratings'
     | 'franchise-forms'
     | 'schemes'
     | 'uid-management'
@@ -89,6 +91,7 @@ const moduleToPermKey: Record<string, string> = {
     'posm': 'posm',
     'claims': 'claims',
     'feedback': 'feedback',
+    'store-ratings': 'feedback',
     'franchise-forms': 'feedback',
     'schemes': 'schemes',
     'ecatalogue': 'ecatalogue',
@@ -158,6 +161,7 @@ export const ADMIN_MENU_GROUPS: { label: string; items: AdminMenuItem[] }[] = [
             { id: 'posm', label: "POSM Requests", icon: Flag, keywords: ['posm requirements', 'marketing material', 'branding'] },
             { id: 'schemes', label: "Offers & Schemes", icon: Gift, keywords: ['schemes', 'offers', 'incentives', 'leaderboard', 'contest', 'rewards'] },
             { id: 'feedback', label: "Review & Feedback", icon: MessageSquareHeart, keywords: ['feedback', 'review', 'survey', 'monthly questions', 'rating'] },
+            { id: 'store-ratings', label: "Store Ratings", icon: Star, keywords: ['rating', 'ratings', 'stars', 'store experience', 'customer rating', 'review'] },
             { id: 'franchise-forms', label: "Franchise Forms", icon: FileText, keywords: ['forms', 'questionnaire', 'targeted survey', 'franchise form'] },
             { id: 'grievances', label: "Complaints", icon: MessageSquareWarning, keywords: ['complaints', 'tickets'] },
             { id: 'asm-management', label: "ASM Management", icon: BriefcaseBusiness, keywords: ['asm', 'area sales manager', 'sales team'] },

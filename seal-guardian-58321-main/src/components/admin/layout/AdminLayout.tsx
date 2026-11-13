@@ -32,6 +32,7 @@ const AdminWarrantyForm = lazy(() => import("../modules/AdminWarrantyForm").then
 const AdminAnnouncements = lazy(() => import("../modules/AdminAnnouncements").then(({ AdminAnnouncements }) => ({ default: AdminAnnouncements })));
 const AdminNotificationSettings = lazy(() => import("../modules/AdminNotificationSettings").then(({ AdminNotificationSettings }) => ({ default: AdminNotificationSettings })));
 const AdminFranchiseDistributorMap = lazy(() => import("../modules/AdminFranchiseDistributorMap").then(({ AdminFranchiseDistributorMap }) => ({ default: AdminFranchiseDistributorMap })));
+const AdminStoreRatings = lazy(() => import("../modules/AdminStoreRatings").then(({ AdminStoreRatings }) => ({ default: AdminStoreRatings })));
 const AdminFeedback = lazy(() => import("../modules/AdminFeedback").then(({ AdminFeedback }) => ({ default: AdminFeedback })));
 const AdminFranchiseForms = lazy(() => import("../modules/AdminFranchiseForms"));
 const AdminAudits = lazy(() => import("../modules/AdminAudits").then(({ AdminAudits }) => ({ default: AdminAudits })));
@@ -121,6 +122,8 @@ export const AdminLayout = () => {
                 return <AdminClaims />;
             case 'feedback':
                 return <AdminFeedback />;
+            case 'store-ratings':
+                return <AdminStoreRatings />;
             case 'franchise-forms':
                 return <AdminFranchiseForms />;
             case 'schemes':

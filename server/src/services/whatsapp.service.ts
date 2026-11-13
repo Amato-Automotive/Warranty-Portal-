@@ -529,6 +529,17 @@ export class WhatsAppService {
      *   {{6}} = Purchase Date
      *   {{7}} = Warranty Type
      */
+    /**
+     * Ask a customer to rate their store, a day after their warranty was approved.
+     * Template: store_experience_rating (the stars are its buttons)
+     *   {{1}} Customer name    {{2}} Store name
+     * The request id rides in the callback data, so the button they tap comes
+     * back on the webhook tied to this request.
+     */
+    static async sendStoreExperienceRating(phone: string, customerName: string, storeName: string, requestId: string): Promise<boolean> {
+        return this.sendTemplateMessage(phone, 'store_experience_rating', [customerName, storeName], 'store_experience_rating', requestId);
+    }
+
     static async sendWarrantyApprovedCustomer(
         phone: string,
         customerName: string,

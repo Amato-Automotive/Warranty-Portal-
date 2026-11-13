@@ -9,7 +9,8 @@ import { handleLocatorReply, handlePincodeMessage, handleChooseStoreTap } from '
 import { handleConversationMessage, startFromMessage } from '../services/locatorConversation.service.js';
 import { startWord } from '../services/locatorConversation.js';
 import { replyFromWebhook } from '../services/storeLocatorMessages.js';
-import { assignLeadChatFromWebhook } from '../services/leadChatAssignment.js';
+import { assignLeadChatFromWebhook } from '../services/leadChatAssignment.js';
+import { recordRatingTap } from '../services/storeRatingRequest.service.js';
 
 export class WebhookController {
 
@@ -264,6 +265,16 @@ export class WebhookController {
             const fullVendorPhone = `${countryCode}${vendorPhone}`;
 
             console.log(`[Webhook] Button: "${buttonText}" | callbackData: "${callbackData}" | vendor: ${fullVendorPhone}`);
+
+            // A star tapped on store_experience_rating: one rating, tied to the warranty it was asked for.
+            if (callbackData.startsWith('store_experience_rating_')) {
+                try {
+                    await recordRatingTap(callbackData, buttonText);
+                } catch (err: any) {
+                    console.error('[Webhook] Rating tap handling failed:', err?.message);
+                }
+                return;
+            }
 
             // "View stores" on af_choose_store_sheet: the customer's store list.
             if (callbackData.startsWith('choose_store_')) {

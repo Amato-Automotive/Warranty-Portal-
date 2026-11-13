@@ -14,6 +14,7 @@ import {
     supportText,
     pageCount,
     formatPhone,
+    ratingText,
     type ListStore,
     type InteractiveList,
 } from '../storeLocatorMessages.js';
@@ -225,5 +226,26 @@ describe('text replies', () => {
     test('fit cuts on a word where it can', () => {
         assert.equal(fit('Shree Ganesh Car Accessories', 24), 'Shree Ganesh Car…');
         assert.equal(fit('short', 24), 'short');
+    });
+});
+
+describe('ratings', () => {
+    test('a row shows the average after the city, never a count', () => {
+        const msg = storeList(LEAD, [{ ...store(1), rating: 4.6 }, store(2)])!;
+        const rows = msg.message.action.sections[0].rows;
+        assert.equal(rows[0].description, 'Palanpur · ★ 4.6');
+        assert.equal(rows[1].description, 'Palanpur');
+        assertWithinLimits(msg);
+    });
+    test('the details card carries the average on its own line', () => {
+        const t = storeDetailsText({ store_name: 'Sharma Car Decor', address: 'Karol Bagh', city: 'Delhi', pincode: '110005', phone: '9811111111', rating: 4.6 });
+        assert.match(t, /🏪 \*Sharma Car Decor\*\n⭐ 4\.6\n/);
+        assert.doesNotMatch(storeDetailsText({ store_name: 'X', address: null, city: null, pincode: null, phone: null }), /⭐/);
+    });
+    test('ratingText shows one decimal, and nothing for no rating', () => {
+        assert.equal(ratingText(4), '★ 4.0');
+        assert.equal(ratingText(null), '');
+        assert.equal(ratingText(0), '');
+        assert.equal(ratingText(undefined), '');
     });
 });
