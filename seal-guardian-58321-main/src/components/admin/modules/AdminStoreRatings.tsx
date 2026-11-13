@@ -36,7 +36,9 @@ interface Detail {
     list: { day: string; stars: number; customer: string; phone: string; product: string | null; warranty_uid: string | null }[];
 }
 
-const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "–" : n.toFixed(1));
+/** One decimal, rounded once; 5.0 only when every rating is a 5, as customers see it. */
+const oneDecimal = (n: number) => { const r = Math.round(Math.min(5, n) * 10) / 10; return r >= 5 && n < 5 ? 4.9 : r; };
+const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "–" : oneDecimal(n).toFixed(1));
 const monthName = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-IN", { month: "short", timeZone: "UTC" });
 const dayName = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 

@@ -815,7 +815,7 @@ export class AdminController {
         try {
             const admin = (req as any).user;
             const b = req.body || {};
-            const saved = await saveRatingDisplay({ whatsapp: b.whatsapp, website: b.website, min_count: b.min_count }, admin?.email || 'admin');
+            const saved = await saveRatingDisplay({ whatsapp: b.whatsapp, website: b.website, customers: b.customers, franchises: b.franchises, min_count: b.min_count }, admin?.email || 'admin');
             res.json({ success: true, settings: saved });
         } catch (error: any) {
             console.error('[Ratings] display settings:', error);

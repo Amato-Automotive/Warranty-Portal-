@@ -54,6 +54,7 @@ const ConnectStorePage = () => {
                 const storeBrand = storeResponse.data?.store?.brand ?? 'AF';
                 setBrand(storeBrand);
                 layout?.setBrand(storeBrand);
+                layout?.setStoreId(storeResponse.data?.store?.vendor_details_id ?? null);
                 const [productsResponse] = await Promise.all([products, new Promise(resolve => setTimeout(resolve, 1000))]) as [any, unknown];
 
                 // Handle Store Details

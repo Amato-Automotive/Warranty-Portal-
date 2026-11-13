@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Outlet, Link, useOutletContext } from "react-router-dom";
 import { brandLook } from "@/lib/brand";
+import { CustomerStoreRating } from "@/components/ratings/StoreRatingChips";
 
 /** The brand of the store whose QR was scanned, for the header; kept for the thank-you page. */
 const KEY = "qr_store_brand";
 const remembered = () => { try { return sessionStorage.getItem(KEY); } catch { return null; } };
-export interface PublicBrand { setBrand: (b: string | null) => void }
+export interface PublicBrand { setBrand: (b: string | null) => void; setStoreId: (id: string | number | null) => void }
 export const usePublicBrand = () => useOutletContext<PublicBrand | undefined>();
 
 /**
@@ -17,12 +18,14 @@ const PublicLayout = () => {
     // Unknown until the store is looked up: no logo rather than the wrong one.
     const [brand, setBrandState] = useState<string | null>(remembered);
     const setBrand = (b: string | null) => { setBrandState(b); try { if (b) sessionStorage.setItem(KEY, b); } catch { /* private mode */ } };
+    // The store whose page is open, so its rating can sit in the top bar.
+    const [storeId, setStoreId] = useState<string | number | null>(null);
     const look = brand ? brandLook(brand) : null;
     return (
         <div className="min-h-screen bg-gradient-to-b from-orange-50/30 to-white">
             {/* Minimal Header - Logo Only */}
             <header className="sticky top-0 z-50 w-full border-b border-orange-100 bg-white/80 backdrop-blur-lg">
-                <nav className="container mx-auto flex h-16 items-center justify-center px-4">
+                <nav className="container relative mx-auto flex h-16 items-center justify-center px-4">
                     <Link to="/" className="flex h-12 items-center">
                         {look && (
                             <img
@@ -32,12 +35,13 @@ const PublicLayout = () => {
                             />
                         )}
                     </Link>
+                    {storeId && <div className="absolute right-4 top-1/2 -translate-y-1/2"><CustomerStoreRating storeId={storeId} /></div>}
                 </nav>
             </header>
 
             {/* Main Content - Full Width, Centered */}
             <main className="container mx-auto px-4 py-8">
-                <Outlet context={{ setBrand } satisfies PublicBrand} />
+                <Outlet context={{ setBrand, setStoreId } satisfies PublicBrand} />
             </main>
 
             {/* Simple Footer */}

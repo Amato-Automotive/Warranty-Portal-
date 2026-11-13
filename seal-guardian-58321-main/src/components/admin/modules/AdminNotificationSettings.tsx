@@ -52,12 +52,12 @@ const REMINDER_SECTION = 'rejection-reminders';
 /** Where a store's rating shows, each on or off, and from how many ratings an average shows. */
 function RatingDisplay() {
     const { toast } = useToast();
-    const [d, setD] = useState<{ whatsapp: boolean; website: boolean; min_count: number } | null>(null);
-    const [min, setMin] = useState("5");
+    const [d, setD] = useState<{ whatsapp: boolean; website: boolean; customers: boolean; franchises: boolean; min_count: number } | null>(null);
+    const [min, setMin] = useState("1");
     useEffect(() => {
         api.get("/admin/rating-display").then(r => { setD(r.data.settings); setMin(String(r.data.settings.min_count)); }).catch(() => undefined);
     }, []);
-    const save = async (patch: Partial<{ whatsapp: boolean; website: boolean; min_count: number }>) => {
+    const save = async (patch: Partial<{ whatsapp: boolean; website: boolean; customers: boolean; franchises: boolean; min_count: number }>) => {
         try {
             const r = await api.put("/admin/rating-display", patch);
             setD(r.data.settings); setMin(String(r.data.settings.min_count));
@@ -67,7 +67,7 @@ function RatingDisplay() {
         }
     };
     if (!d) return null;
-    const row = (label: string, note: string, on: boolean, key: "whatsapp" | "website") => (
+    const row = (label: string, note: string, on: boolean, key: "whatsapp" | "website" | "customers" | "franchises") => (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
             <div className="min-w-0"><p className="text-sm font-semibold text-slate-800">{label}</p><p className="text-xs text-slate-500">{note}</p></div>
             <Switch checked={on} onCheckedChange={v => save({ [key]: v })} aria-label={label} />
@@ -76,6 +76,8 @@ function RatingDisplay() {
     return (
         <div className="space-y-2">
             {row("Show the rating in WhatsApp", "On the store list and on the store details a customer receives. The average only, no count.", d.whatsapp, "whatsapp")}
+            {row("Show the rating to customers", "In the top right of the customer page after they scan a store's QR code.", d.customers, "customers")}
+            {row("Show the rating to franchises", "Beside the profile icon, for their own store, with a period to pick.", d.franchises, "franchises")}
             {row("Send the rating to the website", "The website's store list gets rating_avg. Off sends none.", d.website, "website")}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
                 <div className="min-w-0"><p className="text-sm font-semibold text-slate-800">Show the average from</p><p className="text-xs text-slate-500">Below this many ratings, no average shows.</p></div>

@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import db from '../config/database.js';
+import { getRatingDisplay } from '../services/storeRatings.service.js';
+import { showableRating } from '../services/storeRatingRules.js';
 import { ratingMinCount } from '../services/storeRatings.service.js';
-import { buildOverview, buildStoreDetail, resolvePeriod, type AverageBand, type RatingRow, type StoreInfo } from '../services/ratingStats.js';
+import { average, split, buildOverview, buildStoreDetail, resolvePeriod, type AverageBand, type RatingRow, type StoreInfo } from '../services/ratingStats.js';
 
 /**
  * The admin's store ratings: the network overview and one store. Reads the
@@ -38,7 +40,51 @@ async function ratingsOf(storeIds: string[], product: string): Promise<RatingRow
     return rows.map((r: any) => ({ ...r, store_id: String(r.store_id), stars: Number(r.stars) }));
 }
 
+/** The average shows only from the minimum number of ratings; below it, only the count does. */
+const shownAverage = (avg: number | null, count: number, min: number) => (avg === null ? null : showableRating(avg, count, min));
+
 export class StoreRatingsController {
+    /** A store's average for the customer on its QR page: the number alone. Nothing when the switch is off or the store has too few ratings. */
+    static async forCustomer(req: Request, res: Response) {
+        try {
+            const display = await getRatingDisplay();
+            if (!display.customers) return res.json({ success: true, show: false, average: null });
+            const [rows]: any = await db.execute('SELECT stars FROM store_ratings WHERE store_id = ?', [req.params.vendorDetailsId]);
+            const stars = rows.map((r: any) => ({ stars: Number(r.stars) }));
+            const avg = shownAverage(average(stars), stars.length, display.min_count);
+            res.json({ success: true, show: avg !== null, average: avg });
+        } catch (error: any) {
+            console.error('[StoreRatings] customer:', error);
+            res.status(500).json({ error: 'Could not load the rating' });
+        }
+    }
+
+    /** The signed-in franchise's own rating: overall, and for a period it picks. */
+    static async mine(req: Request, res: Response) {
+        try {
+            const display = await getRatingDisplay();
+            if (!display.franchises) return res.json({ success: true, show: false });
+            const [[s]]: any = await db.execute('SELECT id FROM vendor_details WHERE user_id = ? LIMIT 1', [(req as any).user?.id]);
+            if (!s) return res.json({ success: true, show: false });
+            const today = istToday();
+            const period = resolvePeriod(req.query.period ?? 'overall', req.query.from, req.query.to, today);
+            const [rows]: any = await db.execute(
+                "SELECT stars, DATE_FORMAT(created_at, '%Y-%m-%d') AS day FROM store_ratings WHERE store_id = ?", [s.id]);
+            const all = rows.map((r: any) => ({ stars: Number(r.stars), day: String(r.day) }));
+            const inPeriod = all.filter((r: any) => (!period.start || r.day >= period.start) && (!period.end || r.day <= period.end));
+            const first = all.length ? all.map((r: any) => r.day).sort()[0] : null;
+            res.json({
+                success: true, show: true, min_count: display.min_count,
+                overall: { count: all.length, average: shownAverage(average(all), all.length, display.min_count), since: first },
+                period: { key: period.key, label: period.label, from: period.start ?? first, to: period.end ?? today, count: inPeriod.length, average: shownAverage(average(inPeriod), inPeriod.length, display.min_count) },
+                split: split(inPeriod),
+            });
+        } catch (error: any) {
+            console.error('[StoreRatings] mine:', error);
+            res.status(500).json({ error: 'Could not load your rating' });
+        }
+    }
+
     static async overview(req: Request, res: Response) {
         try {
             const today = istToday();

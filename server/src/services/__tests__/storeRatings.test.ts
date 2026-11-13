@@ -19,3 +19,12 @@ test('the minimum is a whole number from 1 to 100, else 5', () => {
     assert.equal(cleanMinRatings(undefined), DEFAULT_MIN_RATINGS);
     assert.equal(cleanMinRatings('abc'), DEFAULT_MIN_RATINGS);
 });
+
+test('rounding happens once, and 5.0 means every rating is a 5', () => {
+    assert.equal(showableRating(4.449, 10, 1), 4.4);
+    assert.equal(showableRating(4.45, 10, 1), 4.5);
+    assert.equal(showableRating(4.96, 10, 1), 4.9);
+    assert.equal(showableRating(4.95, 10, 1), 4.9);
+    assert.equal(showableRating(5, 3, 1), 5);
+    assert.equal(showableRating(3.04, 10, 1), 3);
+});

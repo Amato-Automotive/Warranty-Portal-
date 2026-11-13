@@ -55,9 +55,10 @@ export function resolvePeriod(key: unknown, from: unknown, to: unknown, today: s
 
 const within = (day: string, a: string | null, b: string | null) => (a === null || day >= a) && (b === null || day <= b);
 const round1 = (n: number) => Math.round(n * 10) / 10;
-const round2 = (n: number) => Math.round(n * 100) / 100;
+/** Kept to four decimals: rounding to the one shown is done once, at the screen, not here. */
+const exact = (n: number) => Math.round(n * 10000) / 10000;
 export function average(rows: { stars: number }[]): number | null {
-    return rows.length ? round2(rows.reduce((t, r) => t + r.stars, 0) / rows.length) : null;
+    return rows.length ? exact(rows.reduce((t, r) => t + r.stars, 0) / rows.length) : null;
 }
 
 export function split(rows: { stars: number }[]): Record<1 | 2 | 3 | 4 | 5, number> {
@@ -147,9 +148,10 @@ export function buildOverview(
     };
 }
 
-const maskPhone = (p: string | null | undefined) => {
+/** The number as the team reads it: ten digits, without the country code. */
+const showPhone = (p: string | null | undefined) => {
     const d = String(p ?? '').replace(/\D/g, '');
-    return d.length >= 6 ? `${d.slice(0, 2)}••••${d.slice(-4)}` : '';
+    return d.length === 12 && d.startsWith('91') ? d.slice(2) : d;
 };
 
 export interface StoreDetail {
@@ -163,7 +165,7 @@ export interface StoreDetail {
     list: { day: string; stars: number; customer: string; phone: string; product: string | null; warranty_uid: string | null }[];
 }
 
-/** One store: its ratings against the network's, month by month, and every rating with the customer's number masked. */
+/** One store: its ratings against the network's, month by month, and every rating with the customer's number. */
 export function buildStoreDetail(store: StoreInfo, mine: RatingRow[], network: RatingRow[], period: Period, today: string): StoreDetail {
     const now = mine.filter(r => within(r.day, period.start, period.end));
     const before = period.prevStart ? mine.filter(r => within(r.day, period.prevStart, period.prevEnd)) : [];
@@ -178,7 +180,7 @@ export function buildStoreDetail(store: StoreInfo, mine: RatingRow[], network: R
         split: split(mine),
         by_month: months.map((month, i) => ({ month, store: own[i].average, network: net[i].average })),
         list: [...mine].sort((a, b) => b.day.localeCompare(a.day)).map(r => ({
-            day: r.day, stars: r.stars, customer: String(r.customer_name ?? '').trim() || 'Customer', phone: maskPhone(r.customer_phone),
+            day: r.day, stars: r.stars, customer: String(r.customer_name ?? '').trim() || 'Customer', phone: showPhone(r.customer_phone),
             product: r.product ?? null, warranty_uid: r.warranty_uid ?? null,
         })),
     };

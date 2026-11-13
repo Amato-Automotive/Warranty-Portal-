@@ -76,6 +76,8 @@ export async function recordRatingTap(callbackData: unknown, buttonLabel: unknow
     }
     const [[q]]: any = await db.execute('SELECT * FROM store_rating_requests WHERE id = ?', [requestId]);
     if (!q) return false;
+    /* Only the first tap counts: a customer who tries the other buttons afterwards changes nothing. */
+    if (q.status === 'rated') return false;
     const [r]: any = await db.execute(
         `INSERT IGNORE INTO store_ratings (id, store_id, warranty_uid, customer_name, customer_phone, stars, product) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [uuidv4(), q.store_id, q.warranty_uid, q.customer_name, q.customer_phone, stars, q.product]

@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { Router } from 'express';
+import { StoreRatingsController } from '../controllers/storeRatings.controller.js';
 import { VendorController } from '../controllers/vendor.controller.js';
 
 import { authenticateToken, requireRole } from '../middleware/auth.js';
@@ -12,6 +13,9 @@ router.get('/verify', signalAttention, VendorController.verifyVendor);
 // Warranty actions
 router.post('/warranty/:uid/approve', authenticateToken, requireRole(['vendor']), VendorController.approveWarranty);
 router.post('/warranty/:uid/reject', authenticateToken, requireRole(['vendor']), VendorController.rejectWarranty);
+
+// This store's own rating
+router.get('/rating', authenticateToken, requireRole(['vendor']), StoreRatingsController.mine);
 
 // Vendor profile route
 router.get('/profile', authenticateToken, requireRole(['vendor']), VendorController.getProfile);

@@ -71,7 +71,7 @@ describe('overview', () => {
 });
 
 describe('one store', () => {
-    test('shows its average against the network, masks the phone and lists newest first', () => {
+    test('shows its average against the network, the customer number and lists newest first', () => {
         const mine: RatingRow[] = [
             { ...r('b', 1, '2026-11-09'), customer_name: 'R. Verma', customer_phone: '9811221234', warranty_uid: 'W1' },
             { ...r('b', 5, '2026-11-02'), customer_name: ' ', customer_phone: '123' },
@@ -81,10 +81,11 @@ describe('one store', () => {
         assert.equal(d.average, 3);
         assert.equal(d.network_average, 4);
         assert.deepEqual(d.low, { count: 1, of: 2 });
-        assert.equal(d.list[0].phone, '98••••1234');
+        assert.equal(d.list[0].phone, '9811221234');
+        assert.equal(buildStoreDetail(st('b', 'Beta'), [{ ...r('b', 5, '2026-11-02'), customer_phone: '919811221234' }], [], resolvePeriod('30', null, null, TODAY), TODAY).list[0].phone, '9811221234');
         assert.equal(d.list[0].customer, 'R. Verma');
         assert.equal(d.list[1].customer, 'Customer');
-        assert.equal(d.list[1].phone, '');
+        assert.equal(d.list[1].phone, '123');
         const nov = d.by_month.find(m => m.month === '2026-11')!;
         assert.deepEqual([nov.store, nov.network], [3, 4]);
     });

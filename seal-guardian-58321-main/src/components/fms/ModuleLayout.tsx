@@ -7,6 +7,7 @@ import { useB2BCart } from "@/contexts/B2BCartContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { brandLook } from "@/lib/brand";
 import { useAuth } from "@/contexts/AuthContext";
+import { FranchiseRating } from "@/components/ratings/StoreRatingChips";
 
 interface ModuleLayoutProps {
     title: string;
@@ -85,6 +86,7 @@ export const ModuleLayout = ({ title, description, children, actions, onNavigate
                                     <div className="h-10 md:h-12 border-l border-slate-100 pl-2 md:pl-4 flex items-center gap-1 md:gap-2">
                                         {/* TODO: Re-enable notifications in Phase 2 */}
                                         {/* <NotificationPopover onNavigate={onNavigate} onLinkClick={onLinkClick} /> */}
+                                        {isFranchise && !roleLabel && <FranchiseRating />}
                                         <HelpPopover onNavigate={onNavigate} />
                                     </div>
                                 </div>

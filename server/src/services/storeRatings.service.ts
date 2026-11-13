@@ -9,22 +9,22 @@ export { cleanMinRatings, showableRating, DEFAULT_MIN_RATINGS };
  * `store_rating_summary` holds each store's average and how many ratings stand
  * behind it; whatever collects the ratings keeps it up to date. An average is
  * shown only from a set number of ratings (the admin's "show the average from"
- * setting, 5 unless changed): the average of one or two ratings misleads.
+ * setting, 1 unless changed, as Google does: the average shows from the first rating).
  * WhatsApp shows the average alone, never the count.
  */
 
 const SETTING_KEY = 'rating_display';
 
 /** Where a rating shows, each on or off, and from how many ratings an average shows. */
-export interface RatingDisplay { whatsapp: boolean; website: boolean; min_count: number }
-const DISPLAY_DEFAULTS: RatingDisplay = { whatsapp: true, website: true, min_count: DEFAULT_MIN_RATINGS };
+export interface RatingDisplay { whatsapp: boolean; website: boolean; customers: boolean; franchises: boolean; min_count: number }
+const DISPLAY_DEFAULTS: RatingDisplay = { whatsapp: true, website: true, customers: true, franchises: true, min_count: DEFAULT_MIN_RATINGS };
 
 export async function getRatingDisplay(): Promise<RatingDisplay> {
     try {
         const [rows]: any = await db.execute('SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1', [SETTING_KEY]);
         if (!rows.length) return { ...DISPLAY_DEFAULTS };
         const v = JSON.parse(rows[0].setting_value || '{}');
-        return { whatsapp: v.whatsapp !== false, website: v.website !== false, min_count: cleanMinRatings(v.min_count) };
+        return { whatsapp: v.whatsapp !== false, website: v.website !== false, customers: v.customers !== false, franchises: v.franchises !== false, min_count: cleanMinRatings(v.min_count) };
     } catch { return { ...DISPLAY_DEFAULTS }; }
 }
 
@@ -33,6 +33,8 @@ export async function saveRatingDisplay(changes: Partial<RatingDisplay>, updated
     const next: RatingDisplay = {
         whatsapp: changes.whatsapp === undefined ? current.whatsapp : Boolean(changes.whatsapp),
         website: changes.website === undefined ? current.website : Boolean(changes.website),
+        customers: changes.customers === undefined ? current.customers : Boolean(changes.customers),
+        franchises: changes.franchises === undefined ? current.franchises : Boolean(changes.franchises),
         min_count: changes.min_count === undefined ? current.min_count : cleanMinRatings(changes.min_count),
     };
     await db.execute(
@@ -47,7 +49,7 @@ export async function saveRatingDisplay(changes: Partial<RatingDisplay>, updated
 export async function refreshRatingSummary(storeId: string): Promise<void> {
     await db.execute(
         `INSERT INTO store_rating_summary (store_id, avg_rating, rating_count)
-         SELECT store_id, ROUND(AVG(stars), 2), COUNT(*) FROM store_ratings WHERE store_id = ? GROUP BY store_id
+         SELECT store_id, ROUND(AVG(stars), 4), COUNT(*) FROM store_ratings WHERE store_id = ? GROUP BY store_id
          ON DUPLICATE KEY UPDATE avg_rating = VALUES(avg_rating), rating_count = VALUES(rating_count)`,
         [storeId]
     );
