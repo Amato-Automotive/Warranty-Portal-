@@ -3756,6 +3756,13 @@ export class AdminController {
                 content_manager: { read: false, write: false },
                 old_warranties: { read: false, write: false },
                 activity_logs: { read: false, write: false },
+                portal_activity: { read: false, write: false },
+                manpower: { read: false, write: false },
+                whatsapp_settings: { read: false, write: false },
+                store_ratings: { read: false, write: false },
+                franchise_forms: { read: false, write: false },
+                ppf_rolls: { read: false, write: false },
+                sourcing_map: { read: false, write: false },
             };
             const resolvedPermissions = permissions || defaultPermissions;
 

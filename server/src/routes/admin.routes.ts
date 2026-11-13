@@ -44,7 +44,7 @@ router.get('/vendor-asm-options', ...adminAuth, requireAnyPermission(['vendors',
 router.get('/vendors/:id', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getVendorDetails);
 
 // Franchise & distributor activity: time in the portal and what they did.
-router.get('/activity', ...adminAuth, requirePermission('vendors', 'read'), async (req: Request, res: Response) => {
+router.get('/activity', ...adminAuth, requirePermission('portal_activity', 'read'), async (req: Request, res: Response) => {
     try {
         const [data, since] = await Promise.all([
             activityOverview({ days: req.query.days, from: req.query.from, to: req.query.to, role: String(req.query.role ?? 'all') }), trackingSince(),
@@ -55,7 +55,7 @@ router.get('/activity', ...adminAuth, requirePermission('vendors', 'read'), asyn
         res.status(500).json({ error: 'Could not load activity' });
     }
 });
-router.get('/activity/:vendorId', ...adminAuth, requirePermission('vendors', 'read'), async (req: Request, res: Response) => {
+router.get('/activity/:vendorId', ...adminAuth, requirePermission('portal_activity', 'read'), async (req: Request, res: Response) => {
     try {
         const [data, since] = await Promise.all([storeActivity(String(req.params.vendorId), { days: req.query.days, from: req.query.from, to: req.query.to }), trackingSince()]);
         if (!data) return res.status(404).json({ error: 'Store not found' });
@@ -76,19 +76,19 @@ router.put('/vendors/:id/distributor-status', ...adminAuth, requirePermission('v
 router.delete('/vendors/:id', ...adminAuth, requirePermission('vendors', 'write'), signalAttention, AdminController.deleteVendor);
 
 // Manpower
-router.get('/manpower', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getAllManpower);
-router.put('/manpower/:id/approval', ...adminAuth, requirePermission('vendors', 'write'), signalAttention, AdminController.updateManpowerApproval);
-router.put('/manpower/:id/removal-review', ...adminAuth, requirePermission('vendors', 'write'), signalAttention, AdminController.reviewManpowerRemoval);
-router.delete('/manpower/:id', ...adminAuth, requirePermission('vendors', 'write'), signalAttention, AdminController.deleteManpower);
+router.get('/manpower', ...adminAuth, requirePermission('manpower', 'read'), AdminController.getAllManpower);
+router.put('/manpower/:id/approval', ...adminAuth, requirePermission('manpower', 'write'), signalAttention, AdminController.updateManpowerApproval);
+router.put('/manpower/:id/removal-review', ...adminAuth, requirePermission('manpower', 'write'), signalAttention, AdminController.reviewManpowerRemoval);
+router.delete('/manpower/:id', ...adminAuth, requirePermission('manpower', 'write'), signalAttention, AdminController.deleteManpower);
 
 // WhatsApp notification toggles
-router.get('/notification-settings', ...adminAuth, requirePermission('announcements', 'read'), AdminController.getNotificationSettings);
-router.put('/notification-settings', ...adminAuth, requirePermission('announcements', 'write'), AdminController.updateNotificationSettings);
-router.get('/store-ratings', ...adminAuth, requirePermission('feedback', 'read'), StoreRatingsController.overview);
-router.get('/store-ratings/:storeId', ...adminAuth, requirePermission('feedback', 'read'), StoreRatingsController.store);
-router.get('/rating-display', ...adminAuth, requirePermission('announcements', 'read'), AdminController.getRatingDisplaySettings);
-router.put('/rating-display', ...adminAuth, requirePermission('announcements', 'write'), AdminController.updateRatingDisplaySettings);
-router.put('/notification-settings/:key/window', ...adminAuth, requirePermission('announcements', 'write'), AdminController.updateNotificationWindow);
+router.get('/notification-settings', ...adminAuth, requirePermission('whatsapp_settings', 'read'), AdminController.getNotificationSettings);
+router.put('/notification-settings', ...adminAuth, requirePermission('whatsapp_settings', 'write'), AdminController.updateNotificationSettings);
+router.get('/store-ratings', ...adminAuth, requirePermission('store_ratings', 'read'), StoreRatingsController.overview);
+router.get('/store-ratings/:storeId', ...adminAuth, requirePermission('store_ratings', 'read'), StoreRatingsController.store);
+router.get('/rating-display', ...adminAuth, requirePermission('whatsapp_settings', 'read'), AdminController.getRatingDisplaySettings);
+router.put('/rating-display', ...adminAuth, requirePermission('whatsapp_settings', 'write'), AdminController.updateRatingDisplaySettings);
+router.put('/notification-settings/:key/window', ...adminAuth, requirePermission('whatsapp_settings', 'write'), AdminController.updateNotificationWindow);
 
 // Warranty rejection reminders. Gated on 'warranties' write rather than
 // 'announcements': starting the catch-up messages customers about their own
@@ -101,24 +101,24 @@ router.post('/warranty-reminders/test', ...adminAuth, requirePermission('warrant
 router.post('/warranty-reminders/abort', ...adminAuth, requirePermission('warranties', 'write'), AdminController.abortWarrantyReminders);
 
 // Distributors
-router.get('/distributors', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'read'), AdminController.getAllDistributors);
+router.get('/distributors', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'read'), AdminController.getAllDistributors);
 router.post('/distributors', ...adminAuth, requirePermission('distributors', 'write'), AdminController.createDistributor);
-router.get('/distributors/:id/franchises', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'read'), AdminController.getDistributorFranchises);
-router.post('/distributors/:id/franchise-assignments', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'write'), AdminController.mapFranchiseToDistributor);
-router.delete('/distributors/:id/franchise-assignments/:vendorId', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'write'), AdminController.unmapFranchiseFromDistributor);
-router.get('/distributors/:id/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'read'), AdminController.getDistributorAllowedCategories);
-router.put('/distributors/:id/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'write'), AdminController.setDistributorAllowedCategories);
+router.get('/distributors/:id/franchises', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'read'), AdminController.getDistributorFranchises);
+router.post('/distributors/:id/franchise-assignments', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'write'), AdminController.mapFranchiseToDistributor);
+router.delete('/distributors/:id/franchise-assignments/:vendorId', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'write'), AdminController.unmapFranchiseFromDistributor);
+router.get('/distributors/:id/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'read'), AdminController.getDistributorAllowedCategories);
+router.put('/distributors/:id/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'write'), AdminController.setDistributorAllowedCategories);
 
 // Franchise sourcing
-router.get('/franchises/distributor-map', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'read'), AdminController.getFranchiseDistributorMap);
-router.get('/franchises/eligible', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'read'), AdminController.getEligibleFranchises);
+router.get('/franchises/distributor-map', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'read'), AdminController.getFranchiseDistributorMap);
+router.get('/franchises/eligible', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'read'), AdminController.getEligibleFranchises);
 router.get('/franchises/:vendorId/orders', ...adminAuth, requireAnyPermission(['vendors', 'order_management'], 'read'), AdminController.getFranchiseOrders);
 router.get('/franchises/:vendorId/announcements', ...adminAuth, requirePermission('announcements', 'read'), AdminController.getFranchiseAnnouncements);
 router.get('/franchises/:vendorId/distributors', ...adminAuth, requirePermission('distributors', 'read'), AdminController.getFranchiseDistributors);
-router.get('/franchises/:vendorId/distributors/:distributorId/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'read'), AdminController.getFranchiseDistributorCategories);
-router.put('/franchises/:vendorId/distributors/:distributorId/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'write'), AdminController.setFranchiseDistributorCategories);
-router.post('/distributors/:id/franchises', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'write'), AdminController.assignDistributorToFranchise);
-router.delete('/distributors/:id/franchises/:vendorId', ...adminAuth, requireAnyPermission(['distributors', 'order_management'], 'write'), AdminController.unassignDistributorFromFranchise);
+router.get('/franchises/:vendorId/distributors/:distributorId/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'read'), AdminController.getFranchiseDistributorCategories);
+router.put('/franchises/:vendorId/distributors/:distributorId/categories', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'write'), AdminController.setFranchiseDistributorCategories);
+router.post('/distributors/:id/franchises', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'write'), AdminController.assignDistributorToFranchise);
+router.delete('/distributors/:id/franchises/:vendorId', ...adminAuth, requireAnyPermission(['distributors', 'order_management', 'sourcing_map'], 'write'), AdminController.unassignDistributorFromFranchise);
 
 // Store audits (WhatsApp Flow responses)
 router.get('/audits', ...adminAuth, requirePermission('audits', 'read'), AdminController.getStoreAudits);
@@ -148,11 +148,11 @@ router.get('/warranties', ...adminAuth, requirePermission('warranties', 'read'),
 router.get('/warranties/resubmissions', ...adminAuth, requirePermission('warranties', 'read'), AdminController.getResubmissions);
 // Where a PPF roll's film went. Declared above /warranties/:id, which would
 // otherwise match "ppf-rolls" and look the roll up as a warranty id.
-router.get('/warranties/ppf-rolls', ...adminAuth, requirePermission('warranties', 'read'), AdminController.getPPFRolls);
-router.get('/warranties/ppf-rolls/:serial', ...adminAuth, requirePermission('warranties', 'read'), AdminController.getPPFRollDetail);
+router.get('/warranties/ppf-rolls', ...adminAuth, requirePermission('ppf_rolls', 'read'), AdminController.getPPFRolls);
+router.get('/warranties/ppf-rolls/:serial', ...adminAuth, requirePermission('ppf_rolls', 'read'), AdminController.getPPFRollDetail);
 // Issue serial numbers to a store ahead of the rolls being fitted.
-router.get('/warranties/ppf-serials/stores', ...adminAuth, requirePermission('warranties', 'read'), AdminController.getStoresForSerials);
-router.post('/warranties/ppf-serials/generate', ...adminAuth, requirePermission('warranties', 'write'), AdminController.generatePPFSerials);
+router.get('/warranties/ppf-serials/stores', ...adminAuth, requirePermission('ppf_rolls', 'read'), AdminController.getStoresForSerials);
+router.post('/warranties/ppf-serials/generate', ...adminAuth, requirePermission('ppf_rolls', 'write'), AdminController.generatePPFSerials);
 // The rolls one warranty drew on, for the reviewer approving it.
 router.get('/warranties/:uid/roll-context', ...adminAuth, requirePermission('warranties', 'read'), AdminController.getWarrantyRollContext);
 router.post('/warranties/resubmissions/:id/approve', ...adminAuth, requirePermission('warranties', 'write'), AdminController.approveResubmission);

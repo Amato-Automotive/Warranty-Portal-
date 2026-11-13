@@ -25,6 +25,7 @@ const PERMISSION_GROUPS: { label: string; modules: PermissionModule[] }[] = [
             { key: "warranty_products", label: "Warranty Products", description: "Manage warranty product list" },
             { key: "uid_management", label: "UID Management", description: "Product UID allocation & tracking" },
             { key: "warranty_form", label: "New Registration", description: "Manual warranty registration" },
+            { key: "ppf_rolls", label: "PPF Serials & Rolls", description: "PPF serial numbers issued to stores and roll usage" },
         ]
     },
     {
@@ -44,11 +45,14 @@ const PERMISSION_GROUPS: { label: string; modules: PermissionModule[] }[] = [
         label: "Network & Orders",
         modules: [
             { key: "vendors", label: "Franchises", description: "Franchise profiles & verification" },
+            { key: "portal_activity", label: "Portal Activity", description: "Franchise & distributor logins and time spent" },
+            { key: "manpower", label: "Manpower", description: "Store staff: approvals and removal requests" },
             { key: "audits", label: "Audit & Compliance", description: "Store audit rounds, responses & chase list" },
             { key: "leads", label: "Lead Management", description: "Customer enquiries, ASM area coverage & store locator" },
             { key: "asms", label: "ASM Management", description: "ASM accounts & logins, their leads and stores" },
             { key: "asm_expenses", label: "ASM Expenses", description: "Decide and pay ASM expense claims (HR)" },
             { key: "distributors", label: "Distributors", description: "Distributor network & franchise mapping" },
+            { key: "sourcing_map", label: "Sourcing Map", description: "Which distributor supplies which franchise" },
             { key: "order_management", label: "Order Management", description: "Order activity, allocation & fulfilment" },
             { key: "customers", label: "Customers", description: "Customer data & warranty history" },
             { key: "products", label: "Product Catalogue", description: "Product inventory management" },
@@ -62,6 +66,9 @@ const PERMISSION_GROUPS: { label: string; modules: PermissionModule[] }[] = [
             { key: "posm", label: "POSM Requirements", description: "Marketing material requests" },
             { key: "schemes", label: "Offers & Schemes", description: "Create schemes, review entries, payouts" },
             { key: "feedback", label: "Review & Feedback", description: "Monthly franchise questions, answers and reminder" },
+            { key: "store_ratings", label: "Store Ratings", description: "Customer ratings of stores and the rating display" },
+            { key: "franchise_forms", label: "Franchise Forms", description: "Targeted forms to franchises and their responses" },
+            { key: "whatsapp_settings", label: "WhatsApp Settings", description: "Which WhatsApp messages go out, and when" },
             { key: "ecatalogue", label: "E-Catalogue CMS", description: "Digital catalogue content" },
             { key: "terms", label: "Terms & Conditions", description: "Portal T&C management" },
             { key: "content_manager", label: "Form Content", description: "Warranty terms & disclaimer content" },

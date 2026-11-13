@@ -1,4 +1,5 @@
 import express from 'express';
+import { withScreenPermissions } from './services/adminScreenPermissions.js';
 import { createServer } from 'http';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -528,6 +529,17 @@ async function runMigrations() {
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     const [sfsOffer]: any = await pool.query("SHOW COLUMNS FROM scheme_free_sets LIKE 'offer'");
     if (!sfsOffer.length) await pool.query("ALTER TABLE scheme_free_sets ADD COLUMN offer VARCHAR(10) NOT NULL DEFAULT 'offer1', ADD COLUMN used JSON NULL");
+    /* Seven admin screens now have their own Admin Access switch; each admin keeps the access they had through the screen it shared. */
+    {
+      const [permRows]: any = await pool.query('SELECT admin_id, permissions FROM admin_permissions WHERE is_super_admin = 0');
+      for (const row of permRows) {
+        let current: any = row.permissions;
+        try { if (typeof current === 'string') current = JSON.parse(current); } catch { continue; }
+        if (!current || typeof current !== 'object') continue;
+        const { perms, changed } = withScreenPermissions(current);
+        if (changed) await pool.query('UPDATE admin_permissions SET permissions = ? WHERE admin_id = ?', [JSON.stringify(perms), row.admin_id]);
+      }
+    }
     /* Who sent an invoice when a distributor added it for one of its stores. */
     const [sbiBy]: any = await pool.query("SHOW COLUMNS FROM scheme_buy_invoices LIKE 'added_by_distributor_id'");
     if (!sbiBy.length) await pool.query('ALTER TABLE scheme_buy_invoices ADD COLUMN added_by_distributor_id CHAR(36) NULL');

@@ -4,8 +4,8 @@ import { authenticateToken, requirePermission, requireRole } from '../middleware
 import { feedbackUpload, attachPublicUrls } from '../config/localUpload.js';
 
 const router = Router();
-const read = [authenticateToken, requireRole('admin'), requirePermission('feedback', 'read')];
-const write = [authenticateToken, requireRole('admin'), requirePermission('feedback', 'write')];
+const read = [authenticateToken, requireRole('admin'), requirePermission('franchise_forms', 'read')];
+const write = [authenticateToken, requireRole('admin'), requirePermission('franchise_forms', 'write')];
 const upload = (req: Request, res: Response, next: NextFunction) => feedbackUpload.any()(req, res, (err: any) => { if (err) return res.status(400).json({ success: false, error: err.message || 'Upload failed' }); attachPublicUrls(req, res, next); });
 const banner = (req: Request, res: Response, next: NextFunction) => feedbackUpload.single('banner')(req, res, (err: any) => { if (err) return res.status(400).json({ success: false, error: err.message || 'Upload failed' }); attachPublicUrls(req, res, next); });
 
