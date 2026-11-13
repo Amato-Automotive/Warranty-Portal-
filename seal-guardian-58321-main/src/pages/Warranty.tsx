@@ -4,11 +4,15 @@ import Header from "@/components/Header";
 import { useAuth } from "@/contexts/AuthContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import SeatCoverForm from "@/components/warranty/SeatCoverForm";
+import { SelectedStoreContext } from "@/components/ratings/SelectedStoreContext";
+import { CustomerStoreRating } from "@/components/ratings/StoreRatingChips";
 import EVProductsForm from "@/components/warranty/EVProductsForm";
 import { NoBillNoWarrantyDialog } from "@/components/warranty/NoBillNoWarrantyDialog";
 
 const Warranty = () => {
   const { user, loading } = useAuth();
+  // The store picked in the form below, so its rating shows in the top right.
+  const [pickedStore, setPickedStore] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("seat-cover");
   const [billNoticeOpen, setBillNoticeOpen] = useState(true);
 
@@ -27,7 +31,9 @@ const Warranty = () => {
       <Header />
       <NoBillNoWarrantyDialog open={user.role === "customer" && billNoticeOpen} onClose={() => setBillNoticeOpen(false)} />
 
+      <SelectedStoreContext.Provider value={setPickedStore}>
       <main className="container mx-auto px-4 py-8">
+        <div className="flex h-9 justify-end">{pickedStore && <CustomerStoreRating storeId={pickedStore} />}</div>
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold mb-2">Product Warranty Registration</h1>
           <p className="text-muted-foreground">Select your product type to begin registration</p>
@@ -52,6 +58,7 @@ const Warranty = () => {
           </TabsContent>
         </Tabs>
       </main>
+      </SelectedStoreContext.Provider>
     </div>
   );
 };

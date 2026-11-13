@@ -9,6 +9,7 @@ import { EVFormData } from "../EVProductsForm";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import api from "@/lib/api";
+import { useReportSelectedStore } from "@/components/ratings/SelectedStoreContext";
 
 interface InstallerDetailsProps {
   formData: EVFormData;
@@ -63,6 +64,9 @@ const InstallerDetails = ({ formData, updateFormData, onNext, isPublic, isEditin
     };
     fetchStores();
   }, []);
+
+  // The picked store's rating shows in the page's top corner.
+  useReportSelectedStore(stores.find(s => s.store_email === formData.storeEmail)?.vendor_details_id);
 
   // Fetch manpower when store changes
   useEffect(() => {

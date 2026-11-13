@@ -23,6 +23,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { useReportSelectedStore } from "@/components/ratings/SelectedStoreContext";
 import { Upload, Loader2, HelpCircle, CheckCircle2, FileText, Building2, User, Car, Smartphone, Mail, Package, XCircle, AlertCircle, Armchair, Tag, ImageIcon, QrCode, Camera } from "lucide-react";
 import CameraCapture from "@/components/ui/CameraCapture";
 import { submitWarranty, updateWarranty } from "@/lib/warrantyApi";
@@ -421,6 +422,9 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
       fetchManpower();
     }
   }, [formData.storeEmail, stores, isPublic]);
+
+  // The picked store's rating shows in the page's top corner.
+  useReportSelectedStore(stores.find(s => s.store_email === formData.storeEmail)?.vendor_details_id);
 
   // The products of the store's brand: the QR page's store, the signed-in store, or the store a customer picks.
   const formBrand = brand ?? (user?.role === 'vendor' ? user.brand : stores.find(st => st.store_email === formData.storeEmail)?.brand);
