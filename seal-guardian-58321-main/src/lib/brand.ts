@@ -29,16 +29,17 @@ export const STORE_BRAND_FILTER: { value: '' | Brand; label: string }[] = [
 export const storeBrand = (b?: string | null): Brand => (b === 'AC' || b === 'AFAC' ? b : 'AF');
 
 /**
- * The warranty products a store's forms list: its own brand's, and those for
- * both; a store with both brands (or none known) lists every one. The product
- * a warranty already has always stays, so an old warranty can still be edited.
+ * The warranty products a store's forms list. An Autocruze store lists AC
+ * products and those for both brands; every other store — Autoform, both
+ * brands, or none known — lists every product, AF and AC (user's call,
+ * 18 Nov 2026). The product a warranty already has always stays, so an old
+ * warranty can still be edited.
  */
 export function productsForBrand<T extends { name: string; brand?: string | null }>(products: T[], brand?: string | null, keep?: string | null): T[] {
-    const b = String(brand ?? '').toUpperCase();
-    if (b !== 'AF' && b !== 'AC') return products;
+    if (String(brand ?? '').toUpperCase() !== 'AC') return products;
     return products.filter(p => {
         const pb = String(p.brand ?? 'AF').toUpperCase();
-        return pb === b || pb === 'AFAC' || (keep && p.name === keep);
+        return pb === 'AC' || pb === 'AFAC' || (keep && p.name === keep);
     });
 }
 
