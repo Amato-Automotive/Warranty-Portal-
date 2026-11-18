@@ -26,6 +26,7 @@ import { titleCase } from '../services/asmTerritory.js';
 import { normalizeAsmMobile, normalizeAsmEmail, syncAsmAccount, AsmAccountError } from '../services/asmAccount.service.js';
 import { invalidateSessionState } from '../middleware/auth.js';
 import { storesOfAsm } from '../services/asmStores.js';
+import { attachRepeats } from '../services/leadRepeat.service.js';
 
 /**
  * The verified franchises in a state, with the ones the customer's own words
@@ -1390,7 +1391,7 @@ export class AsmController {
         try {
             const {
                 status, stage, source, asm_id, product, delivery, review, dateFrom, dateTo, q, limit,
-                forwarded_to, store, ivr_call, state, vehicle, offset, export: forExport,
+                forwarded_to, store, ivr_call, state, vehicle, offset, export: forExport, repeat,
             } = req.query as Record<string, string>;
             /*
              * The date range and the plain column filters narrow in SQL.
@@ -1573,6 +1574,9 @@ export class AsmController {
 
             for (const row of rows) row.stage = leadStage(row);
 
+            /* The same customer (same phone) again: which time, since when, and what changed. */
+            await attachRepeats(rows);
+
             /*
              * Search across everything the row shows — pincode, district, ASM,
              * and the stores and distributors it went to — over every lead in
@@ -1609,7 +1613,13 @@ export class AsmController {
                 .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
             // Who has it, which store, and — for the IVR — whether anybody answered.
-            const passes = (r: any, withVehicle: boolean) => {
+            /* yes: a 2nd or later lead; a reason (campaign, changed, came-back, same) narrows to it —
+               campaign also takes a first lead that answered one; no: first leads only. */
+            const isRepeat = (r: any) => (r.repeat?.nth ?? 1) > 1;
+            const byRepeat = (r: any) => !repeat || (repeat === 'no' ? !isRepeat(r)
+                : repeat === 'yes' ? isRepeat(r) : r.repeat?.reason === repeat);
+            const passes = (r: any, withVehicle: boolean, withRepeat = true) => {
+                if (withRepeat && !byRepeat(r)) return false;
                 if (forwarded_to) {
                     const kinds = forwardKinds(r);
                     if (forwarded_to === 'none' ? kinds.length > 0 : !kinds.includes(forwarded_to)) return false;
@@ -1651,6 +1661,16 @@ export class AsmController {
                     const base = searched.filter((r: any) => passes(r, false) && byStage(r) && byProduct(r) && bySource(r));
                     const two = base.filter(isTwoWheeler).length;
                     return { '4w': base.length - two, '2w': two };
+                })(),
+                // The Repeated filter: every other filter, not its own.
+                repeat: (() => {
+                    const base = searched.filter((r: any) => passes(r, true, false) && byStage(r) && byProduct(r) && bySource(r));
+                    const out: Record<string, number> = { yes: 0, no: 0, campaign: 0, changed: 0, 'came-back': 0, same: 0 };
+                    for (const r of base) {
+                        if (isRepeat(r)) out.yes++; else out.no++;
+                        if (r.repeat) out[r.repeat.reason]++;
+                    }
+                    return out;
                 })(),
             };
             Object.assign(counts.stage, tally(stageBase, r => r.stage));

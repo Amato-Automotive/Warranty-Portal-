@@ -87,7 +87,58 @@ interface Lead {
     routing: LeadRouting | null;
     /* IVR leads only: the caller's calls, read by the server. */
     ivr: IvrSummary | null;
+    /* The same customer (same phone) again: null on their first lead. */
+    repeat: LeadRepeat | null;
 }
+
+type RepeatReason = "campaign" | "changed" | "came-back" | "same";
+type RepeatField = "product" | "vehicle" | "pincode" | "name" | "channel";
+interface LeadRepeat {
+    nth: number;
+    total: number;
+    first_at: string;
+    /* Null on a first lead that is tagged only because it answered a campaign. */
+    prev: {
+        id: string; created_at: string; source: string | null; product: string | null;
+        car_model: string | null; customer_name: string | null; pincode: string | null;
+    } | null;
+    gap_hours: number | null;
+    changed: { field: RepeatField; from: string | null; to: string | null }[];
+    campaign: { name: string; at: string; follow_up: boolean } | null;
+    reason: RepeatReason;
+}
+
+/* Why the same customer became a new lead, in words. */
+const REPEAT_REASON_LABEL: Record<RepeatReason, string> = {
+    campaign: "Replied to a campaign",
+    changed: "Something changed",
+    "came-back": "Came back, same details",
+    same: "Same details again",
+};
+const REPEAT_REASON_TONE: Record<RepeatReason, string> = {
+    campaign: "bg-violet-50 text-violet-700 border-violet-200",
+    changed: "bg-sky-50 text-sky-700 border-sky-200",
+    "came-back": "bg-amber-50 text-amber-700 border-amber-200",
+    same: "bg-rose-50 text-rose-700 border-rose-200",
+};
+const REPEAT_FIELD_LABEL: Record<RepeatField, string> = {
+    product: "Product", vehicle: "Vehicle", pincode: "Pincode", name: "Name", channel: "Channel",
+};
+const ordinal = (n: number) => {
+    const s = n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th";
+    return `${n}${s}`;
+};
+/* "45 min", "6 h", "12 days". */
+const formatGap = (hours: number | null) =>
+    hours === null ? "" : hours < 1 ? `${Math.max(1, Math.round(hours * 60))} min`
+        : hours < 48 ? `${Math.round(hours)} h`
+            : `${Math.round(hours / 24)} days`;
+/* "Product: Seat Covers → Mats; Channel: Instagram → WhatsApp". */
+const repeatChanges = (r: LeadRepeat, channelLabel: (s: string | null) => string) =>
+    r.changed.map(c => {
+        const v = (x: string | null) => (c.field === "channel" ? channelLabel(x) : x) || "—";
+        return `${REPEAT_FIELD_LABEL[c.field]}: ${v(c.from)} → ${v(c.to)}`;
+    }).join("; ");
 
 type Delivery = "sent" | "delivered" | "read" | "failed";
 
@@ -266,6 +317,8 @@ interface Counts {
     review_pending: number;
     /* Leads in the date range and search, by vehicle — for the Vehicle filter. */
     vehicle?: Record<string, number>;
+    /* yes / no / each reason — for the Repeated filter. */
+    repeat?: Record<string, number>;
 }
 
 /*
@@ -487,6 +540,8 @@ export const AdminLeadsList = () => {
     const [stateFilter, setStateFilter] = useState("all");
     /* 4-wheeler or 2-wheeler: 2-wheelers go to the Customer Executive. */
     const [vehicleFilter, setVehicleFilter] = useState("all");
+    /* Repeated leads: the same customer again, and why it became a new lead. */
+    const [repeatFilter, setRepeatFilter] = useState("all");
     const [stateOptions, setStateOptions] = useState<{ name: string; count: number }[]>([]);
     const [product, setProduct] = useState("all");
     const [delivery, setDelivery] = useState("all");
@@ -569,6 +624,7 @@ export const AdminLeadsList = () => {
             if (ivrCall !== "all") params.ivr_call = ivrCall;
             if (stateFilter !== "all") params.state = stateFilter;
             if (vehicleFilter !== "all") params.vehicle = vehicleFilter;
+            if (repeatFilter !== "all") params.repeat = repeatFilter;
             if (product !== "all") params.product = product;
             if (delivery !== "all") params.delivery = delivery;
             if (asmId !== "all") params.asm_id = asmId;
@@ -577,7 +633,7 @@ export const AdminLeadsList = () => {
             if (dateFrom) params.dateFrom = dateFrom;
             if (dateTo) params.dateTo = dateTo;
             return params;
-    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, vehicleFilter, product, delivery, asmId, channel, review, dateFrom, dateTo]);
+    }, [stage, searchQuery, forwardedTo, storeId, ivrCall, stateFilter, vehicleFilter, repeatFilter, product, delivery, asmId, channel, review, dateFrom, dateTo]);
 
     /* A new filter starts again from the first page. */
     useEffect(() => { setPage(1); }, [filterParams, pageSize]);
@@ -627,6 +683,7 @@ export const AdminLeadsList = () => {
         setSearch(""); setStage("all"); setProduct("all"); setChannel("all");
         setDelivery("all"); setAsmId("all"); setReview("all");
         setForwardedTo("all"); setStoreId("all"); setIvrCall("all"); setStateFilter("all"); setVehicleFilter("all");
+        setRepeatFilter("all");
         setDateFrom(""); setDateTo("");
     };
 
@@ -1007,6 +1064,12 @@ export const AdminLeadsList = () => {
             "Review reason": lead.review_reason || "",
             "Internal notes": lead.internal_notes || "",
             "Reviewed at": lead.reviewed_at ? formatWhen(lead.reviewed_at) : "",
+            Repeated: lead.repeat ? `${ordinal(lead.repeat.nth)} of ${lead.repeat.total}` : "",
+            "Repeat reason": lead.repeat ? REPEAT_REASON_LABEL[lead.repeat.reason] : "",
+            "Previous lead": lead.repeat?.prev ? `${formatWhen(lead.repeat.prev.created_at)} (${CHANNEL_LABEL[lead.repeat.prev.source ?? ""] || lead.repeat.prev.source || ""})` : "",
+            "Gap": lead.repeat ? formatGap(lead.repeat.gap_hours) : "",
+            "What changed": lead.repeat ? repeatChanges(lead.repeat, s => CHANNEL_LABEL[s ?? ""] || s || "") : "",
+            Campaign: lead.repeat?.campaign?.name ?? "",
         }));
 
         // The filters are in the filename, so a file found later still says
@@ -1035,7 +1098,7 @@ export const AdminLeadsList = () => {
     const anyFilter = Boolean(
         search.trim() || stage !== "all" || product !== "all" ||
         forwardedTo !== "all" || storeId !== "all" || ivrCall !== "all" || stateFilter !== "all" || vehicleFilter !== "all" ||
-        delivery !== "all" || asmId !== "all" || channel !== "all" ||
+        repeatFilter !== "all" || delivery !== "all" || asmId !== "all" || channel !== "all" ||
         review !== "all" || dateFrom || dateTo
     );
 
@@ -1055,6 +1118,9 @@ export const AdminLeadsList = () => {
         product !== "all" && chip("pr", product === "none" ? "Product not given" : product, () => setProduct("all")),
         ivrCall !== "all" && chip("ivr", IVR_CALL_LABEL[ivrCall] ?? ivrCall, () => setIvrCall("all")),
         vehicleFilter !== "all" && chip("veh", vehicleFilter === "2w" ? "2-Wheeler" : "4-Wheeler", () => setVehicleFilter("all")),
+        repeatFilter !== "all" && chip("rep",
+            repeatFilter === "yes" ? "Repeated" : repeatFilter === "no" ? "First lead only" : `Repeated: ${REPEAT_REASON_LABEL[repeatFilter as RepeatReason] ?? repeatFilter}`,
+            () => setRepeatFilter("all")),
         forwardedTo !== "all" && chip("fw", `Forwarded to: ${FORWARDED_TO_LABEL[forwardedTo] ?? forwardedTo}`, () => setForwardedTo("all")),
         storeId !== "all" && chip("store", `Store: ${storeOptions.find(s => s.id === storeId)?.name ?? "…"}`, () => setStoreId("all")),
         delivery !== "all" && chip("dl", `Alert: ${DELIVERY_FILTER_LABEL[delivery] ?? delivery}`, () => setDelivery("all")),
@@ -1092,6 +1158,16 @@ export const AdminLeadsList = () => {
                 ["all", "Any"],
                 ["4w", "4-Wheeler", counts?.vehicle?.["4w"]],
                 ["2w", "2-Wheeler", counts?.vehicle?.["2w"]],
+            ],
+        },
+        {
+            label: "Repeated", value: repeatFilter, set: setRepeatFilter,
+            options: [
+                ["all", "Any"],
+                ["yes", "Repeated", counts?.repeat?.yes],
+                ...(Object.keys(REPEAT_REASON_LABEL) as RepeatReason[])
+                    .map(k => [k, REPEAT_REASON_LABEL[k], counts?.repeat?.[k]] as [string, string, number?]),
+                ["no", "First lead only", counts?.repeat?.no],
             ],
         },
     ];
@@ -1503,6 +1579,27 @@ export const AdminLeadsList = () => {
                                             <span className="text-slate-600 text-xs">
                                                 {CHANNEL_LABEL[lead.source] || lead.source}
                                             </span>
+                                            {lead.repeat && (
+                                                <div
+                                                    className="mt-1"
+                                                    title={[
+                                                        `${ordinal(lead.repeat.nth)} lead of ${lead.repeat.total} from this number`,
+                                                        lead.repeat.prev && `Previous: ${formatWhen(lead.repeat.prev.created_at)} (${CHANNEL_LABEL[lead.repeat.prev.source ?? ""] || lead.repeat.prev.source || "—"}), ${formatGap(lead.repeat.gap_hours)} before`,
+                                                        REPEAT_REASON_LABEL[lead.repeat.reason],
+                                                        lead.repeat.campaign ? `Campaign: ${lead.repeat.campaign.name}` : "",
+                                                        repeatChanges(lead.repeat, s => CHANNEL_LABEL[s ?? ""] || s || ""),
+                                                    ].filter(Boolean).join("\n")}
+                                                >
+                                                    <Badge variant="outline" className={`text-[10px] font-bold whitespace-nowrap ${REPEAT_REASON_TONE[lead.repeat.reason]}`}>
+                                                        {lead.repeat.prev ? `Repeat · ${ordinal(lead.repeat.nth)}` : "Campaign reply"}
+                                                    </Badge>
+                                                    {lead.repeat.prev && (
+                                                        <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                                                            {formatGap(lead.repeat.gap_hours)} after last
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
                                         </td>
 
                                         {/* The IVR call: whether anyone picked up, how
@@ -1779,6 +1876,40 @@ export const AdminLeadsList = () => {
                     </DialogHeader>
 
                     <div className="space-y-4 py-1 min-w-0">
+                        {/* The same customer before: when, from where, and what made this a new lead. */}
+                        {editing?.repeat && (() => {
+                            const r = editing.repeat;
+                            const ch = (s: string | null) => CHANNEL_LABEL[s ?? ""] || s || "—";
+                            return (
+                                <div className={`rounded-lg border px-3 py-2 text-xs space-y-1 ${REPEAT_REASON_TONE[r.reason]}`}>
+                                    <div className="font-semibold">
+                                        {r.prev
+                                            ? <>Repeated lead: {ordinal(r.nth)} of {r.total} from this number · {REPEAT_REASON_LABEL[r.reason]}</>
+                                            : <>First lead from this number · {REPEAT_REASON_LABEL[r.reason]}</>}
+                                    </div>
+                                    {r.prev && (
+                                        <div>
+                                            Previous lead {formatWhen(r.prev.created_at)} ({ch(r.prev.source)}), {formatGap(r.gap_hours)} before this one.
+                                            {r.nth > 2 && <> First lead {formatWhen(r.first_at)}.</>}
+                                        </div>
+                                    )}
+                                    {r.campaign && (
+                                        <div>Campaign {r.campaign.name}, sent {formatWhen(r.campaign.at)}</div>
+                                    )}
+                                    {r.changed.length > 0 ? (
+                                        <ul className="list-disc pl-4">
+                                            {r.changed.map(c => (
+                                                <li key={c.field}>
+                                                    {REPEAT_FIELD_LABEL[c.field]}: {(c.field === "channel" ? ch(c.from) : c.from) || "—"} → {(c.field === "channel" ? ch(c.to) : c.to) || "—"}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    ) : r.prev ? (
+                                        <div>Name, vehicle, product, pincode and channel are the same as before.</div>
+                                    ) : null}
+                                </div>
+                            );
+                        })()}
                         {/* What was captured. Editable, but not the reason anybody
                             opened this — so it sits compact at the top rather than
                             taking a third of the dialog. */}
