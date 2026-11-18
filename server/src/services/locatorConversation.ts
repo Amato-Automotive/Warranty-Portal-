@@ -255,6 +255,20 @@ export function startWord(text: string): StartWord | null {
     return product ? { kind: 'word', product } : null;
 }
 
+/*
+ * A broadcast that follows up old enquiries — "did you buy?" audits and
+ * enquiry reviews (instagram_campaign_audit_leads_october_*, 17 Nov 2026;
+ * September_Enquiry_Review…, 13 Oct). Whoever it reached is already a lead, so
+ * their reply ("Car Seat Covers") is that follow-up, not a new enquiry: on
+ * 17 Nov the chat filed 130 of them as fresh WhatsApp leads and alerted 46
+ * stores. Promotions (Diwali…, Plan_karo…) are not follow-ups — a reply to
+ * those still starts the chat.
+ */
+export const FOLLOW_UP_HOURS = 48;
+export function isFollowUpCampaign(name: string | null | undefined): boolean {
+    return /audit|review/i.test(String(name ?? ''));
+}
+
 /** "stop", "cancel": the customer wants out. */
 export function isCancel(text: string): boolean {
     return /^\s*(stop|cancel|exit|quit|no thanks)\s*[!.]*\s*$/i.test(String(text ?? ''));

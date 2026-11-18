@@ -510,8 +510,16 @@ export async function handlePincodeMessage(senderPhone: string, body: string): P
      */
     const same = String(last.raw_area ?? '') === pincode;
     if (same) console.log(`[Locator] ${phoneKey(senderPhone)} sent ${pincode} again — answering on lead ${last.id}`);
+    /*
+     * The lead was still waiting for its pincode — an Instagram form without
+     * one, or an answer that was not a pincode — so this is that answer: it
+     * finishes the same lead. It used to file a second lead two minutes after
+     * the first (56 such pairs by 18 Nov 2026).
+     */
+    const waiting = !/^[1-9][0-9]{5}$/.test(String(last.raw_area ?? '').trim());
+    if (waiting) console.log(`[Locator] ${phoneKey(senderPhone)} sent the pincode lead ${last.id} was waiting for`);
     await startStoreEnquiry({
-        ...(same ? { leadId: last.id } : {}),
+        ...(same || waiting ? { leadId: last.id } : {}),
         pincode, phone: senderPhone, name: last.customer_name, product: last.product, car: last.car_model,
         source: last.source === 'instagram' ? 'instagram' : 'whatsapp',
         rawPayload: { source: 'follow-up pincode' },

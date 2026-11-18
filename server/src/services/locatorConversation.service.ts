@@ -9,6 +9,7 @@ import { localPhone } from './storeLocator.js';
 import { hasAutoReplyContent } from './autoReply.js';
 import {
     nextStep, menuStep, vehicleStep, isRestart, isCancel, isIdle, OPEN_STAGES, type StartWord,
+    isFollowUpCampaign, FOLLOW_UP_HOURS,
     type ChatStage, type MenuStep,
 } from './locatorConversation.js';
 import {
@@ -260,12 +261,18 @@ async function chatStartedWithin(phone: string, seconds: number, openOnly: boole
 export function startFromMessage(phone: string, name: string | null, start: StartWord = { kind: 'heyy' }): Promise<boolean> {
     return inOrder(phoneKey(phone), async () => {
         // Both checks at once; the team check is only needed for a word other than "Heyy".
-        const [justStarted, team] = await Promise.all([
+        const [justStarted, team, followUp] = await Promise.all([
             chatStartedWithin(phone, 20, true),
             start.kind === 'word' ? isTeamNumber(phone) : Promise.resolve(false),
+            followUpCampaignTo(phone),
         ]);
         if (justStarted) {
             console.log(`[Chat] ${phoneKey(phone)} "Heyy" — chat already started by the hand-off`);
+            return true;
+        }
+        // A reply to an audit/review broadcast: an old lead, no new one, no store alert.
+        if (followUp) {
+            console.log(`[Chat] ${phoneKey(phone)} replied to campaign "${followUp}" — no chat, no lead`);
             return true;
         }
         // Only "Heyy" starts the chat for our own people; their "hi" is to someone.
@@ -290,6 +297,29 @@ export function startFromMessage(phone: string, name: string | null, start: Star
  * in every format, so the last ten digits are compared. Asked only when a
  * start word other than "Heyy" arrives, so the scan is rare.
  */
+/*
+ * The follow-up broadcast (audit / review) that reached this number in the
+ * last FOLLOW_UP_HOURS, if any. Interakt's message_campaign_sent events are
+ * logged in webhook_events with the 10-digit number (indexed). A failed lookup
+ * lets the chat run, as before.
+ */
+async function followUpCampaignTo(phone: string): Promise<string | null> {
+    const key = phoneKey(phone);
+    if (key.length !== 10) return null;
+    try {
+        const [rows]: any = await db.execute(
+            `SELECT DISTINCT campaign_name FROM webhook_events
+              WHERE phone = ? AND event_type = 'message_campaign_sent'
+                AND received_at >= NOW() - INTERVAL ${FOLLOW_UP_HOURS} HOUR`,
+            [key]
+        );
+        return rows.map((r: any) => r.campaign_name).find(isFollowUpCampaign) ?? null;
+    } catch (err: any) {
+        console.error('[Chat] campaign check failed:', err?.message);
+        return null;
+    }
+}
+
 async function isTeamNumber(phone: string): Promise<boolean> {
     const key = phoneKey(phone);
     if (key.length !== 10) return false;
@@ -321,6 +351,11 @@ export function startFromHandoff(input: Parameters<typeof startConversation>[0])
     return inOrder(phoneKey(input.phone), async () => {
         if (await chatStartedWithin(input.phone, 120, false)) {
             console.log(`[Chat] ${phoneKey(input.phone)} hand-off — chat already running`);
+            return;
+        }
+        const followUp = await followUpCampaignTo(input.phone);
+        if (followUp) {
+            console.log(`[Chat] ${phoneKey(input.phone)} hand-off after campaign "${followUp}" — no chat, no lead`);
             return;
         }
         await startConversation(input);

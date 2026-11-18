@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readCarAnswer } from '../carModels.js';
-import { nextStep, menuStep, isRestart, isCancel, isIdle, startWord, MAX_TRIES, readVehicleAnswer, vehicleStep } from '../locatorConversation.js';
+import { nextStep, menuStep, isRestart, isCancel, isIdle, startWord, MAX_TRIES, readVehicleAnswer, vehicleStep, isFollowUpCampaign } from '../locatorConversation.js';
 import { menuTapFromWebhook, productMenu, vehicleQuestion, vehicleTapFromWebhook, twoWheelerText, BUTTON_TITLE_MAX } from '../storeLocatorMessages.js';
 import { CAR_RETRY, PINCODE_QUESTION, INVALID_PINCODE_TEXT, NO_PINCODE_END } from '../storeLocatorMessages.js';
 
@@ -193,5 +193,19 @@ describe('4-wheeler or 2-wheeler — the first question', () => {
         assert.match(twoWheelerText(''), /call you shortly/);
         assert.ok(!/Hello/.test(productMenu('L', false).message.body.text));
         assert.match(productMenu('L').message.body.text, /Hello/);
+    });
+});
+
+describe('isFollowUpCampaign — replies to these are old leads, not new enquiries', () => {
+    test('audit and review broadcasts', () => {
+        for (const n of ['instagram_campaign_audit_leads_october_inorganic', 'instagram_campaign_audit_leads_october_organic',
+            'September_Enquiry_Review_test_1 copy', 'September_Remaining_leads_review_campaigns']) {
+            assert.equal(isFollowUpCampaign(n), true, n);
+        }
+    });
+    test('promotions and nothing', () => {
+        for (const n of ['Diwali_Campaign_Customer', 'Plan_karo_save_karo_scheme_14th_oct_campaign_13', 'Gaurav_Chopra_announcement_campaign', '', null, undefined]) {
+            assert.equal(isFollowUpCampaign(n as any), false, String(n));
+        }
     });
 });
