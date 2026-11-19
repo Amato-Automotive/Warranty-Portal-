@@ -37,7 +37,7 @@ function Overview({ schemeId, refreshKey, go }: { schemeId: string; refreshKey: 
         { label: "Not chosen yet", n: d.not_chosen.length },
     ];
     const totals: [string, number | string][] = [
-        [`Option 1 calculated points, ${d.month_label}`, d.month_points.toLocaleString("en-IN")],
+        [`Option 1 category points, ${d.month_label}`, d.month_points.toLocaleString("en-IN")],
         ["Option 1 rewards sent", d.rewards_sent],
         ["Option 2 sets approved", d.sets_approved.toLocaleString("en-IN")],
         ["Option 2 free sets given", d.free_given],

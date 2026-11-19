@@ -80,7 +80,7 @@ function months(s: SellMoreState) {
         .map(([ago, w, p]) => ({ date: addDays(today, ago as number), warranties: w as number, points: p as number }))
         .filter(d => d.date >= `${key}-01`);
     const first = {
-        key, label: monthLabel(key), warranties: 11, points, future: false, target, pct: Math.floor((points / target) * 100), days,
+        key, label: monthLabel(key), warranties: 11, points, category: null, category_points: points, future: false, target, pct: Math.floor((points / target) * 100), days,
         series: [
             { name: "Signature", warranties: 4, points: 6 }, { name: "Emporio", warranties: 2, points: 3 },
             { name: "Velora", warranties: 3, points: 3.75 }, { name: "Amaze", warranties: 2, points: 1.75 },
@@ -90,7 +90,7 @@ function months(s: SellMoreState) {
         reward_slab: slab, rewards_claimed: claimed,
     };
     const rest = [1, 2, 3, 4].map(n => ({
-        key: nextMonth(key, n), label: monthLabel(nextMonth(key, n)), warranties: 0, points: 0, future: true, target: null, pct: null, days: [], series: [],
+        key: nextMonth(key, n), label: monthLabel(nextMonth(key, n)), warranties: 0, points: 0, category: null, category_points: 0, future: true, target: null, pct: null, days: [], series: [],
         can_request: false, reward: null, reward_slab: null, rewards_claimed: 0,
     }));
     return [first, ...rest];

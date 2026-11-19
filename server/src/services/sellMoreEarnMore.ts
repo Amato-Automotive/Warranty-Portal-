@@ -6,9 +6,9 @@
  * Option 1 (Sell More): points on every warranty the store registers, by the
  * series its product is in, counted live, rejected ones left out. No targets.
  * What each series is worth and which products are in it stay in the scheme's
- * settings. The store always sees its plain points. The admin puts a store in
- * a store type and sets that type's points series by series, which changes the
- * calculated score the admin alone sees. Points don't carry forward, so each
+ * settings. The admin puts a store in a category (Regular, Big Daddy…) and sets
+ * that category's points series by series. The store sees both: its warranty
+ * points and its category points, which its target is in. Points don't carry forward, so each
  * month is rewarded on its own: the store asks for that month, or the admin sends
  * without being asked, by hand. Kept free of any database import so it is tested directly.
  */
@@ -173,17 +173,6 @@ export function seriesInMonth(rows: WarrantyRow[], rule: PointsRule, month: stri
         const warranties = n.get(s.id) ?? 0;
         return { name: s.name, warranties, points: roundPoints(warranties * (tier ? rateFor(tier, s) : s.points)) };
     });
-}
-
-/**
- * A target as the store sees it. The admin's target is in calculated points but
- * the store sees plain points, so it is shown on the store's own scale: the same
- * share of the way there, whatever the store's category. With no warranties yet
- * the category's multiplier gives the scale.
- */
-export function storeScaleTarget(target: number | null, plain: number, calculated: number, times: number): number | null {
-    if (target === null) return null;
-    return roundPoints(target * (calculated > 0 ? plain / calculated : 1 / (times || 1)));
 }
 
 /** Why a store can't ask for one month's reward, or null when it can. It opens once the store reaches that month's target. */

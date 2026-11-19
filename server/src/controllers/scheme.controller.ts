@@ -15,7 +15,7 @@ import {
     stepsFor, growthTarget, windowPeriods, basisRange, averagePerMonth, pointsByProduct, roundPoints, tierOf,
     type TargetStep, type TargetImportRow, type TargetChange, type StoreTerms, type Period, type AverageBasis,
 } from '../services/schemeTargets.js';
-import { addSets, earned, eligibility, groupOf, inAudience, invoiceProblems, isOffer, isSellMore, noSets, optionAllowed, optionOf, readAudience, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, storeScaleTarget, subtractSets, tierIdForMonth, usedProblem, worthOf, rewardSlab, type AssignedOption, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
+import { addSets, earned, eligibility, groupOf, inAudience, invoiceProblems, isOffer, isSellMore, noSets, optionAllowed, optionOf, readAudience, readSets, redeemProblem, SELL_MORE_PROGRAM, seriesInMonth, setsForOffer, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf, rewardSlab, type AssignedOption, type Sets, type WarrantyRow } from '../services/sellMoreEarnMore.js';
 
 /**
  * Offers & Schemes. The admin builds and runs schemes; franchises join them
@@ -784,7 +784,7 @@ async function saveBuyInvoice(req: Request, res: Response, scheme: Scheme, store
     res.json({ success: true });
 }
 
-/** One store's own view: its choice, its plain points by day and month, each month's reward. Never its store type or calculated score. */
+/** One store's own view: its choice, its warranty points and its category points (the ones its target is in) by day and month, each month's reward. */
 async function sellMoreForStore(scheme: Scheme, storeId: string) {
     await ensureAssignedOption(scheme, storeId);
     const [[p]]: any = await db.execute('SELECT terms FROM scheme_participants WHERE scheme_id = ? AND store_id = ?', [scheme.id, storeId]);
@@ -802,21 +802,27 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
     const rewards = (await sellMoreRewards(scheme.id, [storeId])).get(storeId);
     const monthTerms = (await sellMoreMonthTerms(scheme.id, [storeId])).get(storeId);
     const shown = new Set(months.map(m => m.key));
+    const perMonth = e.months.map(m => [m, adminMonth(scheme, rows, months.find(x => x.key === m.key)!, months, monthTerms)] as const);
     return {
         option, opted_at: terms.opted_at ?? null, assigned: Boolean(assignedOption(scheme, storeId)), total: e.total, warranties: e.warranties,
+        /* Across all months, each month at that month's category. */
+        category_total: roundPoints(perMonth.reduce((n, [, d]) => n + d.calc.points, 0)),
         months: [
-            ...e.months.map(m => {
+            ...perMonth.map(([m, d]) => {
                 const rewardRows = rewards?.get(m.key) ?? [];
-                const d = adminMonth(scheme, rows, months.find(x => x.key === m.key)!, months, monthTerms);
                 const slab = rewardSlab(d.target, d.calc.points, rewardRows.length);
                 const lastReward = rewardRows[rewardRows.length - 1] ?? null;
+                const calcDay = new Map(d.calc.days.map(x => [x.date, x.points]));
+                const calcSeries = new Map(seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on, d.tier_obj).map(s => [s.name, s.points]));
                 return {
                     key: m.key, label: m.label, warranties: m.warranties, points: m.points, future: false,
-                    /* Its target and how far along it is, on the store's own points. */
-                    target: storeScaleTarget(d.target, d.plain.points, d.calc.points, d.tier_obj?.times ?? 1),
+                    /* Its category (e.g. Big Daddy ×2) and the points at that category, which the target is in. */
+                    category: d.tier_obj ? { name: d.tier_obj.name, times: d.tier_obj.times } : null,
+                    category_points: d.calc.points,
+                    target: d.target,
                     pct: d.target ? Math.floor((d.calc.points / d.target) * 100) : null,
-                    days: m.days.filter(d => d.warranties > 0).map(({ no_series: _n, ...d }) => d),
-                    series: seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on),
+                    days: m.days.filter(x => x.warranties > 0).map(({ no_series: _n, ...x }) => ({ ...x, category_points: calcDay.get(x.date) ?? 0 })),
+                    series: seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on).map(s => ({ ...s, category_points: calcSeries.get(s.name) ?? 0 })),
                     /* Requests open once the calculated points reach the target. */
                     can_request: Boolean(slab && slab.to_next === 0 && !lastReward || slab && slab.to_next === 0 && lastReward?.status === 'sent'),
                     reward: lastReward ? { status: lastReward.status, note: lastReward.note, requested_at: lastReward.requested_at, sent_at: lastReward.sent_at } : null,
@@ -825,7 +831,7 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
                 };
             }),
             ...periodsOf(scheme.starts_on, scheme.ends_on, 'month').filter(m => !shown.has(m.key)).map(m => ({
-                key: m.key, label: m.label, warranties: 0, points: 0, future: true, target: null, pct: null, days: [], series: [], can_request: false, reward: null, reward_slab: null, rewards_claimed: 0,
+                key: m.key, label: m.label, warranties: 0, points: 0, future: true, category: null, category_points: 0, target: null, pct: null, days: [], series: [], can_request: false, reward: null, reward_slab: null, rewards_claimed: 0,
             })),
         ],
     };

@@ -5,14 +5,15 @@ export const SELL_MORE_SCHEME_ID = "22dc9530-8c7e-4438-9230-4f7aa31d3e3d";
 
 export interface MonthReward { status: "requested" | "sent"; note: string | null; requested_at: string; sent_at: string | null }
 export interface RewardSlab { slab: number; points: number; to_next: number; sets: number; label: string; text: string }
-export interface SellMoreDay { date: string; warranties: number; points: number; no_series?: number; store_points?: number }
-export interface SeriesEarned { name: string; warranties: number; points: number }
-export interface SellMoreMonth { key: string; label: string; warranties: number; points: number; future: boolean; can_request: boolean; target: number | null; pct: number | null; series: SeriesEarned[]; days: SellMoreDay[]; reward: MonthReward | null; reward_slab: RewardSlab | null; rewards_claimed: number }
+export interface SellMoreDay { date: string; warranties: number; points: number; no_series?: number; store_points?: number; category_points?: number }
+export interface SeriesEarned { name: string; warranties: number; points: number; category_points?: number }
+/** `points` are the store's warranty points; `category_points` the same at its category (Big Daddy ×2…), which the target is in. */
+export interface SellMoreMonth { key: string; label: string; warranties: number; points: number; category: { name: string; times: number } | null; category_points: number; future: boolean; can_request: boolean; target: number | null; pct: number | null; series: SeriesEarned[]; days: SellMoreDay[]; reward: MonthReward | null; reward_slab: RewardSlab | null; rewards_claimed: number }
 
-/** What a store sees: its choice and its plain points. Never its store type or calculated score. */
+/** What a store sees: its choice, its warranty points and its category points (`category_total`, each month at its own category). */
 export interface StoreSellMore {
     option: "sell_more" | "buy_more" | null; opted_at: string | null;
-    total: number; warranties: number; months: SellMoreMonth[];
+    total: number; category_total?: number; warranties: number; months: SellMoreMonth[];
     buy_more?: StoreBuyMore | null;
     /* A distributor gets just this option, with no choice between the two. */
     only_option?: "buy_more" | null;

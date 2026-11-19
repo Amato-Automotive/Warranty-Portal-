@@ -10,7 +10,7 @@ import { points, shortDay, stampDay, type AdminMonthDetail, type AdminSellMore, 
 
 /**
  * Option 1 for the admin, one month at a time, because points reset every
- * month: each store's category and target for the month, its calculated score,
+ * month: each store's category and target for the month, its category points (the score the store sees and the target is in),
  * how it stands against the target, and its reward. A store can request only
  * once it reaches the target; the admin can send a reward at any time.
  */
@@ -77,7 +77,7 @@ function StoreMonth({ schemeId, storeId, month, colSpan, version, onReward }: {
                                 </div>
                             </div>
                             <div className="rounded-lg border border-slate-200 bg-white">
-                                <p className="border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-700">By series (calculated)</p>
+                                <p className="border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-700">By series (category points)</p>
                                 <table className="w-full text-xs">
                                     <tbody className="divide-y divide-slate-50">
                                         {m.series.map(s => (
@@ -91,7 +91,7 @@ function StoreMonth({ schemeId, storeId, month, colSpan, version, onReward }: {
                                 <p className="border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-700">Day by day</p>
                                 {m.days.length ? (
                                     <table className="w-full text-xs">
-                                        <thead><tr className="text-left text-slate-400"><th className="px-3 py-1 font-semibold">Date</th><th className="px-2 py-1 text-right font-semibold">Warranties</th><th className="px-2 py-1 text-right font-semibold">Store sees</th><th className="px-3 py-1 text-right font-semibold">Calculated</th></tr></thead>
+                                        <thead><tr className="text-left text-slate-400"><th className="px-3 py-1 font-semibold">Date</th><th className="px-2 py-1 text-right font-semibold">Warranties</th><th className="px-2 py-1 text-right font-semibold">Warranty points</th><th className="px-3 py-1 text-right font-semibold">Category points</th></tr></thead>
                                         <tbody className="divide-y divide-slate-50">
                                             {m.days.map(d => (
                                                 <tr key={d.date}>
@@ -182,7 +182,7 @@ export function SellMoreTab({ schemeId, refreshKey }: { schemeId: string; refres
         const m = s.months[month];
         return {
             "Month": label, "Store": s.store_name, "Code": s.store_code ?? "", "City": s.city ?? "", "State": s.state ?? "", "Brand": s.brand,
-            "Category": tierName(m.tier), "Store sees": m.store_points, "Calculated": m.calculated, "Target": m.target ?? "",
+            "Category": tierName(m.tier), "Warranty points": m.store_points, "Category points": m.calculated, "Target": m.target ?? "", "To target": m.target ? Math.max(0, Math.round((m.target - m.calculated) * 100) / 100) : "",
             "Against target": m.target ? `${Math.round((m.calculated / m.target) * 100)}%` : "", "Reward": m.reward ?? "", "Warranties with points": m.warranties, "Warranties in no series": m.no_series,
         };
     }), `sell_more_${month}.csv`);
@@ -196,7 +196,7 @@ export function SellMoreTab({ schemeId, refreshKey }: { schemeId: string; refres
                         className={cn("min-w-32 shrink-0 rounded-xl p-3 text-left", m.key === month ? "border-2 border-orange-500 bg-orange-50" : "border border-slate-200 bg-white hover:border-slate-400")}>
                         <span className="block text-xs font-bold text-slate-500">{m.label}</span>
                         <b className="block text-xl tabular-nums text-slate-900">{points(monthTotal(m.key))}</b>
-                        <span className="block text-xs text-slate-500">calculated points</span>
+                        <span className="block text-xs text-slate-500">category points</span>
                     </button>
                 ))}
             </div>
@@ -250,8 +250,8 @@ export function SellMoreTab({ schemeId, refreshKey }: { schemeId: string; refres
                             <th className="w-8 px-2 py-2.5" />
                             <th className="px-3 py-2.5 font-semibold">Store</th>
                             <th className="px-3 py-2.5 font-semibold">Category</th>
-                            <th className="px-3 py-2.5 text-right font-semibold">Store sees</th>
-                            <th className="px-3 py-2.5 text-right font-semibold">Calculated</th>
+                            <th className="px-3 py-2.5 text-right font-semibold">Warranty points</th>
+                            <th className="px-3 py-2.5 text-right font-semibold">Category points</th>
                             <th className="px-3 py-2.5 text-right font-semibold">Target</th>
                             <th className="px-3 py-2.5 font-semibold">Against target</th>
                             <th className="px-3 py-2.5 font-semibold">Reward</th>
@@ -286,7 +286,7 @@ export function SellMoreTab({ schemeId, refreshKey }: { schemeId: string; refres
                                         <td className="px-3 py-2 text-right"><TargetInput value={m.target} label={`Target for ${s.store_name}`} disabled={busy === s.store_id} onSave={v => save(s.store_id, { target: v })} /></td>
                                         <td className="whitespace-nowrap px-3 py-2">
                                             <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", st === "met" ? "bg-emerald-100 text-emerald-800" : st === "unset" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600")}>
-                                                {st === "unset" ? "Set target" : `${st === "met" ? "Met · " : ""}${Math.round((m.calculated / m.target!) * 100)}%`}
+                                                {st === "unset" ? "Set target" : `${st === "met" ? "Met · " : ""}${Math.round((m.calculated / m.target!) * 100)}%${st === "below" ? ` · ${points(m.target! - m.calculated)} to go` : ""}`}
                                             </span>
                                         </td>
                                         <td className="whitespace-nowrap px-3 py-2">

@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { cn } from "@/lib/utils";
-import { points, shortDay, stampDay, type StoreSellMore } from "@/lib/sellMore";
+import { points, shortDay, stampDay, type SellMoreMonth, type StoreSellMore } from "@/lib/sellMore";
 import { BuyMoreView } from "./BuyMoreView";
 
 /**
  * Sell More Earn More for a franchise. First it chooses an option, once, with
  * no way back. On Option 1 it then sees what it has earned month by month and
- * day by day, and can ask for its reward. No targets and no store type here.
+ * day by day, and can ask for its reward. A store in a category that changes
+ * its score (Big Daddy ×2) sees both its warranty points and its category
+ * points; its target and what is left to it are in category points.
  */
 
 type T = (en: string, hi: string) => string;
@@ -184,6 +186,10 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
     const [sending, setSending] = useState(false);
     const month = started.find(m => m.key === pick) ?? started[started.length - 1];
     const note = month ? monthNote(month.key) : null;
+    /* A category that changes the score (Big Daddy ×2): show both, warranty points and category points. */
+    const isBoosted = (m: SellMoreMonth) => Boolean(m.category && m.category_points !== m.points);
+    const boosted = month ? isBoosted(month) : false;
+    const categoryTotal = data.category_total ?? data.total;
 
     const redeem = async () => {
         setSending(true);
@@ -202,8 +208,15 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
             {month && (
                 <section className="flex flex-col gap-5 rounded-3xl bg-slate-900 p-6 text-white sm:flex-row sm:items-center sm:justify-between sm:p-8">
                     <div>
-                        <p className="text-sm font-semibold text-slate-300">{tr("Points earned", "मिले पॉइंट")} · {month.label}</p>
-                        <p className="mt-1 text-6xl font-black leading-none tabular-nums text-orange-300">{points(month.points)}</p>
+                        <p className="text-sm font-semibold text-slate-300">{boosted ? `${month.category!.name} ${tr("points", "पॉइंट")}` : tr("Points earned", "मिले पॉइंट")} · {month.label}</p>
+                        <p className="mt-1 text-6xl font-black leading-none tabular-nums text-orange-300">{points(month.category_points)}</p>
+                        {boosted && (
+                            <p className="mt-2 inline-flex flex-wrap items-center gap-x-2 rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-semibold text-slate-200">
+                                <span>{tr("Warranty points", "वारंटी पॉइंट")}: <b className="tabular-nums text-white">{points(month.points)}</b></span>
+                                <span className="text-slate-500">→</span>
+                                <span>{month.category!.name}{month.category!.times !== 1 ? ` ×${month.category!.times}` : ""}: <b className="tabular-nums text-orange-300">{points(month.category_points)}</b></span>
+                            </p>
+                        )}
                         <p className="mt-2 text-sm text-slate-300">
                             {month.warranties.toLocaleString("en-IN")} {tr("warranties", "वारंटी")}
                             {note && ` · ${note.daysLeft} ${note.daysLeft === 1 ? t("day left") : t("days left")}`}
@@ -219,7 +232,7 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                                     <div className={cn("h-full rounded-full transition-all", month.pct >= 100 ? "bg-emerald-400" : "bg-orange-400")} style={{ width: `${Math.min(100, month.pct)}%` }} />
                                 </div>
                                 <p className={cn("text-sm font-semibold", month.pct >= 100 ? "text-emerald-300" : "text-orange-200")}>
-                                    {month.pct >= 100 ? tr("Target reached", "टारगेट पूरा") : tr(`${points(Math.max(0, month.target - month.points))} more points to reach your target`, `टारगेट के लिए ${points(Math.max(0, month.target - month.points))} पॉइंट और`)}
+                                    {month.pct >= 100 ? tr("Target reached", "टारगेट पूरा") : tr(`${points(Math.max(0, month.target - month.category_points))} more points to reach your target`, `टारगेट के लिए ${points(Math.max(0, month.target - month.category_points))} पॉइंट और`)}
                                 </p>
                             </div>
                         )}
@@ -250,14 +263,16 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
             <section className="space-y-3 rounded-3xl border border-slate-200 bg-white p-5">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h2 className="text-base font-extrabold text-slate-900">{t("Month by month")}</h2>
-                    <p className="text-sm text-slate-600">{tr("All months", "सभी महीने")}: <b className="tabular-nums text-slate-900">{points(data.total)}</b> {tr("points", "पॉइंट")}</p>
+                    <p className="text-sm text-slate-600">{tr("All months", "सभी महीने")}: <b className="tabular-nums text-slate-900">{points(categoryTotal)}</b> {tr("points", "पॉइंट")}
+                        {categoryTotal !== data.total && <span className="text-slate-500"> · {tr("warranty points", "वारंटी पॉइंट")} {points(data.total)}</span>}</p>
                 </div>
                 <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
                     {data.months.map(m => (
                         <button key={m.key} type="button" disabled={m.future} onClick={() => setPick(m.key)} aria-pressed={m.key === month?.key}
                             className={cn("w-36 shrink-0 rounded-2xl p-4 text-left", m.future ? "border border-dashed border-slate-200 opacity-60" : m.key === month?.key ? "border-2 border-orange-500 bg-orange-50" : "border border-slate-200 hover:border-slate-400")}>
                             <span className="block text-xs font-bold text-slate-500">{m.label}</span>
-                            <b className="mt-1 block text-2xl tabular-nums text-slate-900">{m.future ? "—" : points(m.points)}</b>
+                            <b className="mt-1 block text-2xl tabular-nums text-slate-900">{m.future ? "—" : points(m.category_points)}</b>
+                            {!m.future && isBoosted(m) && <span className="block text-xs text-slate-500">{tr("Warranty", "वारंटी")} {points(m.points)} · {m.category!.name}</span>}
                             {m.target !== null && <span className="block text-xs font-semibold text-slate-600">{tr("Target", "टारगेट")} {points(m.target)}</span>}
                             <span className={cn("block text-xs", m.reward?.status === "sent" ? "font-semibold text-emerald-700" : m.reward ? "font-semibold text-amber-700" : "text-slate-500")}>
                                 {m.future ? tr("Not started", "शुरू नहीं हुआ") : m.reward?.status === "sent" ? tr("Reward sent", "रिवॉर्ड भेजा गया") : m.reward ? tr("Requested", "रिक्वेस्ट की गई") : `${m.warranties.toLocaleString("en-IN")} ${tr("warranties", "वारंटी")}`}
@@ -276,7 +291,8 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                                 <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
                                     <th className="py-2 font-bold">{t("Series")}</th>
                                     <th className="py-2 text-right font-bold">{t("Warranties")}</th>
-                                    <th className="py-2 text-right font-bold">{t("Points")}</th>
+                                    <th className="py-2 text-right font-bold">{boosted ? tr("Warranty points", "वारंटी पॉइंट") : t("Points")}</th>
+                                    {boosted && <th className="py-2 text-right font-bold">{month.category!.name}</th>}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -284,7 +300,8 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                                     <tr key={s.name}>
                                         <td className="py-2.5 font-semibold text-slate-900">{s.name}</td>
                                         <td className="py-2.5 text-right tabular-nums text-slate-700">{s.warranties}</td>
-                                        <td className="py-2.5 text-right font-bold tabular-nums text-slate-900">{points(s.points)}</td>
+                                        <td className={cn("py-2.5 text-right tabular-nums", boosted ? "text-slate-700" : "font-bold text-slate-900")}>{points(s.points)}</td>
+                                        {boosted && <td className="py-2.5 text-right font-bold tabular-nums text-slate-900">{points(s.category_points ?? s.points)}</td>}
                                     </tr>
                                 ))}
                             </tbody>
@@ -298,7 +315,8 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                                     <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
                                         <th className="py-2 font-bold">{tr("Date", "तारीख")}</th>
                                         <th className="py-2 text-right font-bold">{t("Warranties")}</th>
-                                        <th className="py-2 text-right font-bold">{t("Points")}</th>
+                                        <th className="py-2 text-right font-bold">{boosted ? tr("Warranty points", "वारंटी पॉइंट") : t("Points")}</th>
+                                    {boosted && <th className="py-2 text-right font-bold">{month.category!.name}</th>}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -306,7 +324,8 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                                         <tr key={d.date}>
                                             <td className="py-2.5 font-semibold text-slate-900">{shortDay(d.date, locale)}</td>
                                             <td className="py-2.5 text-right tabular-nums text-slate-700">{d.warranties}</td>
-                                            <td className="py-2.5 text-right font-bold tabular-nums text-slate-900">{points(d.points)}</td>
+                                            <td className={cn("py-2.5 text-right tabular-nums", boosted ? "text-slate-700" : "font-bold text-slate-900")}>{points(d.points)}</td>
+                                            {boosted && <td className="py-2.5 text-right font-bold tabular-nums text-slate-900">{points(d.category_points ?? d.points)}</td>}
                                         </tr>
                                     ))}
                                 </tbody>

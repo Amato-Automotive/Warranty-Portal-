@@ -51,7 +51,7 @@ export function StoreTargetsEditor({ schemeId, open, edits, onEdits }: { schemeI
             <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                     <h3 className="text-sm font-bold text-slate-900">Option 1: store targets</h3>
-                    <p className="text-xs text-slate-500">In calculated points, for the month. A store can request its reward once it reaches its target.</p>
+                    <p className="text-xs text-slate-500">In category points, for the month. A store can request its reward once it reaches its target.</p>
                 </div>
                 {changed > 0 && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800">{changed} to save</span>}
             </div>

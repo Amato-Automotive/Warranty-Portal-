@@ -144,7 +144,7 @@ export function SellMoreEditor({ open, scheme, onClose, onSaved }: {
                 <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
                     <div>
                         <h3 className="text-sm font-bold text-slate-900">Points by store type</h3>
-                        <p className="text-xs text-slate-500">These make the admin's calculated score. Stores see only {rule.tiers[0]?.name ?? "the first type"} points.</p>
+                        <p className="text-xs text-slate-500">These make each store's category points. A store sees its warranty points and its category points; its target is in category points.</p>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full min-w-[360px] text-sm">
