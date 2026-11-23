@@ -94,13 +94,16 @@ export class StoreRatingsController {
             const stores = await storesFor(brand, state);
             const ratings = await ratingsOf(stores.map(s => s.store_id), product);
 
-            let warranties: number | null = null;
+            /* Of the customers sent the rating message in the period (by the day it was sent), how many rated. */
+            let asked: { asked: number; rated: number } | null = null;
             if (stores.length) {
                 const args: unknown[] = [stores.map(s => s.store_id)];
-                let range = '';
-                if (period.start && period.end) { range = ' AND DATE(created_at) BETWEEN ? AND ?'; args.push(period.start, period.end); }
-                const [[w]]: any = await db.query(`SELECT COUNT(*) AS n FROM warranty_registrations WHERE status = 'validated' AND vendor_details_id IN (?)${range}`, args as any[]);
-                warranties = Number(w?.n ?? 0);
+                let extra = '';
+                if (period.start && period.end) { extra += " AND DATE_FORMAT(created_at, '%Y-%m-%d') BETWEEN ? AND ?"; args.push(period.start, period.end); }
+                if (product && product !== 'all') { extra += ' AND product = ?'; args.push(product); }
+                const [[a]]: any = await db.query(
+                    `SELECT COUNT(*) AS asked, COALESCE(SUM(status = 'rated'), 0) AS rated FROM store_rating_requests WHERE store_id IN (?)${extra}`, args as any[]);
+                asked = { asked: Number(a?.asked ?? 0), rated: Number(a?.rated ?? 0) };
             }
 
             const [stateRows]: any = await db.execute("SELECT DISTINCT state FROM vendor_details WHERE is_franchise = 1 AND state IS NOT NULL AND state <> '' ORDER BY state");
@@ -108,7 +111,7 @@ export class StoreRatingsController {
             res.json({
                 success: true, period,
                 options: { states: stateRows.map((r: any) => r.state), products: productRows.map((r: any) => r.product) },
-                ...buildOverview(ratings, stores, period, today, { band, minCount: await ratingMinCount(), warrantiesInPeriod: warranties }),
+                ...buildOverview(ratings, stores, period, today, { band, minCount: await ratingMinCount(), asked }),
             });
         } catch (error: any) {
             console.error('[StoreRatings] overview:', error);

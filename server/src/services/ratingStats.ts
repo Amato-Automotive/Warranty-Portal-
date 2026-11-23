@@ -97,7 +97,11 @@ export interface OverviewStore {
 }
 
 export interface Overview {
-    summary: { average: number | null; ratings: number; stores_rated: number; stores_total: number; below_low: number; warranties_rated_pct: number | null };
+    summary: {
+        average: number | null; ratings: number; stores_rated: number; stores_total: number; below_low: number;
+        /* Customers sent the rating message in the period, how many of them rated, and that as a percent. */
+        asked: number | null; asked_rated: number | null; rated_pct: number | null;
+    };
     by_month: { month: string; average: number | null; count: number }[];
     split: Record<1 | 2 | 3 | 4 | 5, number>;
     stores: OverviewStore[];
@@ -111,7 +115,7 @@ export interface Overview {
  */
 export function buildOverview(
     ratings: RatingRow[], stores: StoreInfo[], period: Period, today: string,
-    opts: { band?: AverageBand; minCount?: number; warrantiesInPeriod?: number | null } = {}
+    opts: { band?: AverageBand; minCount?: number; asked?: { asked: number; rated: number } | null } = {}
 ): Overview {
     const band = opts.band ?? 'any';
     const minCount = Math.max(1, opts.minCount ?? 1);
@@ -134,13 +138,15 @@ export function buildOverview(
     });
     const list = all.filter(s => inBand(period.key === 'overall' ? s.average : s.period_average, band));
     const periodAverages = all.filter(s => s.period_average !== null);
-    const warranties = opts.warrantiesInPeriod ?? null;
+    const asked = opts.asked ?? null;
     return {
         summary: {
             average: average(inPeriod), ratings: inPeriod.length,
             stores_rated: periodAverages.length, stores_total: stores.length,
             below_low: periodAverages.filter(s => (s.period_average as number) < LOW_AVERAGE).length,
-            warranties_rated_pct: warranties && warranties > 0 ? Math.min(100, Math.round((inPeriod.length / warranties) * 100)) : null,
+            asked: asked ? asked.asked : null,
+            asked_rated: asked ? asked.rated : null,
+            rated_pct: asked && asked.asked > 0 ? Math.min(100, Math.round((asked.rated / asked.asked) * 100)) : null,
         },
         by_month: byMonth(ratings, lastMonths(today)),
         split: split(inPeriod),

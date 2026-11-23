@@ -23,7 +23,7 @@ interface Row {
 interface Overview {
     range: { label: string };
     options: { states: string[]; products: string[] };
-    summary: { average: number | null; ratings: number; stores_rated: number; stores_total: number; below_low: number; warranties_rated_pct: number | null };
+    summary: { average: number | null; ratings: number; stores_rated: number; stores_total: number; below_low: number; asked: number | null; asked_rated: number | null; rated_pct: number | null };
     by_month: Month[]; split: Split; stores: Row[];
 }
 interface Detail {
@@ -261,7 +261,8 @@ export function AdminStoreRatings() {
                         <Tile label="Network average" value={fmt(s.average)} note={`from ${s.ratings.toLocaleString("en-IN")} ratings`} />
                         <Tile label="Stores rated" value={String(s.stores_rated)} note={`of ${s.stores_total} stores`} />
                         <Tile label="Below 4.0 average" value={String(s.below_low)} note="stores" warn={s.below_low > 0} />
-                        <Tile label="Warranties rated" value={s.warranties_rated_pct === null ? "–" : `${s.warranties_rated_pct}%`} note="of registered" />
+                        <Tile label="Customers who rated" value={s.rated_pct === null ? "–" : `${s.rated_pct}%`}
+                            note={s.asked === null ? undefined : `${(s.asked_rated ?? 0).toLocaleString("en-IN")} of ${s.asked.toLocaleString("en-IN")} asked`} />
                     </div>
 
                     <div className="grid gap-4 lg:grid-cols-2">

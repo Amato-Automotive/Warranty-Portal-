@@ -36,13 +36,15 @@ describe('overview', () => {
         r('c', 5, '2026-09-01'),
     ];
     test('the summary is over the period, and a store with no rating in it is not counted as rated', () => {
-        const o = buildOverview(rows, stores, resolvePeriod('15', null, null, TODAY), TODAY, { warrantiesInPeriod: 10 });
+        const o = buildOverview(rows, stores, resolvePeriod('15', null, null, TODAY), TODAY, { asked: { asked: 10, rated: 4 } });
         assert.equal(o.summary.ratings, 5);
         assert.equal(o.summary.average, 3.8);
         assert.equal(o.summary.stores_rated, 2);
         assert.equal(o.summary.stores_total, 3);
         assert.equal(o.summary.below_low, 1);
-        assert.equal(o.summary.warranties_rated_pct, 50);
+        assert.equal(o.summary.asked, 10);
+        assert.equal(o.summary.asked_rated, 4);
+        assert.equal(o.summary.rated_pct, 40);
     });
     test('a store shows its change against the period before, and is flagged when low', () => {
         const o = buildOverview(rows, stores, resolvePeriod('7', null, null, TODAY), TODAY, { minCount: 2 });
@@ -65,7 +67,8 @@ describe('overview', () => {
     test('with no ratings at all nothing breaks', () => {
         const o = buildOverview([], stores, resolvePeriod('30', null, null, TODAY), TODAY);
         assert.equal(o.summary.average, null);
-        assert.equal(o.summary.warranties_rated_pct, null);
+        assert.equal(o.summary.rated_pct, null);
+        assert.equal(o.summary.asked, null);
         assert.equal(o.stores.length, 3);
     });
 });
