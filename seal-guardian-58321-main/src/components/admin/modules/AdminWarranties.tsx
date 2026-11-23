@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import api from "@/lib/api";
 import { downloadCSV, cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -123,6 +123,8 @@ export const AdminWarranties = () => {
     const [warranties, setWarranties] = useState<any[]>([]);
     const [resubmissions, setResubmissions] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    /* Each list request's number, so only the latest answer is shown. */
+    const fetchSeq = useRef(0);
     const [refreshKey, setRefreshKey] = useState(0);
     const [selectedWarranty, setSelectedWarranty] = useState<any>(null);
 
@@ -300,14 +302,23 @@ export const AdminWarranties = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentPage, statusFilter, productTypeFilter, brandFilter, selectedMake, selectedModel, dateRange, debouncedSearch, resubmittedOnly, reviewQueue, sortConfig.field, sortConfig.order]);
 
-    const fetchWarranties = async (isRefresh = false) => {
-        setLoading(true);
+    /*
+     * quiet: after an approve, reject or edit, the list is brought up to date in
+     * the background. It used to blank the whole screen into the loading
+     * skeleton for the 4–10 s the list takes, after every approval, which read
+     * as the page refreshing and lost the admin's place.
+     */
+    const fetchWarranties = async (isRefresh = false, quiet = false) => {
+        const seq = ++fetchSeq.current;
+        if (!quiet) setLoading(true);
         if (isRefresh) {
             setRefreshKey(prev => prev + 1);
         }
 
         try {
             const mainRes = await api.get(`/admin/warranties?${buildWarrantyQuery()}&t=${Date.now()}`);
+            /* A newer request (another approval, a filter change) has been sent since: its answer wins. */
+            if (seq !== fetchSeq.current) return;
 
             if (mainRes.data.success) {
                 setWarranties(mainRes.data.warranties || []);
@@ -323,10 +334,11 @@ export const AdminWarranties = () => {
                 toast({ description: "Data refreshed" });
             }
         } catch (error) {
+            if (seq !== fetchSeq.current) return;
             console.error("Failed to fetch warranties", error);
-            toast({ variant: "destructive", description: "Failed to refresh" });
+            if (!quiet) toast({ variant: "destructive", description: "Failed to refresh" });
         } finally {
-            setLoading(false);
+            if (seq === fetchSeq.current) setLoading(false);
         }
     };
 
@@ -348,7 +360,7 @@ export const AdminWarranties = () => {
                 if (response.data.success) {
                     toast({ title: status === 'validated' ? "Resubmission Approved" : "Resubmission Rejected", className: status === 'validated' ? "bg-green-600 text-white" : "bg-red-600 text-white" });
                     setResubmissions(prev => prev.filter(w => w.id !== id && w.original_uid !== id));
-                    fetchWarranties(false); // Reload main list slightly after
+                    fetchWarranties(false, true); // Reload main list slightly after
                 }
             } else {
                 const response = await api.put(`/admin/warranties/${id}/status`, { status, rejectionReason: reason });
@@ -370,7 +382,7 @@ export const AdminWarranties = () => {
                     toast({ title: toastTitle, className: toastClass });
                     // Optimistic update
                     setWarranties(prev => prev.map(w => String(w.id) === String(id) || w.uid === id ? { ...w, status, rejection_reason: reason } : w));
-                    await fetchWarranties(false);
+                    fetchWarranties(false, true);
                 }
             }
         } catch (error) {
@@ -741,7 +753,7 @@ export const AdminWarranties = () => {
                                         activeUid={selectedWarranty?.uid || selectedWarranty?.id}
                                         onSelect={(w) => setSelectedWarranty(w)}
                                         showActions={false}
-                                        onRefresh={() => fetchWarranties(false)}
+                                        onRefresh={() => fetchWarranties(false, true)}
                                     />
                                 </div>
                             </CardContent>
@@ -753,7 +765,7 @@ export const AdminWarranties = () => {
                         <QuickReviewPanel
                             warranty={selectedWarranty}
                             processingWarranty={processingId}
-                            onRefresh={() => fetchWarranties(false)}
+                            onRefresh={() => fetchWarranties(false, true)}
                             onApprove={(id) => handleUpdateStatus(id, 'validated')}
                             onReject={(id) => {
                                 setRejectingWarrantyId(id);
@@ -786,7 +798,7 @@ export const AdminWarranties = () => {
                                 }}
                                 onMoveToPending={(id) => handleUpdateStatus(id, 'pending')}
                                 processingWarranty={processingId}
-                                onRefresh={() => fetchWarranties(false)}
+                                onRefresh={() => fetchWarranties(false, true)}
                             />
                         </div>
                     </CardContent>
