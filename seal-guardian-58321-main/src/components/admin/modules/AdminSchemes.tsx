@@ -64,6 +64,8 @@ export const AdminSchemes = () => {
     const [toReview, setToReview] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
+    /* Goes up on every save from the edit form, so an open scheme page reloads what was saved. */
+    const [savedVersion, setSavedVersion] = useState(0);
 
     const load = useCallback(() => {
         return api.get("/schemes/admin")
@@ -116,14 +118,14 @@ export const AdminSchemes = () => {
     const editorProps = {
         open: editing.open, scheme: editing.scheme,
         onClose: () => setEditing({ open: false, scheme: null }),
-        onSaved: (s: Scheme) => { setEditing({ open: false, scheme: null }); load(); setOpenId(s.id); },
+        onSaved: (s: Scheme) => { setEditing({ open: false, scheme: null }); load(); setOpenId(s.id); setSavedVersion(v => v + 1); },
     };
     const editor = editing.scheme?.id === SELL_MORE_SCHEME_ID ? <SellMoreEditor {...editorProps} /> : isTargets ? <TargetSchemeEditor {...editorProps} /> : <SchemeEditor {...editorProps} />;
 
     if (openId) {
         return (
             <>
-                <SchemeDetail key={openId} id={openId} startOnReview={toReview} onBack={() => { setOpenId(null); setToReview(false); load(); }}
+                <SchemeDetail key={openId} id={openId} version={savedVersion} startOnReview={toReview} onBack={() => { setOpenId(null); setToReview(false); load(); }}
                     onEdit={s => setEditing({ open: true, scheme: s })} onChanged={load} />
                 {editor}
             </>

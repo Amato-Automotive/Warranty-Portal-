@@ -58,8 +58,10 @@ function FilterBar({ q, onQ, placeholder, children, shown, total, onClear, activ
 
 const when = (d: string) => new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
-export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = false }: {
+export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = false, version = 0 }: {
     id: string; onBack: () => void; onEdit: (s: Scheme) => void; onChanged: () => void; startOnReview?: boolean;
+    /* Goes up each time the scheme is saved from the edit form, so the page (and the next Edit) reads the saved scheme. */
+    version?: number;
 }) {
     const { toast } = useToast();
     const [data, setData] = useState<Detail | null>(null);
@@ -91,6 +93,7 @@ export function SchemeDetail({ id, onBack, onEdit, onChanged, startOnReview = fa
             .catch(e => toast({ title: "Could not load the scheme", description: getErrorMessage(e, "Try again"), variant: "destructive" }));
     }, [id, toast]);
     useEffect(() => { load(); }, [load]);
+    useEffect(() => { if (version) { load(); setReloadKey(k => k + 1); } }, [version, load]);
 
     const act = async (key: string, fn: () => Promise<unknown>, done: string) => {
         setBusy(key);
