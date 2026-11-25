@@ -543,6 +543,9 @@ async function runMigrations() {
     /* Who sent an invoice when a distributor added it for one of its stores. */
     const [sbiBy]: any = await pool.query("SHOW COLUMNS FROM scheme_buy_invoices LIKE 'added_by_distributor_id'");
     if (!sbiBy.length) await pool.query('ALTER TABLE scheme_buy_invoices ADD COLUMN added_by_distributor_id CHAR(36) NULL');
+    /* Who at head office added an invoice for a store, when the admin did. */
+    const [sbiAdmin]: any = await pool.query("SHOW COLUMNS FROM scheme_buy_invoices LIKE 'added_by_admin_id'");
+    if (!sbiAdmin.length) await pool.query('ALTER TABLE scheme_buy_invoices ADD COLUMN added_by_admin_id CHAR(36) NULL, ADD COLUMN added_by_admin_name VARCHAR(120) NULL');
     /* Which of a distributor's stores the admin shows it in Buy More Get More, and whether it may add invoices. */
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_stores (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, store_id VARCHAR(36) NOT NULL, PRIMARY KEY (scheme_id, distributor_id, store_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_distributor_access (scheme_id CHAR(36) NOT NULL, distributor_id CHAR(36) NOT NULL, can_add TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (scheme_id, distributor_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);

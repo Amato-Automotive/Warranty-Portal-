@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, Clock, FileText, Gift, Loader2, Plus, Upload, X, XCircle } from "lucide-react";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -25,7 +25,15 @@ const MAX_FILES = 10;
 const MAX_MB = 10;
 const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
 
-export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, forStore }: { open: boolean; schemeId: string; products: string[]; forStore?: { id: string; name: string }; again: { invoice_no: string; invoice_date: string } | null; onClose: () => void; onDone: () => Promise<unknown> }) {
+/**
+ * The invoice form: upload, the reader fills in the sets, check and send. The
+ * admin uses it too, with its own fields on top (`extra`), its own
+ * `submit` and button text; stores and distributors use the defaults.
+ */
+export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, forStore, title, extra, extraReady = true, submit, sendLabel, onSent }: {
+    open: boolean; schemeId: string; products: string[]; forStore?: { id: string; name: string }; again: { invoice_no: string; invoice_date: string } | null; onClose: () => void; onDone: () => Promise<unknown>;
+    title?: string; extra?: ReactNode; extraReady?: boolean; submit?: (form: FormData) => Promise<string>; sendLabel?: string; onSent?: () => void;
+}) {
     const { toast } = useToast();
     const { t, tr } = useLanguage();
     const [files, setFiles] = useState<File[]>([]);
@@ -76,7 +84,7 @@ export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, 
     const remove = (i: number) => { const next = files.filter((_, j) => j !== i); setFiles(next); readThem(next); };
 
     const total = SET_KINDS.reduce((n, k) => n + (sets[k] || 0), 0);
-    const ready = files.length > 0 && invoiceNo.trim() && invoiceDate && total > 0 && !reading;
+    const ready = files.length > 0 && invoiceNo.trim() && invoiceDate && total > 0 && !reading && extraReady;
 
     const send = async () => {
         setSending(true);
@@ -87,10 +95,14 @@ export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, 
             form.append("invoice_date", invoiceDate);
             form.append("sets", JSON.stringify(sets));
             if (read) form.append("read_sets", JSON.stringify(read));
-            if (forStore) form.append("store_id", forStore.id);
-            await api.post(forStore ? `/schemes/distributor/${schemeId}/invoices` : `/schemes/${schemeId}/invoices`, form, { headers: { "Content-Type": "multipart/form-data" } });
-            toast({ title: tr("Invoice sent for approval", "इनवॉइस मंज़ूरी के लिए भेज दिया गया") });
+            if (submit) toast({ title: await submit(form) });
+            else {
+                if (forStore) form.append("store_id", forStore.id);
+                await api.post(forStore ? `/schemes/distributor/${schemeId}/invoices` : `/schemes/${schemeId}/invoices`, form, { headers: { "Content-Type": "multipart/form-data" } });
+                toast({ title: tr("Invoice sent for approval", "इनवॉइस मंज़ूरी के लिए भेज दिया गया") });
+            }
             reset();
+            onSent?.();
             onClose();
             await onDone();
         } catch (e) {
@@ -102,10 +114,11 @@ export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, 
         <Dialog open={open} onOpenChange={v => { if (!v && !sending) onClose(); }}>
             <DialogContent className="max-h-[90dvh] max-w-[calc(100%-1.5rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto overflow-x-hidden rounded-2xl sm:max-w-lg">
                 <DialogHeader>
-                    <DialogTitle className="break-words pr-8 text-lg font-black leading-snug sm:text-xl">{forStore ? `${tr("Add an invoice for", "इनवॉइस जोड़ें:")} ${forStore.name}` : tr("Add an invoice", "इनवॉइस जोड़ें")}</DialogTitle>
+                    <DialogTitle className="break-words pr-8 text-lg font-black leading-snug sm:text-xl">{title ?? (forStore ? `${tr("Add an invoice for", "इनवॉइस जोड़ें:")} ${forStore.name}` : tr("Add an invoice", "इनवॉइस जोड़ें"))}</DialogTitle>
                     <DialogDescription>{tr("Upload it and check the sets we read before you send it.", "अपलोड करें और भेजने से पहले पढ़े गए सेट जाँच लें।")}</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
+                    {extra}
                     <div className="space-y-2">
                         <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-slate-300 p-3 text-center text-sm font-medium text-slate-600 hover:border-orange-400 hover:bg-orange-50/40">
                             <Upload className="h-5 w-5 text-slate-400" />
@@ -150,7 +163,7 @@ export function InvoiceForm({ open, schemeId, products, again, onClose, onDone, 
                 <DialogFooter className="gap-2 sm:gap-0">
                     <Button variant="outline" className="w-full sm:w-auto" disabled={sending} onClick={onClose}>{t("Cancel")}</Button>
                     <Button className="w-full bg-orange-500 font-bold hover:bg-orange-600 sm:w-auto" disabled={!ready || sending} onClick={send}>
-                        {sending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}{tr("Send for approval", "मंज़ूरी के लिए भेजें")}
+                        {sending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}{sendLabel ?? tr("Send for approval", "मंज़ूरी के लिए भेजें")}
                     </Button>
                 </DialogFooter>
             </DialogContent>

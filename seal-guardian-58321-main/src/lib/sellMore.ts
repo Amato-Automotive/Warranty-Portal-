@@ -41,18 +41,18 @@ export interface StoreBuyMore {
     invoices: BuyMoreInvoice[]; approved: Sets; used: Sets; available: Sets; eligibility: BuyEligibility; rewards: number;
     waiting_sets: number; claims: FreeSet[]; products: string[];
 }
-export interface AdminBuyMoreInvoice extends BuyMoreInvoice { store_id: string; store_name: string; city: string | null; added_by?: string | null }
+export interface AdminBuyMoreInvoice extends BuyMoreInvoice { store_id: string; store_name: string; city: string | null; added_by?: string | null; added_by_admin?: string | null }
 export interface AdminFreeSet extends FreeSet { store_id: string; store_name: string; city: string | null; used: Sets; available: Sets }
 export interface AdminBuyMoreStore {
     store_id: string; store_name: string; store_code: string | null; city: string | null; state: string | null; brand: string;
     opted_at: string; approved: Sets; used: Sets; available: Sets; eligibility: BuyEligibility; rewards: number; waiting_sets: number; requests: number;
-    distributors?: string[];
+    distributors?: string[]; distributor_list?: { id: string; name: string }[];
 }
 export interface AdminBuyMoreDistributor {
     id: string; name: string; city: string | null; stores: number; shown: number; can_add: boolean; stores_active: number; approved_sets: number; waiting_sets: number;
     available_sets: number; ready: number; free_sets: number; invoices_added: number; invoices_by_stores: number;
 }
-export interface AdminBuyMore { stores: AdminBuyMoreStore[]; invoices: AdminBuyMoreInvoice[]; free_sets: AdminFreeSet[]; distributors?: AdminBuyMoreDistributor[] }
+export interface AdminBuyMore { products?: string[]; stores: AdminBuyMoreStore[]; invoices: AdminBuyMoreInvoice[]; free_sets: AdminFreeSet[]; distributors?: AdminBuyMoreDistributor[] }
 
 /** A distributor's own view: its stores in the scheme, each with its sets and invoices. */
 export interface DistributorBuyMoreStore {

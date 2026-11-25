@@ -696,6 +696,7 @@ const readInvoice = (r: any) => ({
     sets: readSets(json(r.sets, {})), read_sets: r.read_sets ? readSets(json(r.read_sets, {})) : null,
     status: r.status as 'pending' | 'approved' | 'rejected', review_note: r.review_note, reviewed_at: r.reviewed_at, created_at: r.created_at,
     added_by_distributor_id: r.added_by_distributor_id ? String(r.added_by_distributor_id) : null,
+    added_by_admin: r.added_by_admin_id ? String(r.added_by_admin_name ?? '').trim() || 'Admin' : null,
 });
 
 /** The seat cover names the invoice reader looks for: every warranty product and every series' products. */
@@ -756,8 +757,12 @@ async function distributorMayAdd(schemeId: string, distributorId: string) {
     return a ? Boolean(a.can_add) : true;
 }
 
-/** Checks and saves one Buy More invoice for a store. `addedBy` is the distributor that sent it, if one did. */
-async function saveBuyInvoice(req: Request, res: Response, scheme: Scheme, storeId: string, addedBy: string | null) {
+/**
+ * Checks and saves one Buy More invoice for a store. `addedBy` is the distributor
+ * that sent it (or that the admin says it came from). `admin` is set when head
+ * office adds it; `approve` then saves it already approved.
+ */
+async function saveBuyInvoice(req: Request, res: Response, scheme: Scheme, storeId: string, addedBy: string | null, admin?: { approve: boolean }) {
     const files = (uploadedFiles(req).invoice ?? []);
     const allowed = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'];
     const bad = files.find(f => !allowed.includes(f.ext) || f.size > 10 * 1024 * 1024);
@@ -777,11 +782,17 @@ async function saveBuyInvoice(req: Request, res: Response, scheme: Scheme, store
         const same = json<EntryFile[]>(r.files, []).find(f => f.sha256 && hashes.has(f.sha256));
         if (same) return res.status(400).json({ error: `"${same.name}" was already sent on ${dayOf(r.created_at)}` });
     }
+    const id = uuidv4();
+    const user = (req as any).user;
+    const approved = Boolean(admin?.approve);
     await db.execute(
-        'INSERT INTO scheme_buy_invoices (id, scheme_id, store_id, invoice_no, invoice_date, files, sets, read_sets, added_by_distributor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [uuidv4(), scheme.id, storeId, invoice_no, invoice_date, JSON.stringify(files), JSON.stringify(sets), req.body?.read_sets ? JSON.stringify(readSets(req.body.read_sets)) : null, addedBy]
+        `INSERT INTO scheme_buy_invoices (id, scheme_id, store_id, invoice_no, invoice_date, files, sets, read_sets, added_by_distributor_id, added_by_admin_id, added_by_admin_name, status, reviewed_by, reviewed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${approved ? 'NOW()' : 'NULL'})`,
+        [id, scheme.id, storeId, invoice_no, invoice_date, JSON.stringify(files), JSON.stringify(sets), req.body?.read_sets ? JSON.stringify(readSets(req.body.read_sets)) : null, addedBy,
+            admin ? (user?.id ?? null) : null, admin ? String(user?.name ?? '').slice(0, 120) || null : null, approved ? 'approved' : 'pending', approved ? (user?.id ?? null) : null]
     );
-    res.json({ success: true });
+    if (admin) log(req, 'SCHEME_BUY_INVOICE_ADDED_BY_ADMIN', scheme, { invoice_id: id, store_id: storeId, invoice_no, invoice_date, sets, distributor_id: addedBy, approved });
+    res.json({ success: true, id, status: approved ? 'approved' : 'pending' });
 }
 
 /** One store's own view: its choice, its warranty points and its category points (the ones its target is in) by day and month, each month's reward. */
@@ -1551,6 +1562,8 @@ export class SchemeController {
             };
             res.json({
                 success: true,
+                /* The seat cover names the invoice reader looks for when the admin adds an invoice. */
+                products: await seatCoverNames(scheme),
                 stores: opted.map((p: any) => {
                     const id = String(p.store_id);
                     const claims = claimRows.filter((c: any) => String(c.store_id) === id);
@@ -1558,6 +1571,7 @@ export class SchemeController {
                     return {
                         store_id: id, store_name: String(p.store_name ?? '').trim(), store_code: p.store_code ?? null, city: p.city ?? null, state: p.state ?? null, brand: p.brand,
                         distributors: (distsOf.get(String(p.user_id)) ?? []).map(d => d.name),
+                        distributor_list: (distsOf.get(String(p.user_id)) ?? []).map(d => ({ id: d.id, name: d.name })),
                         opted_at: p.terms.opted_at ?? p.joined_at, approved: b.approved, used: b.used, available: b.available, eligibility: b.eligibility, rewards: b.rewards,
                         waiting_sets: invoices.filter((i: any) => i.store_id === id && i.status === 'pending').reduce((n: number, i: any) => n + setsTotal(i.sets), 0),
                         requests: claims.filter((c: any) => c.status === 'requested').length,
@@ -1583,7 +1597,7 @@ export class SchemeController {
                             ready: ids.filter(id => balanceOf(id).eligibility.offer1.ready || balanceOf(id).eligibility.offer2_ready).length,
                             free_sets: ids.reduce((n, id) => n + balanceOf(id).rewards, 0),
                             invoices_added: invoices.filter((i: any) => i.added_by_distributor_id === r.id).length,
-                            invoices_by_stores: mine.filter((i: any) => !i.added_by_distributor_id).length,
+                            invoices_by_stores: mine.filter((i: any) => !i.added_by_distributor_id && !i.added_by_admin).length,
                         };
                     });
                 })(),
@@ -1625,6 +1639,36 @@ export class SchemeController {
         } catch (error: any) {
             console.error('[Schemes] buy more invoice:', error);
             res.status(500).json({ error: 'Could not update the invoice' });
+        }
+    }
+
+    /**
+     * Head office adds an invoice for a store on Option 2: the store sent it on
+     * WhatsApp or by email, or a distributor handed it in. Same checks as a
+     * store's own invoice (period, no future date, the same number or file only
+     * once). It can be saved approved straight away or left in the review queue.
+     */
+    static async adminBuyMoreAdd(req: Request, res: Response) {
+        try {
+            const scheme = await loadScheme(req.params.id);
+            if (!scheme || !isSellMore(scheme.id) || scheme.status === 'draft') return res.status(404).json({ error: 'Scheme not found' });
+            const storeId = String(req.body?.store_id ?? '');
+            const [[p]]: any = await db.execute(
+                'SELECT sp.terms, vd.user_id FROM scheme_participants sp JOIN vendor_details vd ON vd.id = sp.store_id WHERE sp.scheme_id = ? AND sp.store_id = ?',
+                [scheme.id, storeId]
+            );
+            if (!p || optionOf(json<any>(p.terms, {})) !== 'buy_more') return res.status(400).json({ error: 'This store is not on Buy More Get More' });
+            /* Credited to a distributor only if it is one of this store's distributors. */
+            const distributorId = String(req.body?.distributor_id ?? '').trim() || null;
+            if (distributorId) {
+                const [[m]]: any = await db.execute('SELECT 1 FROM franchise_distributors WHERE franchise_user_id = ? AND distributor_id = ? LIMIT 1', [p.user_id, distributorId]);
+                if (!m) return res.status(400).json({ error: "That distributor is not one of this store's distributors" });
+            }
+            const approve = ['1', 'true', 'yes'].includes(String(req.body?.approve ?? '').toLowerCase());
+            await saveBuyInvoice(req, res, scheme, storeId, distributorId, { approve });
+        } catch (error: any) {
+            console.error('[Schemes] admin buy more add:', error);
+            res.status(500).json({ error: 'Could not add the invoice' });
         }
     }
 

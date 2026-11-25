@@ -73,6 +73,7 @@ router.get('/admin/:id/sell-more/targets', ...read, SchemeController.adminSellMo
 router.put('/admin/:id/sell-more/targets', ...write, SchemeController.adminSellMoreTargetsSave);
 router.put('/admin/:id/sell-more/reward', ...write, SchemeController.adminSellMoreReward);
 router.get('/admin/:id/buy-more', ...read, SchemeController.adminBuyMore);
+router.post('/admin/:id/buy-more/invoices', ...write, entryFiles, SchemeController.adminBuyMoreAdd);
 router.put('/admin/:id/buy-more/invoices/:invoiceId', ...write, SchemeController.adminBuyMoreInvoice);
 router.put('/admin/:id/buy-more/free-sets/:claimId', ...write, SchemeController.adminBuyMoreFreeSet);
 router.get('/admin/:id/buy-more/distributors/:distributorId', ...read, SchemeController.adminDistributorStores);
