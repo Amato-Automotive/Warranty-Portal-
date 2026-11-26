@@ -25,8 +25,13 @@ async function pdfText(file: File, onProgress: ReadProgress): Promise<{ text: st
             return { promise, resolve, reject };
         };
     }
-    const pdfjs = await import("pdfjs-dist");
-    const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+    /* The legacy build: the modern one needs features only the newest browsers
+     * have (Map.getOrInsert, Math.sumPrecise, Uint8Array.toHex/fromBase64), so
+     * on many store phones (older Chrome, Android's browser, older iPhones,
+     * WhatsApp's in-app browser) it failed and the store saw "We couldn't read
+     * this file". The legacy build brings those itself. */
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const workerUrl = (await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url")).default;
     /* Hostinger serves .mjs as text/plain, which makes PDF.js's dynamic
      * worker import fail with "Setting up fake worker". Fetch the asset and
      * re-wrap it as a JavaScript blob so the browser sees the correct MIME
