@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rewardSlab, earned, eligibility, groupOf, inAudience, invoiceProblems, isSellMore, optionAllowed, readAudience, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
+import { rewardSlab, setsForPoints, earned, eligibility, groupOf, inAudience, invoiceProblems, isSellMore, optionAllowed, readAudience, noSets, optionOf, rateFor, readSets, redeemProblem, SELL_MORE_ID, seriesInMonth, setsForOffer, setsTotal, subtractSets, tierIdForMonth, usedProblem, worthOf } from '../sellMoreEarnMore.js';
 import { periodsOf } from '../schemeTargets.js';
 
 const rule = {
@@ -170,15 +170,26 @@ test('only the one scheme runs this way', () => {
     assert.ok(!isSellMore('8ecf2030-ff0b-437b-88a1-81ac354df46a'));
 });
 
-test('reward ladder: first rung is the target, each claim adds 6 points', () => {
+test('reward table: 12 points = 1 set, then 1 more set every 6 points', () => {
+    const table: [number, number][] = [[11, 0], [12, 1], [17, 1], [18, 2], [24, 3], [30, 4], [36, 5], [42, 6], [48, 7], [54, 8], [60, 9], [72, 11], [84, 13], [96, 15]];
+    for (const [p, sets] of table) assert.equal(setsForPoints(p), sets, `${p} points`);
+});
+
+test('the target decides whether there is a reward; the table decides how many sets', () => {
     assert.equal(rewardSlab(null, 10, 0), null);
     assert.equal(rewardSlab(0, 10, 0), null);
-    const first = rewardSlab(20, 14, 0)!;
-    assert.deepEqual([first.slab, first.points, first.to_next, first.sets], [1, 20, 6, 1]);
-    const reached = rewardSlab(20, 20, 0)!;
-    assert.equal(reached.to_next, 0);
-    const second = rewardSlab(20, 20, 1)!;
-    assert.deepEqual([second.slab, second.points, second.to_next], [2, 26, 6]);
-    assert.equal(rewardSlab(20, 33, 2)!.points, 32);
-    assert.equal(rewardSlab(20, 33, 2)!.to_next, 0);
+    const short = rewardSlab(54, 40, 0)!;
+    assert.deepEqual([short.points, short.to_next, short.sets], [54, 14, 8]);
+    assert.match(short.text, /On achieving 54 points: Get 8 sets/);
+    const reached = rewardSlab(54, 54, 0)!;
+    assert.deepEqual([reached.to_next, reached.sets, reached.total_sets], [0, 8, 8]);
+    /* A low target reached with high points still pays by the points. */
+    assert.equal(rewardSlab(12, 30, 0)!.sets, 4);
+});
+
+test('after a claim, more sets come due as points grow', () => {
+    const claimed = rewardSlab(54, 57, 8, 1)!;
+    assert.deepEqual([claimed.slab, claimed.points, claimed.to_next, claimed.sets], [2, 60, 3, 1]);
+    const more = rewardSlab(54, 72, 8, 1)!;
+    assert.deepEqual([more.to_next, more.sets, more.total_sets], [0, 3, 11]);
 });

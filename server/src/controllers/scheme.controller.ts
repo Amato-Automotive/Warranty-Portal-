@@ -677,7 +677,7 @@ async function sellMoreRewards(schemeId: string, storeIds: string[]) {
     const out = new Map<string, Map<string, any[]>>();
     if (!storeIds.length) return out;
     const [rows]: any = await db.query(
-        'SELECT id, store_id, month, slab_no, points, status, source, note, requested_at, sent_at FROM scheme_reward_requests WHERE scheme_id = ? AND store_id IN (?) ORDER BY slab_no ASC, requested_at ASC',
+        'SELECT id, store_id, month, slab_no, points, sets, status, source, note, requested_at, sent_at FROM scheme_reward_requests WHERE scheme_id = ? AND store_id IN (?) ORDER BY slab_no ASC, requested_at ASC',
         [schemeId, storeIds]
     );
     for (const r of rows) {
@@ -685,7 +685,7 @@ async function sellMoreRewards(schemeId: string, storeIds: string[]) {
         if (!out.has(k)) out.set(k, new Map());
         const m = out.get(k)!;
         const key = String(r.month);
-        m.set(key, [...(m.get(key) ?? []), { ...r, store_id: k, points: Number(r.points), slab_no: Number(r.slab_no ?? 1) }]);
+        m.set(key, [...(m.get(key) ?? []), { ...r, store_id: k, points: Number(r.points), slab_no: Number(r.slab_no ?? 1), sets: r.sets == null ? 1 : Number(r.sets) }]);
     }
     return out;
 }
@@ -821,7 +821,9 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
         months: [
             ...perMonth.map(([m, d]) => {
                 const rewardRows = rewards?.get(m.key) ?? [];
-                const slab = rewardSlab(d.target, d.calc.points, rewardRows.length);
+                /* Sets already claimed this month (requested or sent); the table pays the rest. */
+                const claimedSets = rewardRows.reduce((n: number, r: any) => n + r.sets, 0);
+                const slab = rewardSlab(d.target, d.calc.points, claimedSets, rewardRows.length);
                 const lastReward = rewardRows[rewardRows.length - 1] ?? null;
                 const calcDay = new Map(d.calc.days.map(x => [x.date, x.points]));
                 const calcSeries = new Map(seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on, d.tier_obj).map(s => [s.name, s.points]));
@@ -836,9 +838,10 @@ async function sellMoreForStore(scheme: Scheme, storeId: string) {
                     series: seriesInMonth(rows, scheme.settings.points, m.key, scheme.starts_on, scheme.ends_on).map(s => ({ ...s, category_points: calcSeries.get(s.name) ?? 0 })),
                     /* Requests open once the calculated points reach the target. */
                     can_request: Boolean(slab && slab.to_next === 0 && !lastReward || slab && slab.to_next === 0 && lastReward?.status === 'sent'),
-                    reward: lastReward ? { status: lastReward.status, note: lastReward.note, requested_at: lastReward.requested_at, sent_at: lastReward.sent_at } : null,
+                    reward: lastReward ? { status: lastReward.status, note: lastReward.note, requested_at: lastReward.requested_at, sent_at: lastReward.sent_at, sets: lastReward.sets } : null,
                     reward_slab: slab,
                     rewards_claimed: rewardRows.length,
+                    sets_claimed: claimedSets,
                 };
             }),
             ...periodsOf(scheme.starts_on, scheme.ends_on, 'month').filter(m => !shown.has(m.key)).map(m => ({
@@ -1222,6 +1225,9 @@ export class SchemeController {
                     months: Object.fromEntries(data.map(([m, d]) => [m.key, {
                         tier: d.tier, target: d.target, calculated: d.calc.points, store_points: d.plain.points,
                         warranties: d.calc.warranties, no_series: d.calc.no_series, reward: mine?.get(m.key)?.at(-1)?.status ?? null,
+                        /* The sets on its latest reward, and the sets it could ask for now by the table. */
+                        reward_sets: mine?.get(m.key)?.at(-1)?.sets ?? null,
+                        due_sets: (() => { const rs = mine?.get(m.key) ?? []; const s = rewardSlab(d.target, d.calc.points, rs.reduce((n: number, r: any) => n + r.sets, 0), rs.length); return s && s.to_next === 0 ? s.sets : 0; })(),
                     }])),
                 };
             });
@@ -1506,11 +1512,14 @@ export class SchemeController {
                 const note = String(req.body?.note ?? '').trim().slice(0, 500) || null;
                 const rows = (await sellMoreRows(scheme, [storeId])).get(storeId) ?? [];
                 const plain = earned(rows, worthOf(scheme.settings.points), months, scheme.starts_on, scheme.ends_on).months.find(m => m.key === month)?.points ?? 0;
+                /* Sent without a request: it is for the sets due now by the table (a request keeps its own). */
+                const due = ((await sellMoreForStore(scheme, storeId)).months as any[]).find(m => m.key === month)?.reward_slab;
+                const sets = due && due.to_next === 0 ? Math.max(1, Number(due.sets) || 1) : 1;
                 await db.execute(
-                    `INSERT INTO scheme_reward_requests (id, scheme_id, store_id, month, slab_no, points, status, source, note, sent_at, sent_by)
-                     VALUES (?, ?, ?, ?, ?, ?, 'sent', 'admin', ?, NOW(), ?)
+                    `INSERT INTO scheme_reward_requests (id, scheme_id, store_id, month, slab_no, points, sets, status, source, note, sent_at, sent_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', 'admin', ?, NOW(), ?)
                      ON DUPLICATE KEY UPDATE status = 'sent', note = VALUES(note), sent_at = NOW(), sent_by = VALUES(sent_by)`,
-                    [uuidv4(), scheme.id, storeId, month, slabNo, plain, note, by]
+                    [uuidv4(), scheme.id, storeId, month, slabNo, plain, sets, note, by]
                 );
             } else {
                 await db.execute(`DELETE FROM scheme_reward_requests WHERE scheme_id = ? AND store_id = ? AND month = ? AND slab_no = ? AND source = 'admin'`, [scheme.id, storeId, month, slabNo]);
@@ -2772,14 +2781,14 @@ export class SchemeController {
                 return res.status(404).json({ error: 'Scheme not found' });
             }
             const mine = await sellMoreForStore(scheme, store.id);
-            const month = (mine.months as { key: string; points: number; reward: any; reward_slab?: { slab: number }; future: boolean; can_request: boolean }[]).find(m => m.key === req.body?.month && !m.future) ?? null;
+            const month = (mine.months as { key: string; points: number; reward: any; reward_slab?: { slab: number; sets: number }; future: boolean; can_request: boolean }[]).find(m => m.key === req.body?.month && !m.future) ?? null;
             const problem = redeemProblem(mine.option, month, month?.reward?.status === 'requested');
             if (problem) return res.status(400).json({ error: problem });
             const slabNo = Math.max(1, Number(month?.reward_slab?.slab) || 1);
             /* The unique key stops a double tap making two requests for one slab. */
             await db.execute(
-                'INSERT IGNORE INTO scheme_reward_requests (id, scheme_id, store_id, month, slab_no, points) VALUES (?, ?, ?, ?, ?, ?)',
-                [uuidv4(), scheme.id, store.id, month!.key, slabNo, month!.points]
+                'INSERT IGNORE INTO scheme_reward_requests (id, scheme_id, store_id, month, slab_no, points, sets) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [uuidv4(), scheme.id, store.id, month!.key, slabNo, month!.points, Math.max(1, Number(month?.reward_slab?.sets) || 1)]
             );
             res.json({ success: true });
         } catch (error: any) {

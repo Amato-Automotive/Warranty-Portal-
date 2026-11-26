@@ -3,7 +3,7 @@ import { SET_KINDS, type SetKind, type Sets } from "./buyMoreReader";
 /** Sell More Earn More: this one scheme is hardcoded (see the server's services/sellMoreEarnMore.ts). */
 export const SELL_MORE_SCHEME_ID = "22dc9530-8c7e-4438-9230-4f7aa31d3e3d";
 
-export interface MonthReward { status: "requested" | "sent"; note: string | null; requested_at: string; sent_at: string | null }
+export interface MonthReward { status: "requested" | "sent"; note: string | null; requested_at: string; sent_at: string | null; sets?: number }
 export interface RewardSlab { slab: number; points: number; to_next: number; sets: number; label: string; text: string }
 export interface SellMoreDay { date: string; warranties: number; points: number; no_series?: number; store_points?: number; category_points?: number }
 export interface SeriesEarned { name: string; warranties: number; points: number; category_points?: number }
@@ -70,7 +70,7 @@ export interface SellMoreCard { opted: boolean; option: "sell_more" | "buy_more"
 export interface AdminMonthDetail { key: string; label: string; points: number; store_points: number; warranties: number; no_series: number; series: SeriesEarned[]; days: SellMoreDay[]; reward: MonthReward | null }
 export interface AdminSellMoreStore {
     store_id: string; store_name: string; store_code: string | null; city: string | null; state: string | null; brand: string; opted_at: string;
-    months: Record<string, { tier: string | null; target: number | null; calculated: number; store_points: number; warranties: number; no_series: number; reward: "requested" | "sent" | null }>;
+    months: Record<string, { tier: string | null; target: number | null; calculated: number; store_points: number; warranties: number; no_series: number; reward: "requested" | "sent" | null; reward_sets?: number | null; due_sets?: number }>;
 }
 export interface AdminSellMore {
     months: { key: string; label: string }[];

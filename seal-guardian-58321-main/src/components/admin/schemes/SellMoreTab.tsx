@@ -62,12 +62,12 @@ function StoreMonth({ schemeId, storeId, month, colSpan, version, onReward }: {
                                 <div className="space-y-2 p-3">
                                     {m.reward?.status === "sent" ? (
                                         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                                            <span className="font-semibold text-emerald-700">Sent{m.reward.sent_at ? ` ${stampDay(m.reward.sent_at)}` : ""}{m.reward.note ? `: ${m.reward.note}` : ""}</span>
+                                            <span className="font-semibold text-emerald-700">Sent{m.reward.sets ? ` ${m.reward.sets} set${m.reward.sets === 1 ? "" : "s"}` : ""}{m.reward.sent_at ? ` ${stampDay(m.reward.sent_at)}` : ""}{m.reward.note ? `: ${m.reward.note}` : ""}</span>
                                             <button type="button" disabled={busy} onClick={() => go("requested")} className="text-xs text-slate-400 hover:text-orange-600">Undo</button>
                                         </div>
                                     ) : (
                                         <>
-                                            {m.reward?.status === "requested" && <p className="text-xs font-semibold text-amber-700">Store asked on {stampDay(m.reward.requested_at)}</p>}
+                                            {m.reward?.status === "requested" && <p className="text-xs font-semibold text-amber-700">Store asked for {m.reward.sets ?? 1} set{(m.reward.sets ?? 1) === 1 ? "" : "s"} on {stampDay(m.reward.requested_at)}</p>}
                                             <div className="flex gap-1.5">
                                                 <Input value={note} onChange={e => setNote(e.target.value)} placeholder="What was sent" className="h-9 text-sm" aria-label={`What was sent for ${m.label}`} />
                                                 <Button size="sm" className="h-9 shrink-0 bg-orange-500 hover:bg-orange-600" disabled={busy} onClick={() => go("sent")}>Mark sent</Button>
@@ -290,8 +290,9 @@ export function SellMoreTab({ schemeId, refreshKey }: { schemeId: string; refres
                                             </span>
                                         </td>
                                         <td className="whitespace-nowrap px-3 py-2">
-                                            {m.reward === "sent" ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">Sent</span>
-                                                : m.reward === "requested" ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">Store asked</span>
+                                            {m.reward === "sent" ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">Sent{m.reward_sets ? ` · ${m.reward_sets} set${m.reward_sets === 1 ? "" : "s"}` : ""}</span>
+                                                : m.reward === "requested" ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">Store asked · {m.reward_sets ?? 1} set{(m.reward_sets ?? 1) === 1 ? "" : "s"}</span>
+                                                : m.due_sets ? <span className="rounded-full bg-orange-50 px-2 py-0.5 text-xs font-bold text-orange-700">{m.due_sets} set{m.due_sets === 1 ? "" : "s"} due · not asked</span>
                                                 : <span className="text-xs text-slate-400">Not asked</span>}
                                         </td>
                                         <td className="px-3 py-2 text-right">

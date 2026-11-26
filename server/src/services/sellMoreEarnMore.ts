@@ -65,19 +65,46 @@ export const SELL_MORE_REWARD_STEP_POINTS = 6;
 export const SELL_MORE_REWARD_STEP_SETS = 1;
 export const SELL_MORE_REWARD_LABEL = 'FOC – 2 Row Amaze Seat Covers';
 
-export function rewardSlab(target: number | null, achieved: number, claimed: number) {
+/** Option 1's reward table: 12 points = 1 set, then 1 more set for every 6 points (54 = 8, 72 = 11, 96 = 15). */
+export const SELL_MORE_REWARD_FIRST_POINTS = 12;
+export function setsForPoints(points: number): number {
+    const p = Number(points) || 0;
+    if (p < SELL_MORE_REWARD_FIRST_POINTS) return 0;
+    return Math.floor((p - SELL_MORE_REWARD_FIRST_POINTS) / SELL_MORE_REWARD_STEP_POINTS) + 1;
+}
+/** The fewest points that earn this many sets. */
+const pointsForSets = (sets: number) => SELL_MORE_REWARD_FIRST_POINTS + (Math.max(1, sets) - 1) * SELL_MORE_REWARD_STEP_POINTS;
+
+const setsText = (n: number) => `${n} set${n === 1 ? '' : 's'}`;
+
+/**
+ * Where a store stands on its month's reward. The target decides whether it
+ * earns a reward at all; once reached, the sets come from the table for the
+ * points achieved (target 54, achieved 54 = 8 sets), less what it has already
+ * claimed. Selling on after a claim makes more sets claimable.
+ *
+ *  - to_next 0: `sets` can be requested now (reached at `points`).
+ *  - to_next > 0: `sets` more become due at `points`.
+ */
+export function rewardSlab(target: number | null, achieved: number, claimedSets: number, claimedCount = claimedSets) {
     if (!target || target <= 0) return null;
-    const slab = Math.max(0, Number(claimed) || 0);
-    const points = roundPoints(target + slab * SELL_MORE_REWARD_STEP_POINTS);
-    const more = Math.max(0, roundPoints(points - (Number(achieved) || 0)));
-    return {
-        slab: slab + 1,
-        points,
-        to_next: more,
-        sets: SELL_MORE_REWARD_STEP_SETS,
-        label: SELL_MORE_REWARD_LABEL,
-        text: `On achieving ${points} points: Get ${SELL_MORE_REWARD_STEP_SETS} set – 2 Row Amaze Seat Covers.`,
-    };
+    const got = Number(achieved) || 0;
+    const claimed = Math.max(0, Number(claimedSets) || 0);
+    const atTarget = Math.max(1, setsForPoints(target));
+    const base = { slab: Math.max(0, Number(claimedCount) || 0) + 1, label: SELL_MORE_REWARD_LABEL };
+    if (got < target) {
+        const sets = Math.max(1, atTarget - claimed);
+        return { ...base, points: roundPoints(target), to_next: roundPoints(target - got), sets, total_sets: atTarget, text: `On achieving ${roundPoints(target)} points: Get ${setsText(sets)} – 2 Row Amaze Seat Covers.` };
+    }
+    const earnedSets = Math.max(atTarget, setsForPoints(got));
+    const due = earnedSets - claimed;
+    if (due > 0) {
+        const at = roundPoints(Math.max(target, pointsForSets(earnedSets)));
+        return { ...base, points: at, to_next: 0, sets: due, total_sets: earnedSets, text: `${roundPoints(got)} points achieved: Get ${setsText(due)} – 2 Row Amaze Seat Covers.` };
+    }
+    /* Everything earned so far is claimed: the next set comes at the next step of the table. */
+    const next = pointsForSets(earnedSets + 1);
+    return { ...base, points: next, to_next: roundPoints(next - got), sets: 1, total_sets: earnedSets + 1, text: `On achieving ${next} points: Get 1 more set – 2 Row Amaze Seat Covers.` };
 }
 
 export type SellMoreOption = 'sell_more' | 'buy_more';

@@ -575,6 +575,9 @@ async function runMigrations() {
       try { await pool.query('ALTER TABLE scheme_reward_requests DROP INDEX uq_srr_month'); } catch { /* older databases may not have the legacy key */ }
       await pool.query('ALTER TABLE scheme_reward_requests ADD UNIQUE KEY uq_srr_slab (scheme_id, store_id, month, slab_no)');
     }
+    /* How many free sets each Option 1 reward is for (the table by points); older rows are 1. */
+    const [srrSets]: any = await pool.query("SHOW COLUMNS FROM scheme_reward_requests LIKE 'sets'");
+    if (!srrSets.length) await pool.query('ALTER TABLE scheme_reward_requests ADD COLUMN sets INT NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS scheme_reminders (
          scheme_id CHAR(36) NOT NULL,
          window_start VARCHAR(16) NOT NULL,

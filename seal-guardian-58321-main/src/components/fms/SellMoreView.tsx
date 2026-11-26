@@ -239,8 +239,8 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                         {month.reward_slab && (
                             <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-800">
                                 {month.reward_slab.to_next > 0
-                                    ? tr(`Achieve ${points(month.reward_slab.to_next)} more points to get ${month.reward_slab.sets} set – 2 Row Amaze Seat Covers.`, `2 Row Amaze Seat Covers का ${month.reward_slab.sets} सेट पाने के लिए ${points(month.reward_slab.to_next)} पॉइंट और पाएं।`)
-                                    : tr(`Milestone reached: get ${month.reward_slab.sets} set – 2 Row Amaze Seat Covers.`, `माइलस्टोन पूरा: 2 Row Amaze Seat Covers का ${month.reward_slab.sets} सेट पाएं।`)}
+                                    ? tr(`Achieve ${points(month.reward_slab.to_next)} more points to get ${month.reward_slab.sets} set${month.reward_slab.sets === 1 ? "" : "s"} – 2 Row Amaze Seat Covers.`, `2 Row Amaze Seat Covers के ${month.reward_slab.sets} सेट पाने के लिए ${points(month.reward_slab.to_next)} पॉइंट और पाएं।`)
+                                    : tr(`Milestone reached: get ${month.reward_slab.sets} set${month.reward_slab.sets === 1 ? "" : "s"} – 2 Row Amaze Seat Covers.`, `माइलस्टोन पूरा: 2 Row Amaze Seat Covers के ${month.reward_slab.sets} सेट पाएं।`)}
                             </div>
                         )}
                     </div>
@@ -356,7 +356,11 @@ function Earned({ schemeId, data, reload }: { schemeId: string; data: StoreSellM
                 <DialogContent className="max-w-[calc(100%-2rem)] rounded-2xl sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle className="text-xl font-black">{tr(`Request reward for ${month?.label ?? ""}?`, `${month?.label ?? ""} के रिवॉर्ड की रिक्वेस्ट करें?`)}</DialogTitle>
-                        <DialogDescription>{tr("Head office will work out your reward and send it to you. You can ask once for each month.", "हेड ऑफिस आपका रिवॉर्ड तय करके आपको भेजेगा। हर महीने के लिए एक बार रिक्वेस्ट कर सकते हैं।")}</DialogDescription>
+                        <DialogDescription>{(() => {
+                            const n = month?.reward_slab?.sets ?? 1;
+                            return tr(`You are asking for ${n} set${n === 1 ? "" : "s"} of 2 Row Amaze Seat Covers. Head office will send ${n === 1 ? "it" : "them"} to you.`,
+                                `आप 2 Row Amaze Seat Covers के ${n} सेट की रिक्वेस्ट कर रहे हैं। हेड ऑफिस इन्हें आपको भेजेगा।`);
+                        })()}</DialogDescription>
                     </DialogHeader>
                     <DialogFooter className="gap-2">
                         <Button variant="outline" disabled={sending} onClick={() => setAsking(false)}>{t("Cancel")}</Button>
