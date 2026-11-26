@@ -1,3 +1,4 @@
+import { storeMatches } from "@/lib/storeSearch";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Link2, Loader2, Search, Trash2 } from "lucide-react";
 import api, { getErrorMessage } from "@/lib/api";
@@ -183,7 +184,7 @@ function Unlinked({ onChanged }: { onChanged: () => void }) {
     }, [linking, stores.length, toast]);
     const matches = useMemo(() => {
         const q = find.trim().toLowerCase();
-        return (q ? stores.filter(s => [s.store_name, s.store_code, s.city].some(v => (v || "").toLowerCase().includes(q))) : stores).slice(0, 8);
+        return stores.filter(s => storeMatches(q, [s.store_name, s.store_code, s.city])).slice(0, 8);
     }, [stores, find]);
     const link = async (storeId: string, name: string) => {
         if (!linking) return;
@@ -371,7 +372,7 @@ export function POSMHistory() {
     const rows = useMemo(() => {
         const term = q.trim().toLowerCase();
         return (d?.stores ?? [])
-            .filter(s => !term || [s.store_name, s.store_code, s.city, s.state, s.distributor, s.asm].some(v => String(v ?? "").toLowerCase().includes(term)))
+            .filter(s => storeMatches(term, [s.store_name, s.store_code, s.city, s.state, s.distributor, s.asm]))
             .filter(s => filter === "all" ? true : filter === "unlinked" ? !s.linked : !s.linked ? false
                 : filter === "needs" ? s.summary.needs_approval : filter === "pending_over" ? (s.summary.frp.state === "pending_over" || s.summary.jacket.state === "pending_over")
                 : filter === "flagged" ? s.flagged > 0 : s.summary.approval === filter)

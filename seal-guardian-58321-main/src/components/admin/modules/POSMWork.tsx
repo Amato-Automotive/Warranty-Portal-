@@ -1,3 +1,4 @@
+import { storeMatches } from "@/lib/storeSearch";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import api, { getErrorMessage } from "@/lib/api";
@@ -36,7 +37,7 @@ function StorePicker({ value, onPick }: { value: Store | null; onPick: (s: Store
     }, [toast]);
     const matches = useMemo(() => {
         const q = find.trim().toLowerCase();
-        return (q ? stores.filter(s => [s.store_name, s.store_code, s.city].some(v => (v || "").toLowerCase().includes(q))) : stores).slice(0, 8);
+        return stores.filter(s => storeMatches(q, [s.store_name, s.store_code, s.city])).slice(0, 8);
     }, [stores, find]);
     if (value) return (
         <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">

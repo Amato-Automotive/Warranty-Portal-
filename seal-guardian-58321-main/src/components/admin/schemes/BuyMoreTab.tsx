@@ -1,3 +1,4 @@
+import { storeMatches } from "@/lib/storeSearch";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import api, { getErrorMessage } from "@/lib/api";
@@ -200,7 +201,7 @@ function AdminAddInvoice({ schemeId, stores, products, preset, onClose, onDone }
     const dists = store?.distributor_list ?? [];
     const matches = useMemo(() => {
         const term = find.trim().toLowerCase();
-        return stores.filter(s => !term || [s.store_name, s.store_code, s.city, s.state].some(v => String(v ?? "").toLowerCase().includes(term)))
+        return stores.filter(s => storeMatches(term, [s.store_name, s.store_code, s.city, s.state]))
             .sort((a, b) => a.store_name.localeCompare(b.store_name)).slice(0, 8);
     }, [stores, find]);
     const pick = (id: string | null) => { setStoreId(id); setFrom(""); setFind(""); };
@@ -498,7 +499,7 @@ export function BuyMoreTab({ schemeId, refreshKey }: { schemeId: string; refresh
 
     const stores = useMemo(() => {
         const term = q.trim().toLowerCase();
-        return (d?.stores ?? []).filter(s => !term || [s.store_name, s.store_code, s.city, s.state].some(v => String(v ?? "").toLowerCase().includes(term)))
+        return (d?.stores ?? []).filter(s => storeMatches(term, [s.store_name, s.store_code, s.city, s.state]))
             .sort((a, b) => b.requests - a.requests || b.eligibility.total - a.eligibility.total || a.store_name.localeCompare(b.store_name));
     }, [d, q]);
 
