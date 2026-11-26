@@ -454,6 +454,11 @@ export const AdminWarrantyList = ({
                                                     if (invoiceFile) {
                                                         return (
                                                             <div className="space-y-4">
+                                                                {typeof invoiceFile === 'string' && /\.pdf($|\?)/i.test(invoiceFile) ? (
+                                                                    <div className="border rounded-lg bg-muted/50 overflow-hidden">
+                                                                        <iframe src={`${invoiceFile.startsWith('http') ? invoiceFile : `http://localhost:3000/uploads/${invoiceFile}`}#view=FitH`} title="Invoice PDF" className="h-[70vh] w-full bg-white" />
+                                                                    </div>
+                                                                ) : (
                                                                 <div className="border rounded-lg p-4 bg-muted/50 relative">
                                                                     <div className="absolute inset-0 flex items-center justify-center bg-muted/50 rounded-lg" id={`invoice-loader-${warranty.id}`}>
                                                                         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -479,6 +484,7 @@ export const AdminWarrantyList = ({
                                                                         <p>Preview not available (PDF or other format)</p>
                                                                     </div>
                                                                 </div>
+                                                                )}
                                                                 <Button
                                                                     className="w-full"
                                                                     onClick={() => {

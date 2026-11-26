@@ -181,7 +181,7 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, hideDocu
                     : <><Upload className="h-3 w-3" /> Replace</>}
                 <input
                     type="file"
-                    accept="image/*"
+                    accept={field === 'invoiceFileName' ? "image/*,application/pdf" : "image/*"}
                     className="hidden"
                     disabled={busy}
                     onChange={e => {

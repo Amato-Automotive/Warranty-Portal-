@@ -2,8 +2,11 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { WarrantyController } from '../controllers/warranty.controller.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { warrantyUpload, attachPublicUrls } from '../config/localUpload.js';
+import { preparePdfs } from '../services/pdfInvoice.js';
 
 const router = Router();
+/* The invoice may be a PDF: checked and shrunk before it is kept. */
+const invoicePdf = preparePdfs((_req, file) => file.fieldname === 'invoiceFile');
 
 /**
  * Multer error-catching middleware for warranty uploads.
@@ -25,7 +28,7 @@ const handleWarrantyUpload = (req: Request, res: Response, next: NextFunction) =
                 error: err.message || 'File upload failed'
             });
         }
-        attachPublicUrls(req, res, next);
+        invoicePdf(req, res, () => attachPublicUrls(req, res, next));
     });
 };
 

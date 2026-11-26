@@ -105,7 +105,7 @@ function warrantyFileName(
         .substring(0, 20);
     const timestamp = Date.now();
     const rawExt = (file.originalname.split('.').pop() || 'jpg').toLowerCase();
-    const ext = ['heic', 'heif'].includes(rawExt) ? 'jpg' : rawExt;
+    const ext = file.mimetype === 'application/pdf' ? 'pdf' : ['heic', 'heif'].includes(rawExt) ? 'jpg' : rawExt;
 
     cb(null, `${uid}_${fieldName}_${originalBase}_${timestamp}.${ext}`);
 }
@@ -255,8 +255,9 @@ export const warrantyUpload = multer({
     },
     fileFilter: (_req, file, cb) => {
         const ext = (file.originalname.split('.').pop() || '').toLowerCase();
-        const allowedExts = ['jpg', 'jpeg', 'png', 'heic', 'heif'];
-        const allowedMimes = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/jpg'];
+        // A PDF is only accepted as the invoice; preparePdfs checks the field, size and content.
+        const allowedExts = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'pdf'];
+        const allowedMimes = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/jpg', 'application/pdf'];
         if (allowedMimes.includes(file.mimetype) || allowedExts.includes(ext)) {
             cb(null, true);
         } else {

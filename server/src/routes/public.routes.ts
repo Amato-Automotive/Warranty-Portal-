@@ -3,6 +3,7 @@ import { StoreRatingsController } from '../controllers/storeRatings.controller.j
 import { PublicController } from '../controllers/public.controller.js';
 import { ProductController } from '../controllers/product.controller.js';
 import { warrantyUpload, attachPublicUrls } from '../config/localUpload.js';
+import { preparePdfs } from '../services/pdfInvoice.js';
 
 const router = Router();
 
@@ -20,6 +21,8 @@ router.get('/reject-warranty', PublicController.rejectVendorWarranty);
  * Multer error-catching middleware for public warranty uploads (QR flow).
  * Same pattern as warranty.routes.ts — prevents unhandled 500 on file size limit.
  */
+/* The invoice may be a PDF: checked and shrunk before it is kept. */
+const invoicePdf = preparePdfs((_req, file) => file.fieldname === 'invoiceFile');
 const handlePublicWarrantyUpload = (req: Request, res: Response, next: NextFunction) => {
     warrantyUpload.any()(req, res, (err: any) => {
         if (err) {
@@ -35,7 +38,7 @@ const handlePublicWarrantyUpload = (req: Request, res: Response, next: NextFunct
                 error: err.message || 'File upload failed'
             });
         }
-        attachPublicUrls(req, res, next);
+        invoicePdf(req, res, () => attachPublicUrls(req, res, next));
     });
 };
 

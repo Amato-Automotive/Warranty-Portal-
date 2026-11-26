@@ -6,6 +6,7 @@ import { ProductController } from '../controllers/product.controller.js';
 import { ImageRepairController } from '../controllers/imageRepair.controller.js';
 import { authenticateToken, requireRole, requirePermission, requireAnyPermission } from '../middleware/auth.js';
 import { warrantyUpload, attachPublicUrls } from '../config/localUpload.js';
+import { preparePdfs } from '../services/pdfInvoice.js';
 import { signalAdminAttentionOnSuccess as signalAttention } from '../services/adminAttention.service.js';
 import type { Request, Response, NextFunction } from 'express';
 import { activityOverview, storeActivity, trackingSince } from '../services/portalActivity.service.js';
@@ -19,6 +20,8 @@ const adminAuth = [authenticateToken, requireRole('admin')];
  * Mirrors the warranty routes' wrapper: without it multer's LIMIT_FILE_SIZE
  * surfaces as an unhandled 500 and the client just goes blank.
  */
+/* Replacing the invoice may use a PDF; every other photo stays a photo. */
+const invoicePdf = preparePdfs(req => (req.body as any)?.field === 'invoiceFileName');
 const handleAdminImageUpload = (req: Request, res: Response, next: NextFunction) => {
     warrantyUpload.any()(req, res, (err: any) => {
         if (err) {
@@ -31,7 +34,7 @@ const handleAdminImageUpload = (req: Request, res: Response, next: NextFunction)
             }
             return res.status(400).json({ success: false, error: err.message || 'File upload failed' });
         }
-        attachPublicUrls(req, res, next);
+        invoicePdf(req, res, () => attachPublicUrls(req, res, next));
     });
 };
 

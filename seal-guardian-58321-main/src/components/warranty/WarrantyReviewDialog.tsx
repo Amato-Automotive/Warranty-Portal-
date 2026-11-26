@@ -40,7 +40,7 @@ export function WarrantyReviewDialog({ open, sections, photos = [], loading, onM
         () => photos.map(p => ({
             ...p,
             src: p.file ? URL.createObjectURL(p.file) : p.url ?? null,
-            isPdf: p.file ? p.file.type === "application/pdf" : /\.pdf($|\?)/i.test(p.url ?? ""),
+            isPdf: p.file ? (p.file.type === "application/pdf" || /\.pdf$/i.test(p.file.name)) : /\.pdf($|\?)/i.test(p.url ?? ""),
         })),
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [open, ...photos.map(p => p.file ?? p.url)],

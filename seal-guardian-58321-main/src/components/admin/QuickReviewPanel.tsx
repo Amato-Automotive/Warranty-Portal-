@@ -346,7 +346,7 @@ export const QuickReviewPanel = ({
                 {busy ? "Saving" : "Replace"}
                 <input
                     type="file"
-                    accept="image/*"
+                    accept={field === 'invoiceFileName' ? "image/*,application/pdf" : "image/*"}
                     className="hidden"
                     disabled={busy}
                     onChange={e => {
@@ -922,7 +922,7 @@ export const QuickReviewPanel = ({
                                                 ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving</>
                                                 : <><Upload className="h-3 w-3" /> Upload invoice</>}
                                             <input
-                                                type="file" accept="image/*" className="hidden"
+                                                type="file" accept="image/*,application/pdf" className="hidden"
                                                 disabled={uploadingField === 'invoiceFileName'}
                                                 onChange={e => {
                                                     const file = e.target.files?.[0];

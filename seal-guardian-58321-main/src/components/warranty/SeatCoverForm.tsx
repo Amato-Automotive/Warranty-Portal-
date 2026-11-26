@@ -1089,18 +1089,20 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
 
   const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif'];
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const MAX_PDF_SIZE = 2 * 1024 * 1024; // an invoice PDF
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, field: 'invoiceFile' | 'mrpLabelFile' | 'seatCoverPhoto') => {
     const file = e.target.files?.[0];
     if (file) {
       // Check file type. PDFs are not accepted (the server rejects them), so say so now rather than at submit.
+      // A PDF is accepted for the invoice only, up to 2 MB. The server checks it again and shrinks it.
       if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-        toast({
-          title: "PDF files are not accepted",
-          description: "Please upload a photo or screenshot instead (JPG or PNG).",
-          variant: "destructive",
-        });
-        e.target.value = ''; // Reset input
+        const refuse = (title: string, description: string) => { toast({ title, description, variant: "destructive" }); e.target.value = ''; };
+        if (field !== 'invoiceFile') return refuse("PDF not accepted here", "Please upload a photo (JPG or PNG).");
+        if (file.size > MAX_PDF_SIZE) return refuse("PDF is over 2 MB", `This PDF is ${(file.size / 1024 / 1024).toFixed(1)} MB. Please upload a PDF of up to 2 MB, or a photo of the invoice.`);
+        const head = new TextDecoder("latin1").decode(await file.slice(0, 1024).arrayBuffer());
+        if (!head.includes("%PDF-")) return refuse("Not a readable PDF", "Please upload the invoice again, or a photo of it.");
+        setFormData(prev => ({ ...prev, [field]: file }));
         return;
       }
       if (!ALLOWED_FILE_TYPES.includes(file.type) && !isDng(file)) {
@@ -1913,7 +1915,7 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
                       ) : (
                         <div className="space-y-1">
                           <p className="text-sm font-medium text-slate-700">Click to upload or drag and drop</p>
-                          <p className="text-xs text-muted-foreground">(Max 2MB)</p>
+                          <p className="text-xs text-muted-foreground">Photo or PDF (max 2MB)</p>
                           {isEditing && initialData?.product_details?.invoiceFileName && (
                              <p className="text-[10px] text-emerald-600 font-medium mt-1">
                                 ✓ Proof of purchase is already uploaded
@@ -1925,7 +1927,7 @@ const SeatCoverForm = ({ hideExisting, initialData, warrantyId, onSuccess, isEdi
                     <Input
                       id="invoiceFile"
                       type="file"
-                      accept="image/*"
+                      accept="image/*,application/pdf"
                       onChange={(e) => handleFileChange(e, 'invoiceFile')}
                       required={!warrantyId}
                       disabled={loading}
