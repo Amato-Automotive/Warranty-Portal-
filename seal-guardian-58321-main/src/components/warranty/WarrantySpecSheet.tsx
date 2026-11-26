@@ -11,6 +11,7 @@ import { Download, FileText, ExternalLink, XCircle, Loader2, Pencil, Save, X, Ch
 import { Button } from "@/components/ui/button";
 import { cn, getWarrantyExpiration, formatToIST, formatToISTDateISO } from "@/lib/utils";
 import { useState, useEffect, createContext, useContext } from "react";
+import { invoiceImageUrl } from "@/lib/invoiceFile";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import api, { getErrorMessage } from "@/lib/api";
@@ -75,6 +76,8 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, hideDocu
     const { toast } = useToast();
     const [isEditing, setIsEditing] = useState(false);
     const [saving, setSaving] = useState(false);
+    /* A PDF invoice whose page-1 picture could not load (older PDFs have none). */
+    const [noPreview, setNoPreview] = useState<string | null>(null);
     const [products, setProducts] = useState<any[]>([]);
     const [editData, setEditData] = useState<any>({});
     const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
@@ -467,7 +470,12 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, hideDocu
                                         const isPdf = typeof raw === 'string' && raw.toLowerCase().endsWith('.pdf');
                                         return (
                                             <div className="relative group cursor-pointer rounded-xl overflow-hidden border border-orange-100 shadow-sm bg-slate-50 shrink-0 w-28 h-28" onClick={() => isPdf ? window.open(url, '_blank') : setViewingPhoto(raw)}>
-                                                {isPdf ? (
+                                                {isPdf && noPreview !== url ? (
+                                                    <>
+                                                        <img src={invoiceImageUrl(url)} alt="Invoice, page 1" onError={() => setNoPreview(url)} className="w-full h-full object-cover object-top transition-transform group-hover:scale-105" />
+                                                        <span className="absolute left-1.5 top-8 z-10 rounded bg-blue-600 px-1.5 py-0.5 text-[9px] font-bold text-white">PDF</span>
+                                                    </>
+                                                ) : isPdf ? (
                                                     <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50 text-blue-500">
                                                         <FileText className="h-8 w-8 mb-1" />
                                                         <span className="text-[10px] font-medium px-2 text-center">PDF Document</span>
@@ -525,7 +533,12 @@ export const WarrantySpecSheet = ({ isOpen, onClose, warranty, isAdmin, hideDocu
                                         const isPdf = typeof raw === 'string' && raw.toLowerCase().endsWith('.pdf');
                                         return (
                                             <div className="relative group cursor-pointer rounded-xl overflow-hidden border border-orange-100 shadow-sm bg-slate-50 shrink-0 w-28 h-28" onClick={() => isPdf ? window.open(url, '_blank') : setViewingPhoto(raw)}>
-                                                {isPdf ? (
+                                                {isPdf && noPreview !== url ? (
+                                                    <>
+                                                        <img src={invoiceImageUrl(url)} alt="Invoice, page 1" onError={() => setNoPreview(url)} className="w-full h-full object-cover object-top transition-transform group-hover:scale-105" />
+                                                        <span className="absolute left-1.5 top-8 z-10 rounded bg-blue-600 px-1.5 py-0.5 text-[9px] font-bold text-white">PDF</span>
+                                                    </>
+                                                ) : isPdf ? (
                                                     <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50 text-blue-500">
                                                         <FileText className="h-8 w-8 mb-1" />
                                                         <span className="text-[10px] font-medium px-2 text-center">PDF Document</span>

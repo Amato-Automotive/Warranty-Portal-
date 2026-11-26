@@ -29,7 +29,7 @@ const handleAdminImageUpload = (req: Request, res: Response, next: NextFunction)
             if (err.code === 'LIMIT_FILE_SIZE') {
                 return res.status(413).json({
                     success: false,
-                    error: 'File too large. Maximum allowed size is 5 MB. Please compress the image and try again.'
+                    error: 'File too large. Maximum allowed size is 10 MB. Please use a smaller file.'
                 });
             }
             return res.status(400).json({ success: false, error: err.message || 'File upload failed' });

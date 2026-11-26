@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { invoiceImageUrl } from "@/lib/invoiceFile";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,6 +63,8 @@ export const QuickReviewPanel = ({
     const { toast } = useToast();
     const [isEditing, setIsEditing] = useState(false);
     const [saving, setSaving] = useState(false);
+    /* A PDF invoice whose page-1 picture could not load (older PDFs have none). */
+    const [noPreview, setNoPreview] = useState<string | null>(null);
     const [products, setProducts] = useState<any[]>([]);
     const [editData, setEditData] = useState<any>({});
     /** Which image slot is mid-upload, so only that card shows a spinner. */
@@ -183,6 +186,9 @@ export const QuickReviewPanel = ({
     const invoiceUrl = invoiceFile 
         ? (typeof invoiceFile === 'string' && invoiceFile.startsWith('http') ? invoiceFile : `http://localhost:3000/uploads/${invoiceFile}`)
         : null;
+    /* What to show: the photo, or page 1 of the PDF as a picture. */
+    const invoiceImg = invoiceUrl ? invoiceImageUrl(invoiceUrl) : null;
+    const showPdfCard = isInvoicePdf && noPreview === invoiceImg;
 
     // Gather Photos
     const photosList: { key: string; label: string; url: string }[] = [];
@@ -869,7 +875,7 @@ export const QuickReviewPanel = ({
                         <div className="border border-slate-150 rounded-2xl bg-slate-50/50 p-3 flex flex-col h-64 relative overflow-hidden">
                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2 block">Proof of Purchase</span>
                             {invoiceUrl ? (
-                                isInvoicePdf ? (
+                                showPdfCard ? (
                                     <div className="flex-1 flex flex-col items-center justify-center bg-blue-50 text-blue-500 rounded-xl border border-dashed border-blue-200">
                                         <FileText className="h-10 w-10 mb-2" />
                                         <span className="text-xs font-bold text-center px-4">PDF Invoice Document</span>
@@ -877,14 +883,53 @@ export const QuickReviewPanel = ({
                                             View PDF <ExternalLink className="h-3 w-3 ml-1" />
                                         </Button>
                                     </div>
+                                ) : isInvoicePdf ? (
+                                    /* A PDF: all its pages, one under the other, scrolled with the mouse wheel. */
+                                    <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden bg-slate-100 ring-1 ring-slate-200 group">
+                                        <div
+                                            className={cn(
+                                                /* Only the webkit rules: setting scrollbar-width/color makes Chrome on Windows draw its own bar with arrows. */
+                                                "absolute inset-0 overflow-y-auto overscroll-contain",
+                                                "[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-button]:hidden",
+                                                "[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-orange-400/80 hover:[&::-webkit-scrollbar-thumb]:bg-orange-500"
+                                            )}
+                                            tabIndex={0}
+                                            aria-label="Invoice PDF pages, scroll to read"
+                                            onScroll={() => setZoomState(null)}
+                                        >
+                                            {/* Measured on the pages themselves, so the lens follows the scroll. */}
+                                            <div className="relative cursor-zoom-in"
+                                                 onMouseMove={(e) => invoiceImg && handleMouseMove(e, 'invoice', invoiceImg, 'Proof of Purchase')}
+                                                 onMouseLeave={() => setZoomState(null)}
+                                            >
+                                                <img
+                                                    src={invoiceImg ?? undefined}
+                                                    onError={() => setNoPreview(invoiceImg)}
+                                                    alt="Invoice PDF pages"
+                                                    className="block w-full h-auto"
+                                                />
+                                                {zoomState?.key === 'invoice' && (
+                                                    <div
+                                                        style={{ left: `${lensX}px`, top: `${lensY}px`, width: `${lensSize}px`, height: `${lensSize}px` }}
+                                                        className="absolute border-2 border-orange-500 bg-orange-500/10 pointer-events-none z-20 shadow-md backdrop-blur-[0.5px]"
+                                                    />
+                                                )}
+                                            </div>
+                                        </div>
+                                        <button type="button" onClick={() => window.open(invoiceUrl, '_blank')}
+                                            className="absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-bold uppercase text-blue-700 shadow-md hover:bg-white">
+                                            <FileText className="h-3 w-3" /> PDF · Open full <ExternalLink className="h-3 w-3" />
+                                        </button>
+                                        <ReplaceButton field="invoiceFileName" />
+                                    </div>
                                 ) : (
                                     <div className="flex-1 relative rounded-xl overflow-hidden bg-slate-900 flex items-center justify-center group cursor-zoom-in"
-                                         onMouseMove={(e) => invoiceUrl && !isInvoicePdf && handleMouseMove(e, 'invoice', invoiceUrl, 'Proof of Purchase')}
+                                         onMouseMove={(e) => invoiceImg && handleMouseMove(e, 'invoice', invoiceImg, 'Proof of Purchase')}
                                          onMouseLeave={() => setZoomState(null)}
                                     >
-                                        <img 
-                                            src={invoiceUrl} 
-                                            alt="Invoice File" 
+                                        <img
+                                            src={invoiceImg ?? undefined}
+                                            alt="Invoice File"
                                             style={{ transform: getImageTransformStyle('invoice') }}
                                             className="w-full h-full object-contain transition-transform duration-300"
                                         />

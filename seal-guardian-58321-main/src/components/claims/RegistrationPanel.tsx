@@ -6,6 +6,7 @@ import { cn, formatToIST } from "@/lib/utils";
 import { WarrantySpecSheet } from "@/components/warranty/WarrantySpecSheet";
 import { PhotoViewer } from "@/components/claims/PhotoViewer";
 import { day, isPhoto, type Claim } from "@/lib/claims";
+import { invoiceImageUrl, isPdfUrl } from "@/lib/invoiceFile";
 
 const Row = ({ label, value }: { label: string; value: React.ReactNode }) =>
     value ? (
@@ -18,12 +19,15 @@ const Row = ({ label, value }: { label: string; value: React.ReactNode }) =>
 /** Photos with what each one is, opening large in the viewer. */
 export const LabeledPhotos = ({ photos, className, claimId }: { photos: { label: string; url: string }[]; className?: string; claimId?: number }) => {
     const [open, setOpen] = useState<number | null>(null);
+    /* PDFs whose page-1 picture could not load (older PDFs have none). */
+    const [noPreview, setNoPreview] = useState<string[]>([]);
     return (<>
     <div className={cn("grid grid-cols-3 sm:grid-cols-4 gap-2", className)}>
         {photos.map((p, i) => (
             <button key={p.url} type="button" onClick={() => setOpen(i)} className="block min-w-0 text-left">
                 <span className="block aspect-square overflow-hidden rounded-xl border border-gray-200 bg-gray-100">
                     {isPhoto(p.url) ? <img src={p.url} alt={p.label} className="h-full w-full object-cover" loading="lazy" />
+                        : isPdfUrl(p.url) && !noPreview.includes(p.url) ? <img src={invoiceImageUrl(p.url)} alt={`${p.label}, page 1`} onError={() => setNoPreview(n => [...n, p.url])} className="h-full w-full object-cover object-top" loading="lazy" />
                         : <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs font-semibold text-gray-600"><FileText className="h-6 w-6" />PDF</span>}
                 </span>
                 <span className="mt-1 block truncate text-[11px] font-semibold text-gray-600">{p.label}</span>

@@ -20,7 +20,7 @@ const handleWarrantyUpload = (req: Request, res: Response, next: NextFunction) =
             if (err.code === 'LIMIT_FILE_SIZE') {
                 return res.status(413).json({
                     success: false,
-                    error: 'File too large. Maximum allowed size is 5 MB per file. Please use smaller images or compress them before uploading.'
+                    error: 'File too large. Maximum allowed size is 10 MB per file. Please use a smaller file.'
                 });
             }
             return res.status(400).json({

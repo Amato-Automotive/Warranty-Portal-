@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isEncryptedPdf, isPdfUpload, looksLikePdf, pdfProblem, PDF_MAX_BYTES } from '../pdfInvoice.js';
+import { isEncryptedPdf, isPdfUpload, looksLikePdf, pdfProblem, PDF_MAX_UPLOAD, tooBigAfterShrink } from '../pdfInvoice.js';
 
 const pdf = (body = '') => Buffer.from(`%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n${body}\ntrailer << /Root 1 0 R >>\n%%EOF`, 'latin1');
 
@@ -18,9 +18,14 @@ describe('invoice PDFs', () => {
         assert.match(pdfProblem(Buffer.alloc(0), 0)!, /not a readable PDF/);
     });
 
-    test('over 2 MB is refused; 2 MB exactly is fine', () => {
-        assert.match(pdfProblem(pdf(), PDF_MAX_BYTES + 1)!, /up to 2 MB/);
-        assert.equal(pdfProblem(pdf(), PDF_MAX_BYTES), null);
+    test('a PDF of up to 10 MB goes on to be shrunk; over 10 MB is refused at once', () => {
+        assert.equal(pdfProblem(pdf(), 6 * 1024 * 1024), null);
+        assert.equal(pdfProblem(pdf(), PDF_MAX_UPLOAD), null);
+        assert.match(pdfProblem(pdf(), PDF_MAX_UPLOAD + 1)!, /up to 10 MB/);
+    });
+
+    test('still too big after shrinking says so, with the size', () => {
+        assert.match(tooBigAfterShrink(2.6 * 1024 * 1024), /still 2.6 MB after compressing/);
     });
 
     test('a password-protected PDF is refused', () => {

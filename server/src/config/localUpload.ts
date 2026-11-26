@@ -250,7 +250,7 @@ export const warrantyUpload = multer({
         filename: warrantyFileName,
     }),
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB (already compressed client-side)
+        fileSize: 10 * 1024 * 1024, // photos arrive compressed (~1 MB); an invoice PDF may be up to 10 MB before the server shrinks it
         files: 6,                   // invoice + up to 5 photos
     },
     fileFilter: (_req, file, cb) => {
