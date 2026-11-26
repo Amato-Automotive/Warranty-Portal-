@@ -598,6 +598,42 @@ async function runMigrations() {
          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+    /* POSM already sent to each store (Noida office and plant depots), one row per item line. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS posm_dispatch_history (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         source VARCHAR(40) NOT NULL,
+         store_id VARCHAR(36) NULL,
+         store_code VARCHAR(30) NULL,
+         sheet_store_name VARCHAR(200) NULL,
+         city VARCHAR(100) NULL, state VARCHAR(100) NULL, distributor VARCHAR(150) NULL, asm VARCHAR(120) NULL,
+         item VARCHAR(60) NOT NULL,
+         design VARCHAR(100) NULL, major_colour VARCHAR(50) NULL, minor_colour VARCHAR(50) NULL, brand VARCHAR(30) NULL, store_kind VARCHAR(20) NULL,
+         qty INT NOT NULL,
+         status VARCHAR(30) NOT NULL,
+         request_date DATE NULL, dispatch_date DATE NULL, delivery_date DATE NULL, expected_dispatch DATE NULL, status_changed_on DATE NULL,
+         courier VARCHAR(80) NULL, docket_no VARCHAR(80) NULL, dispatched_by VARCHAR(80) NULL,
+         reason TEXT NULL, remarks TEXT NULL, address TEXT NULL, match_note VARCHAR(250) NULL,
+         flags JSON NULL,
+         import_batch VARCHAR(40) NULL, sheet_row INT NULL,
+         updated_by CHAR(36) NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         deleted_at TIMESTAMP NULL,
+         KEY idx_pdh_store (store_id, deleted_at),
+         KEY idx_pdh_code (store_code),
+         KEY idx_pdh_batch (import_batch)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* Each store's POSM type (old/new) and its FRP and Sample Jacket limits; no row = old (assumed), 2 and 20. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS posm_store_settings (
+         store_id VARCHAR(36) NOT NULL PRIMARY KEY,
+         store_type VARCHAR(10) NOT NULL DEFAULT 'old',
+         type_assumed TINYINT(1) NOT NULL DEFAULT 1,
+         frp_limit INT NOT NULL DEFAULT 2,
+         jacket_limit INT NOT NULL DEFAULT 20,
+         updated_by CHAR(36) NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
     // Lead Management's lists the admin keeps (review outcomes, channels), and
     // the two outcome columns as text, so an outcome the admin adds can be stored.
     await pool.query(`CREATE TABLE IF NOT EXISTS lead_options (

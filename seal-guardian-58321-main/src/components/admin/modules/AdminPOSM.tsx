@@ -18,6 +18,8 @@ import { POSMLines, POSMTracker } from "@/components/posm/POSMLines";
 import { POSMShop, requestForm } from "@/components/posm/POSMShop";
 import { POSMItemBuilder } from "./POSMItemBuilder";
 import { POSMItemDesk } from "./POSMItemDesk";
+import { POSMHistory } from "./POSMHistory";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface POSMRequest {
     id: number;
@@ -78,9 +80,19 @@ const itemsText = (r: POSMRequest) =>
     r.items?.length ? r.items.map(l => `${l.item_name} ×${l.line_status === 'rejected' ? 0 : (l.approved_qty ?? l.qty)}`).join(", ") : r.requirement;
 const stageOf = (s: string) => STAGES.find(x => x.statuses.includes(s))?.key ?? "approve";
 
+/**
+ * POSM for a login that only has the plant or Noida office switch: just POSM
+ * dispatch, without the requests and item builder (whose data it cannot open).
+ */
 export const AdminPOSM = () => {
+    const { user, hasPermission } = useAuth();
+    const full = Boolean((user as any)?.isSuperAdmin) || hasPermission('posm', 'read');
+    return full ? <AdminPOSMFull /> : <div className="space-y-6"><POSMHistory /></div>;
+};
+
+const AdminPOSMFull = () => {
     const { toast } = useToast();
-    const [page, setPage] = useState<'requests' | 'builder'>('requests');
+    const [page, setPage] = useState<'requests' | 'history' | 'builder'>('requests');
     const [requests, setRequests] = useState<POSMRequest[]>([]);
     const [loading, setLoading] = useState(true);
     const [catalogItems, setCatalogItems] = useState<PosmItem[]>([]);
@@ -421,7 +433,7 @@ export const AdminPOSM = () => {
     /* ---------- page ---------- */
     const pageSwitch = (
         <div className="inline-flex rounded-2xl border border-orange-100 bg-white p-1 shadow-sm">
-            {([['requests', 'Requests'], ['builder', 'Item builder']] as const).map(([v, label]) => (
+            {([['requests', 'Requests'], ['history', 'POSM Dispatch'], ['builder', 'Item builder']] as const).map(([v, label]) => (
                 <button key={v} type="button" onClick={() => setPage(v)}
                     className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-colors", page === v ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-800")}>
                     {label}
@@ -430,6 +442,7 @@ export const AdminPOSM = () => {
         </div>
     );
     if (page === 'builder') return <div className="space-y-6">{pageSwitch}<POSMItemBuilder /></div>;
+    if (page === 'history') return <div className="space-y-6">{pageSwitch}<POSMHistory /></div>;
 
     return (
         <div className="space-y-4">

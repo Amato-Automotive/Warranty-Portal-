@@ -12,6 +12,7 @@ import {
 } from "@/lib/posm";
 import { POSMLines, POSMTracker } from "@/components/posm/POSMLines";
 import { POSMShop, requestForm } from "@/components/posm/POSMShop";
+import { POSMReceived } from "@/components/posm/POSMReceived";
 
 interface POSMRequest {
     id: number;
@@ -56,7 +57,7 @@ const dmy = (d?: string | null) => (d ? d.split('-').reverse().join('/') : '');
 
 const POSMModule: React.FC = () => {
     const { toast } = useToast();
-    const [view, setView] = useState<'order' | 'mine'>('order');
+    const [view, setView] = useState<'order' | 'mine' | 'received'>('order');
 
     // Ordering
     const [catalog, setCatalog] = useState<PosmCatalog | null>(null);
@@ -192,7 +193,7 @@ const POSMModule: React.FC = () => {
             {/* Order / My requests */}
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="inline-flex rounded-xl border border-gray-100 bg-white p-1 shadow-sm">
-                    {([['order', 'Order POSM'], ['mine', `My requests${active.length ? ` (${active.length})` : ''}`]] as const).map(([v, label]) => (
+                    {([['order', 'Order POSM'], ['mine', `My requests${active.length ? ` (${active.length})` : ''}`], ['received', 'Received']] as const).map(([v, label]) => (
                         <button key={v} type="button" onClick={() => { setView(v); if (v === 'mine') setSelected(null); }}
                             className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-colors",
                                 view === v ? "bg-gray-900 text-white" : "text-gray-500 hover:text-gray-800")}>
@@ -202,7 +203,7 @@ const POSMModule: React.FC = () => {
                 </div>
             </div>
 
-            {view === 'order' ? (
+            {view === 'received' ? <POSMReceived /> : view === 'order' ? (
                 !catalog ? (
                     <div className="rounded-2xl border border-gray-100 bg-white p-10 text-center text-sm text-gray-500">
                         {catalogError ? <>{catalogError} <Button variant="link" onClick={loadCatalog}>Try again</Button></> : <Loader2 className="h-6 w-6 animate-spin text-brand-orange mx-auto" />}
