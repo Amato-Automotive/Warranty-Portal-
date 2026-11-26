@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import POSMController from '../controllers/posm.controller.js';
-import { authenticateToken, requirePermission, requireRole } from '../middleware/auth.js';
+import { POSMHistoryController } from '../controllers/posmHistory.controller.js';
+import { authenticateToken, requireAnyPermission, requirePermission, requireRole } from '../middleware/auth.js';
 import { posmUpload, posmItemUpload, attachPublicUrls } from '../config/localUpload.js';
 import { signalAdminAttentionOnSuccess as signalAttention } from '../services/adminAttention.service.js';
 
@@ -29,6 +30,27 @@ export const handleItemUpload = (req: Request, res: Response, next: NextFunction
         attachPublicUrls(req, res, next);
     });
 };
+
+// Dispatch history: what has already been sent to each store, limits and approval.
+/* Head office (POSM, or the Noida office switch) sees and edits everything; the plant switch opens only the plant's lines. */
+const historyRead = [authenticateToken, requireRole('admin'), requireAnyPermission(['posm', 'posm_noida'], 'read')];
+const historyWrite = [authenticateToken, requireRole('admin'), requireAnyPermission(['posm', 'posm_noida'], 'write')];
+const plantRead = [authenticateToken, requireRole('admin'), requireAnyPermission(['posm', 'posm_noida', 'posm_plant'], 'read')];
+const plantWrite = [authenticateToken, requireRole('admin'), requireAnyPermission(['posm', 'posm_plant'], 'write')];
+router.get('/admin/history/plant', ...plantRead, POSMHistoryController.plantLines);
+router.put('/admin/history/plant/lines/:id', ...plantWrite, POSMHistoryController.plantUpdate);
+router.post('/admin/history/plant/orders', ...historyWrite, POSMHistoryController.plantOrder);
+router.get('/admin/history/noida', ...historyRead, POSMHistoryController.noidaDispatches);
+router.post('/admin/history/noida', ...historyWrite, POSMHistoryController.noidaSave);
+router.get('/admin/history/stores', ...historyRead, POSMHistoryController.stores);
+router.get('/admin/history/stores/:storeId', ...historyRead, POSMHistoryController.store);
+router.put('/admin/history/stores/:storeId/settings', ...historyWrite, POSMHistoryController.saveSettings);
+router.get('/admin/history/lines', ...historyRead, POSMHistoryController.lines);
+router.get('/admin/history/unlinked', ...historyRead, POSMHistoryController.unlinked);
+router.post('/admin/history/link', ...historyWrite, POSMHistoryController.link);
+router.put('/admin/history/lines/:id', ...historyWrite, POSMHistoryController.updateLine);
+router.delete('/admin/history/lines/:id', ...historyWrite, POSMHistoryController.removeLine);
+router.get('/history', authenticateToken, requireRole('vendor'), POSMHistoryController.mine);
 
 // The item lists: stores read them to fill a request; the admin edits them.
 router.get('/catalog', authenticateToken, requireRole(['vendor', 'admin']), POSMController.getCatalog);

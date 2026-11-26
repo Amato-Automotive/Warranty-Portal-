@@ -209,6 +209,8 @@ export const canSeeAdminModule = (
     if (moduleId === 'profile') return true;      // always visible
     if (moduleId === 'admins') return !!user?.isSuperAdmin; // Super Admin only
     if (user?.isSuperAdmin) return true;          // super admin sees all
+    /* POSM also opens for the plant and the Noida office, each to its own part of POSM dispatch. */
+    if (moduleId === 'posm') return ['posm', 'posm_noida', 'posm_plant'].some(k => hasPermission(k, 'read'));
     const permKey = moduleToPermKey[moduleId];
     if (!permKey) return true;
     return hasPermission(permKey, 'read');

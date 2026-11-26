@@ -64,6 +64,8 @@ const PERMISSION_GROUPS: { label: string; modules: PermissionModule[] }[] = [
             { key: "announcements", label: "Announcements", description: "Broadcast messages to franchises" },
             { key: "grievances", label: "Complaints", description: "Support tickets & complaints" },
             { key: "posm", label: "POSM Requirements", description: "Marketing material requests" },
+            { key: "posm_noida", label: "POSM Dispatch: Noida office", description: "Noida office dispatches, FRP / jacket orders to the plant, store limits" },
+            { key: "posm_plant", label: "POSM Dispatch: Plant", description: "Only the plant's FRP / jacket lines: status, dates, docket, courier, reason" },
             { key: "schemes", label: "Offers & Schemes", description: "Create schemes, review entries, payouts" },
             { key: "feedback", label: "Review & Feedback", description: "Monthly franchise questions, answers and reminder" },
             { key: "store_ratings", label: "Store Ratings", description: "Customer ratings of stores and the rating display" },
