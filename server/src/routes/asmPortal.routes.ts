@@ -3,6 +3,8 @@ import { authenticateAnySession, requireRole } from '../middleware/auth.js';
 import { asmExpenseUpload, asmPhotoUpload, attachPublicUrls } from '../config/localUpload.js';
 import { AsmExpenseController } from '../controllers/asmExpense.controller.js';
 import { AsmPortalController } from '../controllers/asmPortal.controller.js';
+import { AsmInsightsController } from '../controllers/asmInsights.controller.js';
+import ClaimsController from '../controllers/claims.controller.js';
 import { signalAdminAttentionOnSuccess } from '../services/adminAttention.service.js';
 import POSMController from '../controllers/posm.controller.js';
 import GrievanceController from '../controllers/grievance.controller.js';
@@ -36,6 +38,19 @@ router.get('/leads', ...asmOnly, AsmPortalController.leads);
 router.get('/areas', ...asmOnly, AsmPortalController.areas);
 router.get('/stores', ...asmOnly, AsmPortalController.stores);
 router.get('/stores/:id', ...asmOnly, AsmPortalController.storeDetail);
+/* The ASM's stores' schemes, POSM sent and alerts (read-only). */
+router.get('/schemes', ...asmOnly, AsmInsightsController.schemes);
+router.get('/posm-sent', ...asmOnly, AsmInsightsController.posm);
+router.get('/stores/:id/posm-sent', ...asmOnly, AsmInsightsController.storePosm);
+router.get('/alerts', ...asmOnly, AsmInsightsController.alerts);
+router.get('/audits', ...asmOnly, AsmInsightsController.audits);
+router.get('/claims', ...asmOnly, ClaimsController.asmList);
+router.get('/orders', ...asmOnly, AsmInsightsController.orders);
+router.get('/warranties', ...asmOnly, AsmInsightsController.warranties);
+router.get('/warranty-stats', ...asmOnly, AsmInsightsController.warrantyStats);
+router.get('/posm-requests', ...asmOnly, AsmInsightsController.posmRequests);
+router.get('/grievances', ...asmOnly, AsmInsightsController.grievances);
+router.get('/feedback', ...asmOnly, AsmInsightsController.feedback);
 
 const photoUpload = (req: Request, res: Response, next: NextFunction) => {
     asmPhotoUpload.single('photo')(req, res, (err: any) => {

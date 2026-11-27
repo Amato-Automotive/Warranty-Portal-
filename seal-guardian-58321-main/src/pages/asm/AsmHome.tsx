@@ -15,9 +15,14 @@ import { AsmProfile, AsmAvatar, type AsmProfileData } from "@/components/asm/Asm
 import api from "@/lib/api";
 import { rupees, type BudgetSummary } from "@/lib/asmExpenses";
 import { BudgetCard } from "@/components/asm/BudgetCard";
+import { AsmAlerts, AsmSchemes } from "@/components/asm/AsmInsights";
+import { AsmAudits, AsmClaims } from "@/components/asm/AsmPhase2";
+import { AsmFeedback, AsmOrders } from "@/components/asm/AsmPhase3";
+import { AsmWarranties } from "@/components/asm/AsmWarranties";
+import { AsmComplaints, AsmPosmHub } from "@/components/asm/AsmRequests";
 import {
     Loader2, LogOut, Home, Receipt, User, ChevronLeft, ChevronRight, BriefcaseBusiness,
-    Inbox, MapPinned, CalendarDays, ArrowUpRight, Store, GraduationCap
+    Inbox, MapPinned, CalendarDays, ArrowUpRight, Store, GraduationCap, Gift, Package, ClipboardCheck, ShieldCheck, ShoppingCart, MessageSquareText, BadgeCheck, MessageSquareWarning
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -26,7 +31,7 @@ import type { LucideIcon } from "lucide-react";
  * cream canvas) with the ASM's own modules.
  */
 
-type AsmModule = "home" | "leads" | "stores" | "areas" | "expenses" | "profile";
+type AsmModule = "home" | "leads" | "stores" | "warranties" | "areas" | "schemes" | "posm" | "audits" | "claims" | "complaints" | "orders" | "feedback" | "expenses" | "profile";
 
 /* "training" is not a module: it opens the training store in its own tab. */
 const MENU: { label: string; items: { id: AsmModule | "training"; label: string; icon: LucideIcon; comingSoon?: boolean }[] }[] = [
@@ -36,7 +41,20 @@ const MENU: { label: string; items: { id: AsmModule | "training"; label: string;
         items: [
             { id: "leads", label: "My Leads", icon: Inbox },
             { id: "stores", label: "My Stores", icon: Store },
+            { id: "warranties", label: "Warranties", icon: BadgeCheck },
             { id: "areas", label: "My Areas", icon: MapPinned },
+        ],
+    },
+    {
+        label: "My Stores' Business",
+        items: [
+            { id: "schemes", label: "Offers & Schemes", icon: Gift },
+            { id: "posm", label: "POSM", icon: Package },
+            { id: "audits", label: "Store Audits", icon: ClipboardCheck },
+            { id: "claims", label: "Warranty Claims", icon: ShieldCheck },
+            { id: "complaints", label: "Complaints", icon: MessageSquareWarning },
+            { id: "orders", label: "Orders", icon: ShoppingCart },
+            { id: "feedback", label: "Review & Feedback", icon: MessageSquareText },
         ],
     },
     { label: "Operations", items: [{ id: "expenses", label: "Expenses", icon: Receipt }] },
@@ -44,7 +62,7 @@ const MENU: { label: string; items: { id: AsmModule | "training"; label: string;
 ];
 
 const TITLES: Record<AsmModule, string> = {
-    home: "Home", leads: "My Leads", stores: "My Stores", areas: "My Areas", expenses: "Expenses", profile: "My Profile",
+    home: "Home", leads: "My Leads", stores: "My Stores", warranties: "Warranties", areas: "My Areas", schemes: "Offers & Schemes", posm: "POSM", audits: "Store Audits", claims: "Warranty Claims", complaints: "Complaints", orders: "Orders", feedback: "Review & Feedback", expenses: "Expenses", profile: "My Profile",
 };
 
 /** The numbers on Home and the sidebar badge. */
@@ -265,7 +283,15 @@ const AsmHome = () => {
                         {active === "home" && <AsmHomeModule name={displayName} summary={summary} budget={budget} onOpen={go} />}
                         {active === "leads" && <AsmLeads />}
                         {active === "stores" && <AsmStores />}
+                        {active === "warranties" && <AsmWarranties />}
                         {active === "areas" && <AsmAreas />}
+                        {active === "schemes" && <AsmSchemes />}
+                        {active === "posm" && <AsmPosmHub />}
+                        {active === "audits" && <AsmAudits />}
+                        {active === "claims" && <AsmClaims />}
+                        {active === "complaints" && <AsmComplaints />}
+                        {active === "orders" && <AsmOrders />}
+                        {active === "feedback" && <AsmFeedback />}
                         {active === "expenses" && <AsmExpenses />}
                         {active === "profile" && (
                             <AsmProfile profile={profile} onChange={profileChanged} onSignOut={signOut} />
@@ -378,6 +404,7 @@ const AsmHomeModule = ({ name, summary, budget, onOpen }: { name: string; summar
                 ))}
             </div>
 
+            <AsmAlerts />
             <BudgetCard budget={budget} compact onOpen={() => onOpen("expenses")} />
         </div>
     );

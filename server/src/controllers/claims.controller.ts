@@ -473,6 +473,25 @@ export default class ClaimsController {
     }
 
     /**
+     * The ASM's stores' claims, read-only: the same view a distributor gets of
+     * its stores' claims. Shown whether or not claims are switched on for stores,
+     * plant sheet rows included (decided 27 Nov): it keeps the ASM informed.
+     */
+    static async asmList(req: AuthRequest, res: Response) {
+        try {
+            const [[asm]]: any = await db.execute('SELECT id FROM asms WHERE profile_id = ?', [req.user!.id]);
+            if (!asm) return bad(res, 'Your ASM account was not found', 403);
+            const [rows]: any = await db.execute(
+                `SELECT c.*, vd.store_name FROM warranty_claims c JOIN vendor_details vd ON vd.id = c.store_id
+                  WHERE vd.asm_id = ? ORDER BY c.id DESC LIMIT 500`, [asm.id]);
+            return ok(res, { live: true, claims: rows.map(fromRow).map((c: any) => ({ ...view(c, { actor: 'vendor' }, true), store_id: String(c.store_id), store_name: String(c.store_name ?? '').trim() })) });
+        } catch (e) {
+            console.error('claims.asmList', e);
+            return bad(res, 'Could not load claims', 500);
+        }
+    }
+
+    /**
      * The store's own approved warranties, newest first, so it can pick a
      * customer without typing; the screen filters them as the store types.
      */
