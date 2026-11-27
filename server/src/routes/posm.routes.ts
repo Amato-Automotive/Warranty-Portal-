@@ -41,6 +41,8 @@ router.get('/admin/history/plant', ...plantRead, POSMHistoryController.plantLine
 router.put('/admin/history/plant/lines/:id', ...plantWrite, POSMHistoryController.plantUpdate);
 router.post('/admin/history/plant/orders', ...historyWrite, POSMHistoryController.plantOrder);
 router.get('/admin/history/noida', ...historyRead, POSMHistoryController.noidaDispatches);
+router.get('/admin/history/sheet-sync', ...plantRead, POSMHistoryController.sheetSyncStatus);
+router.post('/admin/history/sheet-sync', ...plantRead, POSMHistoryController.sheetSyncNow);
 router.post('/admin/history/noida', ...historyWrite, POSMHistoryController.noidaSave);
 router.get('/admin/history/stores', ...historyRead, POSMHistoryController.stores);
 router.get('/admin/history/stores/:storeId', ...historyRead, POSMHistoryController.store);

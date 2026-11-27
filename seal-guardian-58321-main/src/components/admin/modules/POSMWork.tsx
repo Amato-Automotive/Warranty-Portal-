@@ -101,6 +101,7 @@ function PlantEdit({ l, onClose, onSaved }: { l: PlantLine; onClose: () => void;
                         <textarea value={f.reason} onChange={set("reason")} rows={2} className={cn("w-full rounded-md border px-3 py-2 text-sm", needsReason ? "border-rose-400 bg-rose-50" : "border-slate-300")} /></Field>
                     <Field label="Remarks" className="sm:col-span-2"><textarea value={f.remarks} onChange={set("remarks")} rows={2} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" /></Field>
                     {l.address && <p className="text-xs text-slate-500 sm:col-span-2"><b>Send to:</b> {l.address}</p>}
+                    {(l.dispatch_to || l.ticket_id) && <p className="text-xs text-slate-500 sm:col-span-2">{[l.dispatch_to, l.ticket_id ? `From POSM request ${l.ticket_id}: what you save here shows on the request too` : null].filter(Boolean).join(" · ")}</p>}
                 </div>
                 <datalist id="posm-couriers"><option>Trackon</option><option>DTDC</option><option>Delhivery</option><option>Blue Dart</option><option>By hand</option><option>Transport</option></datalist>
                 <DialogFooter className="gap-2">
@@ -223,7 +224,7 @@ export function PlantTab({ canEdit, canOrder }: { canEdit: boolean; canOrder: bo
             <div className="max-h-[70vh] overflow-auto rounded-xl border border-slate-200 bg-white">
                 <table className="w-max min-w-full text-xs">
                     <thead className="sticky top-0 z-10 bg-slate-50 text-left text-slate-500 shadow-[0_1px_0_#e2e8f0]">
-                        <tr>{["Date", "Depot", "Distributor", "Store", "Old/New", "Item", "Design", "Minor", "Major", "Qty", "Branding", "Status", "Expected", "Dispatch", "Docket", "Mode", "Reason", "Remarks", "Last changed by"].map(h => <th key={h} className={th}>{h}</th>)}</tr>
+                        <tr>{["Date", "Depot", "Distributor", "Store", "Old/New", "Item", "Design", "Minor", "Major", "Qty", "Branding", "Dispatch to", "Status", "Expected", "Dispatch", "Docket", "Mode", "Reason", "Remarks", "Last changed by"].map(h => <th key={h} className={th}>{h}</th>)}</tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {rows.map(l => (
@@ -231,12 +232,13 @@ export function PlantTab({ canEdit, canOrder }: { canEdit: boolean; canOrder: bo
                                 <td className={cn(td, "whitespace-nowrap")}>{shortDate(l.request_date)}</td>
                                 <td className={td}>{DEPOT_LABEL[l.source] ?? l.source}</td>
                                 <td className={cn(td, "min-w-[120px]")}>{l.distributor}</td>
-                                <td className={cn(td, "min-w-[160px] font-semibold text-slate-900")}>{l.portal_store_name || l.sheet_store_name}{!l.store_id && <span className="block text-[10px] font-semibold text-rose-600">Not linked</span>}</td>
+                                <td className={cn(td, "min-w-[160px] font-semibold text-slate-900")}>{l.portal_store_name || l.sheet_store_name}{!l.store_id && <span className="block text-[10px] font-semibold text-rose-600">Not linked</span>}{l.ticket_id && <span className="mt-0.5 block w-fit rounded bg-blue-50 px-1 text-[10px] font-semibold text-blue-700">Request {l.ticket_id}</span>}</td>
                                 <td className={td}>{l.store_kind}</td>
                                 <td className={cn(td, "whitespace-nowrap font-semibold")}>{l.item}</td>
                                 <td className={cn(td, "min-w-[110px]")}>{l.design}</td><td className={td}>{l.minor_colour}</td><td className={td}>{l.major_colour}</td>
                                 <td className={cn(td, "text-right font-bold tabular-nums")}>{l.qty}</td>
                                 <td className={td}>{l.brand}</td>
+                                <td className={cn(td, "min-w-[120px]")}>{l.dispatch_to ? l.dispatch_to.replace(/^Direct dispatch to /, "") : ""}</td>
                                 <td className={td}><span className={cn("whitespace-nowrap rounded-full px-2 py-0.5 font-semibold", STATUS_TONE(l.status))}>{l.status}</span></td>
                                 <td className={cn(td, "whitespace-nowrap", l.expected_dispatch && l.expected_dispatch < istToday() && !["Dispatched", "In Transit", "Delivered"].includes(l.status) && "font-semibold text-rose-600")}>{shortDate(l.expected_dispatch)}</td>
                                 <td className={cn(td, "whitespace-nowrap")}>{shortDate(l.dispatch_date)}</td>
@@ -246,7 +248,7 @@ export function PlantTab({ canEdit, canOrder }: { canEdit: boolean; canOrder: bo
                                 <td className={cn(td, "whitespace-nowrap text-slate-500")}>{l.updated_by_name ? `${l.updated_by_name}${l.status_changed_on ? `, ${shortDate(l.status_changed_on)}` : ""}` : ""}</td>
                             </tr>
                         ))}
-                        {!rows.length && <tr><td colSpan={19} className="px-4 py-10 text-center text-sm text-slate-500">No line matches.</td></tr>}
+                        {!rows.length && <tr><td colSpan={20} className="px-4 py-10 text-center text-sm text-slate-500">No line matches.</td></tr>}
                     </tbody>
                 </table>
             </div>
@@ -270,7 +272,7 @@ const NOIDA_ITEMS = POSM_ITEMS.filter(i => i !== "FRP" && i !== "Sample Jacket")
 interface Dispatch {
     key: string; line_ids: string[]; store_id: string | null; store_code: string | null; store_name: string | null; distributor: string | null; asm: string | null; state: string | null;
     dispatch_date: string | null; dispatched_by: string | null; courier: string | null; docket_no: string | null; delivery_date: string | null; status: string; remarks: string | null;
-    items: Record<string, number>; flags: string[];
+    items: Record<string, number>; flags: string[]; tickets?: string[];
 }
 
 /** One Noida office dispatch: its details and a quantity per item. New when `d` is null. */
@@ -382,7 +384,7 @@ export function NoidaTab({ canEdit }: { canEdit: boolean }) {
                         {page_.map(d => (
                             <tr key={d.key} onClick={() => canEdit && setEditing(d)} className={cn(canEdit && "cursor-pointer hover:bg-orange-50/40", !d.store_id && "bg-rose-50/40")}>
                                 <td className={cn(td, "whitespace-nowrap")}>{shortDate(d.dispatch_date)}</td>
-                                <td className={cn(td, "min-w-[160px] font-semibold text-slate-900")}>{d.store_name}{!d.store_id && <span className="block text-[10px] font-semibold text-rose-600">Not linked</span>}</td>
+                                <td className={cn(td, "min-w-[160px] font-semibold text-slate-900")}>{d.store_name}{!d.store_id && <span className="block text-[10px] font-semibold text-rose-600">Not linked</span>}{d.tickets?.map(t => <span key={t} className="mt-0.5 block w-fit rounded bg-blue-50 px-1 text-[10px] font-semibold text-blue-700">Request {t}</span>)}</td>
                                 <td className={cn(td, "font-mono")}>{d.store_code}</td>
                                 <td className={cn(td, "min-w-[120px]")}>{d.distributor}</td><td className={cn(td, "min-w-[100px]")}>{d.asm}</td><td className={td}>{d.state}</td>
                                 <td className={td}>{d.dispatched_by}</td><td className={td}>{d.courier}</td><td className={cn(td, "font-mono")}>{d.docket_no}</td>
@@ -404,6 +406,45 @@ export function NoidaTab({ canEdit }: { canEdit: boolean }) {
                 </span>
             </div>
             {editing && <NoidaEdit d={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={load} />}
+        </div>
+    );
+}
+
+/* ---------------- The plant and Noida sheets ---------------- */
+
+const ago = (iso: string | null) => {
+    if (!iso) return "";
+    const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+};
+
+/** When POSM dispatch last synced with the plant's and Noida office's Google Sheets, and a way to sync now. */
+export function SheetSyncBar({ onSynced }: { onSynced?: () => void }) {
+    const { toast } = useToast();
+    const [runs, setRuns] = useState<any[] | null>(null);
+    const [busy, setBusy] = useState(false);
+    const load = useCallback(() => api.get("/posm/admin/history/sheet-sync").then(r => setRuns(r.data.runs)).catch(() => setRuns([])), []);
+    useEffect(() => { load(); const t = setInterval(load, 60_000); return () => clearInterval(t); }, [load]);
+    const now = async () => {
+        setBusy(true);
+        try {
+            const r = await api.post("/posm/admin/history/sheet-sync");
+            const t = r.data.report.tabs as any[];
+            toast({ title: "Synced with the sheets", description: t.map(x => `${x.tab}: ${x.toPortal} to portal, ${x.toSheet} to sheet, ${x.addedToSheet} rows added`).join(" · ") });
+            await load(); onSynced?.();
+        } catch (e) { toast({ title: "Could not sync", description: getErrorMessage(e, "Try again"), variant: "destructive" }); }
+        finally { setBusy(false); }
+    };
+    if (!runs) return null;
+    const last = runs.find(r => r.finished_at);
+    const lastOk = runs.find(r => r.ok);
+    return (
+        <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2 text-xs ring-1", last && !last.ok ? "bg-rose-50 text-rose-800 ring-rose-200" : "bg-white text-slate-600 ring-slate-200")}>
+            <span className="font-semibold">Plant & Noida sheets</span>
+            {last && !last.ok
+                ? <span>Last sync failed {ago(last.finished_at)}: {String(last.error ?? "").slice(0, 160)}{lastOk ? ` · last good ${ago(lastOk.finished_at)}` : ""}</span>
+                : lastOk ? <span>Synced {ago(lastOk.finished_at)}, both ways, every 5 minutes</span> : <span>Not synced yet</span>}
+            <Button size="sm" variant="outline" className="ml-auto h-7 px-2.5 text-xs" disabled={busy} onClick={now}>{busy && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Sync now</Button>
         </div>
     );
 }

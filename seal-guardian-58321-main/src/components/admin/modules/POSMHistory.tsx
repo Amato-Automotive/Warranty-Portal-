@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn, downloadCSV } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { NoidaTab, PlantTab } from "./POSMWork";
+import { NoidaTab, PlantTab, SheetSyncBar } from "./POSMWork";
 import {
     APPROVAL_SHORT, APPROVAL_TONE, FLAG_LABEL, POSM_ITEMS, POSM_STATUSES, STATUS_TONE, designLine, shortDate,
     type Approval, type HistoryLine, type LineFlag, type HistoryStoreRow, type HistoryTotals, type LimitedItem, type StoreSettings, type StoreSummary, type UnlinkedGroup,
@@ -379,7 +379,7 @@ export function POSMHistory() {
             .sort((a, b) => Number(b.linked) - Number(a.linked) || a.store_name.localeCompare(b.store_name));
     }, [d, q, filter]);
 
-    if (!headOffice) return <PlantTab canEdit={canPlantEdit} canOrder={false} />;
+    if (!headOffice) return <div className="space-y-4"><SheetSyncBar /><PlantTab canEdit={canPlantEdit} canOrder={false} /></div>;
     if (!d) return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div>;
     const t = d.totals;
     const typeText = (s: HistoryStoreRow) => s.settings.store_type === "new" ? "New" : s.settings.type_assumed ? "Old (assumed)" : "Old";
@@ -405,6 +405,7 @@ export function POSMHistory() {
 
     return (
         <div className="space-y-4">
+            <SheetSyncBar onSynced={load} />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
                 {tile("Stores", t.stores + t.unlinked_stores, show("all"), view === "stores" && filter === "all")}
                 {tile("Within limit", t.within, show("within"), view === "stores" && filter === "within", "text-emerald-700")}

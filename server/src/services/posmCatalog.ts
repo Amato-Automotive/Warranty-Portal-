@@ -254,6 +254,8 @@ export interface PosmLine {
     delivered_at?: string | null;
     delivered_by?: 'admin' | 'franchise' | null;
     trail?: LineSnapshot[];
+    /** FRP / Sample jacket: the plant depot the admin sent it to on approval. */
+    depot?: 'ludhiana' | 'jaipur';
 }
 
 /** How much of each item a store already has this month and year (rejected lines do not count). */

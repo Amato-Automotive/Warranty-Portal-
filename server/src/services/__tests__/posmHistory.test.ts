@@ -6,7 +6,7 @@ const L = (item: string, qty: number, status: string, dispatch_date: string | nu
 
 describe('POSM dispatch history', () => {
     test('only Dispatched, In Transit and Delivered count as sent; Return counts as nothing', () => {
-        const s = summarise([L('Visiting Card', 200, 'Delivered'), L('Visiting Card', 100, 'Return'), L('Calendar', 1, 'In production'), L('Calendar', 2, 'In Transit')]);
+        const s = summarise([L('Visiting Card', 200, 'Delivered'), L('Visiting Card', 100, 'Return'), L('Calendar', 1, 'WIP'), L('Calendar', 2, 'In Transit')]);
         assert.deepEqual(s.sent, { 'Visiting Card': 200, Calendar: 2 });
     });
 
@@ -31,7 +31,7 @@ describe('POSM dispatch history', () => {
     });
 
     test('pending that would take a store over is a warning, not yet over', () => {
-        const s = summarise([L('FRP', 1, 'Delivered'), L('FRP', 2, 'In production')]);
+        const s = summarise([L('FRP', 1, 'Delivered'), L('FRP', 2, 'WIP')]);
         assert.equal(s.frp.state, 'pending_over');
         assert.equal(s.approval, 'within');
         assert.equal(s.frp.pending, 2);
@@ -47,30 +47,30 @@ describe('POSM dispatch history', () => {
         const fresh = summarise([L('Visiting Card', 200, 'Delivered')], { ...DEFAULT_SETTINGS, store_type: 'new', type_assumed: false });
         assert.equal(fresh.approval, 'new_open');
         assert.equal(fresh.frp.limit, null);
-        const used = summarise([L('FRP', 3, 'In production')], { ...DEFAULT_SETTINGS, store_type: 'new', type_assumed: false });
+        const used = summarise([L('FRP', 3, 'WIP')], { ...DEFAULT_SETTINGS, store_type: 'new', type_assumed: false });
         assert.equal(used.approval, 'new_used');
         assert.equal(used.needs_approval, true);
     });
 
     test('the last dispatch is the latest sent line', () => {
-        const s = summarise([L('FRP', 1, 'Delivered', '2026-03-11'), L('FRP', 1, 'Delivered', '2026-09-02'), L('Calendar', 1, 'In production', '2026-11-01')]);
+        const s = summarise([L('FRP', 1, 'Delivered', '2026-03-11'), L('FRP', 1, 'Delivered', '2026-09-02'), L('Calendar', 1, 'WIP', '2026-11-01')]);
         assert.equal(s.last_dispatch, '2026-09-02');
     });
 
     test('the plant can only change its own fields', () => {
-        const r = checkPlantEdit({ status: 'In production', reason: null, dispatch_date: null }, { status: 'Ready to dispatch', qty: 9, design: 'X', remarks: ' ok ' }, '2026-11-26');
+        const r = checkPlantEdit({ status: 'WIP', reason: null, dispatch_date: null }, { status: 'Ready to dispatch', qty: 9, design: 'X', remarks: ' ok ' }, '2026-11-26');
         assert.ok(r.ok);
         assert.deepEqual(r.ok && r.set, { status: 'Ready to dispatch', remarks: 'ok' });
     });
 
     test('on hold or out of stock needs a reason', () => {
-        const was = { status: 'In production', reason: null, dispatch_date: null };
+        const was = { status: 'WIP', reason: null, dispatch_date: null };
         assert.equal(checkPlantEdit(was, { status: 'On hold' }, '2026-11-26').ok, false);
         assert.equal(checkPlantEdit(was, { status: 'On hold', reason: 'Pattern delay' }, '2026-11-26').ok, true);
     });
 
     test('dispatched gets today as its dispatch date if none; a future or malformed date is refused', () => {
-        const was = { status: 'In production', reason: null, dispatch_date: null };
+        const was = { status: 'WIP', reason: null, dispatch_date: null };
         const r = checkPlantEdit(was, { status: 'Dispatched' }, '2026-11-26');
         assert.ok(r.ok && r.set.dispatch_date === '2026-11-26' && r.statusChanged);
         assert.equal(checkPlantEdit(was, { dispatch_date: '2026-12-01' }, '2026-11-26').ok, false);
@@ -79,13 +79,13 @@ describe('POSM dispatch history', () => {
 
     test('a line needs a reason when held, out of stock, or past its expected date', () => {
         assert.equal(needsReason({ status: 'On hold', reason: null, expected_dispatch: null }, '2026-11-26'), true);
-        assert.equal(needsReason({ status: 'In production', reason: null, expected_dispatch: '2026-11-20' }, '2026-11-26'), true);
+        assert.equal(needsReason({ status: 'WIP', reason: null, expected_dispatch: '2026-11-20' }, '2026-11-26'), true);
         assert.equal(needsReason({ status: 'Dispatched', reason: null, expected_dispatch: '2026-11-20' }, '2026-11-26'), false);
         assert.equal(needsReason({ status: 'On hold', reason: 'Stock', expected_dispatch: null }, '2026-11-26'), false);
     });
 
     test('a new order past the limit, counting what is pending, needs approval', () => {
-        assert.match(orderNeedsApproval([L('FRP', 1, 'Delivered'), L('FRP', 1, 'In production')], DEFAULT_SETTINGS, [{ item: 'FRP', qty: 1 }])!, /past the limit of 2/);
+        assert.match(orderNeedsApproval([L('FRP', 1, 'Delivered'), L('FRP', 1, 'WIP')], DEFAULT_SETTINGS, [{ item: 'FRP', qty: 1 }])!, /past the limit of 2/);
         assert.equal(orderNeedsApproval([L('FRP', 1, 'Delivered')], DEFAULT_SETTINGS, [{ item: 'FRP', qty: 1 }]), null);
         const fresh = { ...DEFAULT_SETTINGS, store_type: 'new' as const, type_assumed: false };
         assert.equal(orderNeedsApproval([], fresh, [{ item: 'FRP', qty: 5 }]), null);

@@ -105,7 +105,7 @@ export function POSMLines({ lines, items, limits, onDecide, disabled }: {
     );
 }
 
-/** Where a request stands: Sent → Approved → In production → Dispatched → Delivered. */
+/** Where a request stands: Sent → Approved → WIP → Dispatched → Delivered. */
 export function POSMTracker({ status }: { status: string }) {
     if (status === "rejected") return <p className="text-sm font-bold text-red-600">This request was not approved. See the messages below.</p>;
     const order = PROGRESS.map(p => p.status as string);
