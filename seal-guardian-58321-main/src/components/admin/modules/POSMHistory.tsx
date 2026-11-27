@@ -23,7 +23,7 @@ import {
 type Filter = "all" | "needs" | Approval | "pending_over" | "flagged" | "unlinked";
 const FILTERS: [Filter, string][] = [
     ["all", "All stores"], ["needs", "Needs approval for more"], ["over", "Over limit"], ["reached", "Limit reached"], ["within", "Within limit"],
-    ["new_used", "New: one-time used"], ["new_open", "New: one-time open"], ["pending_over", "Plant pending would go over"], ["flagged", "Has lines to check"], ["unlinked", "Not linked to a store"],
+    ["pending_over", "Plant pending would go over"], ["flagged", "Has lines to check"], ["unlinked", "Not linked to a store"],
 ];
 
 const LIMIT_TONE: Record<LimitedItem["state"], string> = { ok: "text-slate-900", pending_over: "text-orange-600", reached: "text-amber-700", over: "text-rose-600" };
@@ -134,13 +134,19 @@ export function StoreDetail({ storeId, onClose, onChanged }: { storeId: string; 
 
                         <div className="grid gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
                             <label className="space-y-1"><span className="block text-xs font-semibold text-slate-600">Store type{d.settings.type_assumed && <span className="ml-1 font-normal text-amber-700">(assumed)</span>}</span>
-                                <select value={form.store_type} onChange={e => setForm({ ...form, store_type: e.target.value as "old" | "new" })} className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm">
+                                <select value={form.store_type} onChange={e => {
+                                    /* The usual limits follow the type (FRP 2; jackets 20 old, 30 new) unless they were set by hand. */
+                                    const t = e.target.value as "old" | "new";
+                                    const usual = (x: "old" | "new") => ({ frp_limit: 2, jacket_limit: x === "new" ? 30 : 20 });
+                                    const was = usual(form.store_type);
+                                    setForm({ ...form, store_type: t, ...(form.frp_limit === was.frp_limit && form.jacket_limit === was.jacket_limit ? usual(t) : {}) });
+                                }} className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm">
                                     <option value="old">Old store</option><option value="new">New store</option>
                                 </select></label>
                             <label className="space-y-1"><span className="block text-xs font-semibold text-slate-600">FRP limit</span>
-                                <Input type="number" min={0} value={form.frp_limit} disabled={form.store_type === "new"} onChange={e => setForm({ ...form, frp_limit: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} className="h-9" /></label>
+                                <Input type="number" min={0} value={form.frp_limit} onChange={e => setForm({ ...form, frp_limit: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} className="h-9" /></label>
                             <label className="space-y-1"><span className="block text-xs font-semibold text-slate-600">Sample Jacket limit</span>
-                                <Input type="number" min={0} value={form.jacket_limit} disabled={form.store_type === "new"} onChange={e => setForm({ ...form, jacket_limit: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} className="h-9" /></label>
+                                <Input type="number" min={0} value={form.jacket_limit} onChange={e => setForm({ ...form, jacket_limit: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} className="h-9" /></label>
                             <Button className="h-9 bg-orange-500 font-bold hover:bg-orange-600" disabled={saving || (!dirty && !d.settings.type_assumed)} onClick={saveSettings}>{saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}{d.settings.type_assumed && !dirty ? "Confirm" : "Save"}</Button>
                         </div>
 
@@ -412,12 +418,11 @@ export function POSMHistory() {
     return (
         <div className="space-y-4">
             <SheetSyncBar onSynced={load} />
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
                 {tile("Stores", t.stores + t.unlinked_stores, show("all"), view === "stores" && filter === "all")}
                 {tile("Within limit", t.within, show("within"), view === "stores" && filter === "within", "text-emerald-700")}
                 {tile("Limit reached", t.reached, show("reached"), view === "stores" && filter === "reached", "text-amber-700")}
                 {tile("Over limit", t.over, show("over"), view === "stores" && filter === "over", "text-rose-600")}
-                {tile("New: one-time used", t.new_used, show("new_used"), view === "stores" && filter === "new_used", "text-violet-700")}
                 {tile("All dispatch lines", t.lines, () => setView("lines"), view === "lines")}
                 {tile("Unlinked lines", t.unlinked, () => setView("unlinked"), view === "unlinked", t.unlinked ? "text-rose-600" : "")}
             </div>

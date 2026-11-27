@@ -595,6 +595,10 @@ async function runMigrations() {
     await addColumn('posm_requests', 'dispatch', 'dispatch JSON NULL');
     await addColumn('posm_requests', 'delivery', 'delivery JSON NULL');
     await addColumn('posm_requests', 'history', 'history JSON NULL');
+    /* Urgent: the ASM or head office marks a request so the plant makes it first. */
+    await addColumn('posm_requests', 'urgent', 'urgent TINYINT(1) NOT NULL DEFAULT 0');
+    await addColumn('posm_requests', 'urgent_by', 'urgent_by VARCHAR(120) NULL');
+    await addColumn('posm_requests', 'urgent_at', 'urgent_at TIMESTAMP NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS posm_settings (
          id TINYINT NOT NULL PRIMARY KEY,
          catalog JSON NOT NULL,

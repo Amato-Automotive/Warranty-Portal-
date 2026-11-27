@@ -63,6 +63,7 @@ router.get('/stores/:id/posm-catalog', ...asmOnly, POSMController.getCatalogForA
 router.post('/stores/:id/posm', ...asmOnly, signalAdminAttentionOnSuccess, posmItemUpload, POSMController.submitItemsByAsm);
 router.get('/posm/:id', ...asmOnly, POSMController.getTicketDetails);
 router.post('/posm/:id/messages', ...asmOnly, posmNoteUpload, POSMController.sendMessage);
+router.put('/posm/:id/urgent', ...asmOnly, POSMController.setUrgent);
 
 router.get('/grievance-categories', ...asmOnly, GrievanceCategoryController.listForForm);
 router.post('/stores/:id/grievances', ...asmOnly, signalAdminAttentionOnSuccess, grievanceUpload,

@@ -65,7 +65,7 @@ export function posmOverview(lines: ALine[], settings: Map<string, StoreSettings
 
     const risks: Risk[] = [
         { key: 'over', label: 'Over the FRP / jacket limit', severity: 'critical', unit: 'stores', count: storeRows.filter(s => s.sum.approval === 'over').length,
-            why: 'These stores have been sent more FRP or Sample Jackets than their limit (FRP 2, jackets 20 for an old store).', action: 'Check why, and hold further FRP / jackets unless approved.' },
+            why: 'These stores have been sent more FRP or Sample Jackets than their limit (FRP 2; jackets 20 for an old store, 30 for a new one).', action: 'Check why, and hold further FRP / jackets unless approved.' },
         { key: 'overdue', label: 'Overdue at the plant', severity: 'critical', unit: 'lines', count: overdue.length,
             why: 'Past the expected dispatch date and still not dispatched.', action: 'Follow up with the depot; the store is waiting.' },
         { key: 'low_sales', label: 'High POSM, low sales', severity: 'serious', unit: 'stores', count: lowSales.length,

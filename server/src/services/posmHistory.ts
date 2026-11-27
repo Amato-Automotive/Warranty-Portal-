@@ -49,11 +49,17 @@ export interface StoreSettings {
 
 export const DEFAULT_SETTINGS: StoreSettings = { store_type: 'old', type_assumed: true, frp_limit: 2, jacket_limit: 20 };
 
+/** The usual limits by store type (27 Nov): FRP 2 for every store; Sample Jackets 20 for an old store, 30 for a new one. */
+export const DEFAULT_LIMITS = { old: { frp_limit: 2, jacket_limit: 20 }, new: { frp_limit: 2, jacket_limit: 30 } } as const;
+
 export type LimitState = 'ok' | 'pending_over' | 'reached' | 'over';
 
 export interface LimitedItem { sent: number; pending: number; limit: number | null; left: number | null; state: LimitState }
 
-/** Where the store stands: old within / at / over the limit, or new before / after its one-time request. */
+/**
+ * Where the store stands against its limits. (new_open / new_used were the old
+ * one-time rule for new stores; since 27 Nov a new store has limits too.)
+ */
 export type Approval = 'within' | 'reached' | 'over' | 'new_open' | 'new_used';
 
 export interface StoreSummary {
@@ -79,16 +85,13 @@ function limited(lines: HistoryLine[], item: string, limit: number | null): Limi
 export function summarise(lines: HistoryLine[], settings: StoreSettings = DEFAULT_SETTINGS): StoreSummary {
     const sent: Record<string, number> = {};
     for (const l of lines) if (isSent(l.status)) sent[l.item] = (sent[l.item] ?? 0) + l.qty;
-    const old = settings.store_type === 'old';
-    const frp = limited(lines, 'FRP', old ? settings.frp_limit : null);
-    const jacket = limited(lines, 'Sample Jacket', old ? settings.jacket_limit : null);
-    let approval: Approval;
-    if (old) approval = frp.state === 'over' || jacket.state === 'over' ? 'over' : frp.state === 'reached' || jacket.state === 'reached' ? 'reached' : 'within';
-    else approval = lines.some(l => (l.item === 'FRP' || l.item === 'Sample Jacket') && l.status !== 'Return') ? 'new_used' : 'new_open';
+    const frp = limited(lines, 'FRP', settings.frp_limit);
+    const jacket = limited(lines, 'Sample Jacket', settings.jacket_limit);
+    const approval: Approval = frp.state === 'over' || jacket.state === 'over' ? 'over' : frp.state === 'reached' || jacket.state === 'reached' ? 'reached' : 'within';
     const dates = lines.filter(l => isSent(l.status) && l.dispatch_date).map(l => l.dispatch_date as string).sort();
     return {
         sent, frp, jacket, approval,
-        needs_approval: approval === 'reached' || approval === 'over' || approval === 'new_used',
+        needs_approval: approval !== 'within',
         lines: lines.length,
         last_dispatch: dates.length ? dates[dates.length - 1] : null,
     };
@@ -171,7 +174,6 @@ export function needsReason(l: { status: string; reason: string | null; expected
  */
 export function orderNeedsApproval(lines: HistoryLine[], settings: StoreSettings, order: { item: string; qty: number }[]): string | null {
     const s = summarise(lines, settings);
-    if (settings.store_type === 'new') return s.approval === 'new_used' ? 'This new store has had its one-time FRP / Sample Jacket request.' : null;
     for (const [item, v, limit] of [['FRP', s.frp, settings.frp_limit], ['Sample Jacket', s.jacket, settings.jacket_limit]] as const) {
         const add = order.filter(o => o.item === item).reduce((n, o) => n + o.qty, 0);
         if (add && v.sent + v.pending + add > limit) return `${item}: ${v.sent} sent and ${v.pending} pending; ${add} more goes past the limit of ${limit}.`;

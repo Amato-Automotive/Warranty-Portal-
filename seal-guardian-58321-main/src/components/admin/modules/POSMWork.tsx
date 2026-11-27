@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { POSM_ITEMS, POSM_STATUSES, STATUS_TONE, shortDate, type HistoryLine } from "@/lib/posmHistory";
+import { tableRows, type PosmField, type TableRow } from "@/lib/posm";
 
 /**
  * Working in the portal instead of the two sheets:
@@ -67,7 +68,9 @@ const Field = ({ label, children, className }: { label: string; children: React.
 
 /* ---------------- Plant ---------------- */
 
-type PlantLine = HistoryLine & { portal_store_name: string | null; updated_by_name: string | null; needs_reason: boolean; address: string | null };
+/** urgent: its request was marked urgent by the ASM or head office (the list puts these first). */
+type PlantLine = HistoryLine & { portal_store_name: string | null; updated_by_name: string | null; needs_reason: boolean; address: string | null; urgent?: boolean; urgent_by?: string | null };
+const isUrgentOpen = (l: PlantLine) => Boolean(l.urgent) && !['Dispatched', 'In Transit', 'Delivered', 'Return'].includes(l.status);
 
 /** The plant's part of a line: status, dates, docket, courier, reason, remarks. */
 function PlantEdit({ l, onClose, onSaved }: { l: PlantLine; onClose: () => void; onSaved: () => void }) {
@@ -113,7 +116,8 @@ function PlantEdit({ l, onClose, onSaved }: { l: PlantLine; onClose: () => void;
     );
 }
 
-type OrderLine = { item: "FRP" | "Sample Jacket"; design: string; major_colour: string; minor_colour: string; qty: string };
+/** typed: the design was typed in ("Other") rather than picked from the catalog. */
+type OrderLine = { item: "FRP" | "Sample Jacket"; design: string; major_colour: string; minor_colour: string; qty: string; typed?: boolean };
 const blankLine = (): OrderLine => ({ item: "FRP", design: "", major_colour: "", minor_colour: "", qty: "1" });
 
 /** The Noida office places an FRP / Sample Jacket order with a depot. */
@@ -129,11 +133,32 @@ function PlantOrder({ onClose, onSaved }: { onClose: () => void; onSaved: () => 
     const [needs, setNeeds] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const setLine = (i: number, k: keyof OrderLine, v: string) => setLines(ls => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+    /* FRP designs as the store picks them: the catalog's design table for the brand, which brings its colours. */
+    const [frpField, setFrpField] = useState<PosmField | null>(null);
+    useEffect(() => {
+        api.get("/posm/catalog").then(r => {
+            const frp = (r.data.data?.catalog?.items ?? []).find((it: any) => it.id === "frp");
+            setFrpField((frp?.fields ?? []).find((f: PosmField) => f.type === "table") ?? null);
+        }).catch(() => setFrpField(null));
+    }, []);
+    const designs: TableRow[] = useMemo(() => (frpField ? tableRows(frpField, brand === "AUTOCRUZE" ? "AC" : "AF") : []), [frpField, brand]);
+    const OTHER = "__other__";
+    const pickDesign = (i: number, v: string) => setLines(ls => ls.map((l, j) => {
+        if (j !== i) return l;
+        if (v === OTHER) return { ...l, design: "", major_colour: "", minor_colour: "", typed: true };
+        const row = designs.find(d => d.cells[0] === v);
+        return { ...l, design: v, major_colour: row?.cells[1] ?? "", minor_colour: row?.cells[2] ?? "", typed: false };
+    }));
+    /* A Sample Jacket is just a quantity; a brand change clears FRP designs that brand does not have. */
+    const setItem = (i: number, item: OrderLine["item"]) => setLines(ls => ls.map((l, j) => (j === i ? { ...l, item, design: "", major_colour: "", minor_colour: "", typed: false } : l)));
+    useEffect(() => {
+        setLines(ls => ls.map(l => (l.item === "FRP" && !l.typed && l.design && !designs.some(d => d.cells[0] === l.design) ? { ...l, design: "", major_colour: "", minor_colour: "" } : l)));
+    }, [designs]);
     const ready = depot && store && lines.length && lines.every(l => Number(l.qty) >= 1 && (l.item !== "FRP" || l.design.trim())) && (!needs || approval?.trim());
     const save = async () => {
         setSaving(true);
         try {
-            const r = await api.post("/posm/admin/history/plant/orders", { depot, store_id: store!.id, brand, address, remarks, approval_note: approval ?? undefined, lines: lines.map(l => ({ ...l, qty: Number(l.qty) })) });
+            const r = await api.post("/posm/admin/history/plant/orders", { depot, store_id: store!.id, brand, address, remarks, approval_note: approval ?? undefined, lines: lines.map(({ typed: _typed, ...l }) => ({ ...l, qty: Number(l.qty) })) });
             toast({ title: `${r.data.added} line${r.data.added === 1 ? "" : "s"} sent to the ${depot === "ludhiana" ? "Ludhiana" : "Jaipur"} depot` });
             onSaved(); onClose();
         } catch (e: any) {
@@ -157,11 +182,23 @@ function PlantOrder({ onClose, onSaved }: { onClose: () => void; onSaved: () => 
                     <div className="space-y-2">
                         <p className="text-xs font-semibold text-slate-600">Lines</p>
                         {lines.map((l, i) => (
-                            <div key={i} className="grid grid-cols-2 items-end gap-2 rounded-lg border border-slate-200 p-2 sm:grid-cols-[130px_1fr_100px_100px_70px_32px]">
-                                <select value={l.item} onChange={e => setLine(i, "item", e.target.value)} className={sel} aria-label="Item"><option>FRP</option><option>Sample Jacket</option></select>
-                                <Input value={l.design} onChange={e => setLine(i, "design", e.target.value)} placeholder={l.item === "FRP" ? "Design, e.g. U FOCUS" : "Design (optional)"} className="h-9" aria-label="Design" />
-                                <Input value={l.major_colour} onChange={e => setLine(i, "major_colour", e.target.value)} placeholder="Major colour" className="h-9" aria-label="Major colour" />
-                                <Input value={l.minor_colour} onChange={e => setLine(i, "minor_colour", e.target.value)} placeholder="Minor colour" className="h-9" aria-label="Minor colour" />
+                            <div key={i} className={cn("grid items-end gap-2 rounded-lg border border-slate-200 p-2", l.item === "FRP" ? "grid-cols-2 sm:grid-cols-[130px_1fr_100px_100px_70px_32px]" : "grid-cols-[130px_1fr_70px_32px]")}>
+                                <select value={l.item} onChange={e => setItem(i, e.target.value as OrderLine["item"])} className={sel} aria-label="Item"><option>FRP</option><option>Sample Jacket</option></select>
+                                {l.item === "FRP" ? (
+                                    <>
+                                        {l.typed || !designs.length ? (
+                                            <Input value={l.design} onChange={e => setLine(i, "design", e.target.value)} placeholder="Design, e.g. U FOCUS" className="h-9" aria-label="Design" />
+                                        ) : (
+                                            <select value={l.design} onChange={e => pickDesign(i, e.target.value)} className={sel} aria-label="Design">
+                                                <option value="">Pick the design</option>
+                                                {designs.map(d => <option key={d.cells[0]} value={d.cells[0]}>{d.cells[0]}{d.cells[3] ? ` · ${d.cells[3]}` : ""}</option>)}
+                                                <option value={OTHER}>Other (type it)</option>
+                                            </select>
+                                        )}
+                                        <Input value={l.major_colour} onChange={e => setLine(i, "major_colour", e.target.value)} readOnly={!l.typed && designs.length > 0} placeholder="Major colour" className={cn("h-9", !l.typed && designs.length > 0 && "bg-slate-50")} aria-label="Major colour" />
+                                        <Input value={l.minor_colour} onChange={e => setLine(i, "minor_colour", e.target.value)} readOnly={!l.typed && designs.length > 0} placeholder="Minor colour" className={cn("h-9", !l.typed && designs.length > 0 && "bg-slate-50")} aria-label="Minor colour" />
+                                    </>
+                                ) : <span className="self-center text-xs text-slate-500">How many jackets</span>}
                                 <Input value={l.qty} onChange={e => setLine(i, "qty", e.target.value.replace(/\D/g, ""))} className="h-9 text-right" aria-label="Quantity" />
                                 <button type="button" disabled={lines.length === 1} onClick={() => setLines(ls => ls.filter((_, j) => j !== i))} className="flex h-9 items-center justify-center text-slate-400 hover:text-rose-600 disabled:opacity-30" aria-label="Remove line"><X className="h-4 w-4" /></button>
                             </div>
@@ -202,7 +239,7 @@ export function PlantTab({ canEdit, canOrder }: { canEdit: boolean; canOrder: bo
         const term = q.trim().toLowerCase();
         return (lines ?? []).filter(l =>
             (depot === "all" || l.source === depot)
-            && (status === "all" ? true : status === "open" ? !["Dispatched", "In Transit", "Delivered", "Return"].includes(l.status) : status === "reason" ? l.needs_reason : l.status === status)
+            && (status === "all" ? true : status === "open" ? !["Dispatched", "In Transit", "Delivered", "Return"].includes(l.status) : status === "reason" ? l.needs_reason : status === "urgent" ? isUrgentOpen(l) : l.status === status)
             && (!term || [l.portal_store_name, l.sheet_store_name, l.store_code, l.distributor, l.design, l.docket_no].some(v => String(v ?? "").toLowerCase().includes(term))));
     }, [lines, depot, status, q]);
     useEffect(() => { setPage(0); }, [depot, status, q]);
@@ -212,10 +249,10 @@ export function PlantTab({ canEdit, canOrder }: { canEdit: boolean; canOrder: bo
     return (
         <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-                {([["open", `Open (${count(l => !["Dispatched", "In Transit", "Delivered", "Return"].includes(l.status))})`], ["reason", `Reason needed (${count(l => l.needs_reason)})`], ["all", `All (${lines.length})`]] as const).map(([v, label]) => (
-                    <button key={v} type="button" onClick={() => setStatus(v)} className={cn("rounded-full px-3 py-1.5 text-sm font-semibold ring-1", status === v ? "bg-slate-900 text-white ring-slate-900" : v === "reason" && count(l => l.needs_reason) ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-white text-slate-600 ring-slate-200")}>{label}</button>
+                {([["open", `Open (${count(l => !["Dispatched", "In Transit", "Delivered", "Return"].includes(l.status))})`], ["urgent", `Urgent (${count(isUrgentOpen)})`], ["reason", `Reason needed (${count(l => l.needs_reason)})`], ["all", `All (${lines.length})`]] as const).map(([v, label]) => (
+                    <button key={v} type="button" onClick={() => setStatus(v)} className={cn("rounded-full px-3 py-1.5 text-sm font-semibold ring-1", status === v ? "bg-slate-900 text-white ring-slate-900" : (v === "reason" && count(l => l.needs_reason)) || (v === "urgent" && count(isUrgentOpen)) ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-white text-slate-600 ring-slate-200")}>{label}</button>
                 ))}
-                <select value={["open", "reason", "all"].includes(status) ? "" : status} onChange={e => setStatus(e.target.value || "all")} className={sel} aria-label="Status"><option value="">Any status</option>{POSM_STATUSES.map(s => <option key={s}>{s}</option>)}</select>
+                <select value={["open", "urgent", "reason", "all"].includes(status) ? "" : status} onChange={e => setStatus(e.target.value || "all")} className={sel} aria-label="Status"><option value="">Any status</option>{POSM_STATUSES.map(s => <option key={s}>{s}</option>)}</select>
                 <select value={depot} onChange={e => setDepot(e.target.value)} className={sel} aria-label="Depot"><option value="all">Both depots</option><option value="Plant - Ludhiana depot">Ludhiana</option><option value="Plant - Jaipur depot">Jaipur</option></select>
                 <div className="relative min-w-[200px] flex-1"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
                     <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Store, distributor, design, docket" className="h-9 pl-8" aria-label="Search" /></div>
@@ -228,11 +265,11 @@ export function PlantTab({ canEdit, canOrder }: { canEdit: boolean; canOrder: bo
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {rows.map(l => (
-                            <tr key={l.id} onClick={() => canEdit && setEditing(l)} className={cn(canEdit && "cursor-pointer hover:bg-orange-50/40")}>
+                            <tr key={l.id} onClick={() => canEdit && setEditing(l)} className={cn(canEdit && "cursor-pointer hover:bg-orange-50/40", isUrgentOpen(l) && "bg-red-50/50")}>
                                 <td className={cn(td, "whitespace-nowrap")}>{shortDate(l.request_date)}</td>
                                 <td className={td}>{DEPOT_LABEL[l.source] ?? l.source}</td>
                                 <td className={cn(td, "min-w-[120px]")}>{l.distributor}</td>
-                                <td className={cn(td, "min-w-[160px] font-semibold text-slate-900")}>{l.portal_store_name || l.sheet_store_name}{!l.store_id && <span className="block text-[10px] font-semibold text-rose-600">Not linked</span>}{l.ticket_id && <span className="mt-0.5 block w-fit rounded bg-blue-50 px-1 text-[10px] font-semibold text-blue-700">Request {l.ticket_id}</span>}</td>
+                                <td className={cn(td, "min-w-[160px] font-semibold text-slate-900")}>{isUrgentOpen(l) && <span className="mb-0.5 block w-fit rounded bg-red-600 px-1 text-[10px] font-black uppercase text-white" title={l.urgent_by ? `Marked by ${l.urgent_by}` : undefined}>Urgent</span>}{l.portal_store_name || l.sheet_store_name}{!l.store_id && <span className="block text-[10px] font-semibold text-rose-600">Not linked</span>}{l.ticket_id && <span className="mt-0.5 block w-fit rounded bg-blue-50 px-1 text-[10px] font-semibold text-blue-700">Request {l.ticket_id}</span>}</td>
                                 <td className={td}>{l.store_kind}</td>
                                 <td className={cn(td, "whitespace-nowrap font-semibold")}>{l.item}</td>
                                 <td className={cn(td, "min-w-[110px]")}>{l.design}</td><td className={td}>{l.minor_colour}</td><td className={td}>{l.major_colour}</td>
