@@ -22,7 +22,7 @@ export interface HistoryEntry {
     action: PosmAction | 'sent' | 'received' | 'update' | 'item' | 'undo';
     status: PosmStatus;
     at: string;
-    by_role: 'admin' | 'franchise' | 'asm';
+    by_role: 'admin' | 'franchise' | 'asm' | 'distributor';
     by?: string | null;
     by_name?: string | null;
     note?: string | null;

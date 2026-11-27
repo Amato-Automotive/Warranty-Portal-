@@ -61,6 +61,11 @@ router.get('/history', authenticateToken, requireRole('vendor'), POSMHistoryCont
 
 // The item lists: stores read them to fill a request; the admin edits them.
 router.get('/catalog', authenticateToken, requireRole(['vendor', 'admin']), POSMController.getCatalog);
+/* A distributor raising POSM for one of its stores. */
+router.get('/distributor/stores', authenticateToken, requireRole('vendor'), POSMController.getDistributorStores);
+router.get('/distributor/requests', authenticateToken, requireRole('vendor'), POSMController.getDistributorRequests);
+router.get('/distributor/stores/:id/catalog', authenticateToken, requireRole('vendor'), POSMController.getCatalogForDistributor);
+router.post('/distributor/stores/:id/items', authenticateToken, requireRole('vendor'), signalAttention, handleItemUpload, POSMController.submitItemsByDistributor);
 router.put('/admin/catalog', authenticateToken, requireRole('admin'), requirePermission('posm', 'write'), POSMController.saveCatalog);
 router.post('/admin/catalog/image', authenticateToken, requireRole('admin'), requirePermission('posm', 'write'), handleItemUpload, POSMController.uploadItemImage);
 

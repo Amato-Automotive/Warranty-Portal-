@@ -84,7 +84,7 @@ const FranchiseDashboard = () => {
     const filteredMenuGroups = menuGroups.map(group => {
         if (isDistributor && !isFranchise) {
             const filteredItems = group.items.filter(item => {
-                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', 'posm', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback'];
+                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback'];
                 return !franchiseOnly.includes(item.id);
             });
             return { ...group, items: filteredItems };

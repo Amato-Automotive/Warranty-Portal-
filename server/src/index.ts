@@ -596,6 +596,14 @@ async function runMigrations() {
     await addColumn('posm_requests', 'delivery', 'delivery JSON NULL');
     await addColumn('posm_requests', 'history', 'history JSON NULL');
     /* Urgent: the ASM or head office marks a request so the plant makes it first. */
+    /* A distributor can raise POSM for its stores (27 Nov): the raiser and message roles take 'distributor'. */
+    for (const [table, col] of [['posm_requests', 'created_by_role'], ['posm_messages', 'sender_role']] as const) {
+        const [[c]]: any = await pool.query(`SHOW COLUMNS FROM ${table} LIKE '${col}'`);
+        if (c && !String(c.Type).includes("'distributor'")) {
+            const values = String(c.Type).replace(/^enum\(|\)$/g, '');
+            await pool.query(`ALTER TABLE ${table} MODIFY ${col} ENUM(${values},'distributor') ${c.Null === 'NO' ? 'NOT NULL' : 'NULL'}${c.Default != null ? ` DEFAULT '${c.Default}'` : ''}`);
+        }
+    }
     await addColumn('posm_requests', 'urgent', 'urgent TINYINT(1) NOT NULL DEFAULT 0');
     await addColumn('posm_requests', 'urgent_by', 'urgent_by VARCHAR(120) NULL');
     await addColumn('posm_requests', 'urgent_at', 'urgent_at TIMESTAMP NULL');

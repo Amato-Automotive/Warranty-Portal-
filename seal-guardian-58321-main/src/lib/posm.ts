@@ -215,7 +215,7 @@ export interface HistoryEntry {
     action: PosmAction | "sent" | "received" | "update" | "item" | "undo";
     status: string;
     at: string;
-    by_role: "admin" | "franchise" | "asm";
+    by_role: "admin" | "franchise" | "asm" | "distributor";
     by_name?: string | null;
     note?: string | null;
     lines?: number[];
