@@ -152,7 +152,7 @@ export function PosmAnalyticsSection({ onOpenPosm }: { onOpenPosm: () => void })
                     <Tile label="Open at the plant" value={fmt(t.plant_open)} note="FRP / jackets not yet dispatched" onClick={() => open({ kind: "tile", key: "plant_open" })} />
                     <Tile label="Overdue at the plant" value={fmt(t.plant_overdue)} tone={t.plant_overdue ? "text-red-600" : undefined} note="past the expected date" onClick={() => open({ kind: "tile", key: "plant_overdue" })} />
                     <Tile label="Requests to approve" value={fmt(t.requests_waiting)} note={`${fmt(t.requests_wip)} approved / WIP`} onClick={() => openPosmAt(null, onOpenPosm)} />
-                    <Tile label="Stores over limit" value={fmt(t.stores_over)} tone={t.stores_over ? "text-red-600" : undefined} note="FRP 2 · jackets 20" onClick={() => open({ kind: "tile", key: "stores_over" })} />
+                    <Tile label="Stores over limit" value={fmt(t.stores_over)} tone={t.stores_over ? "text-red-600" : undefined} note="FRP 2 · jackets 20 old / 30 new" onClick={() => open({ kind: "tile", key: "stores_over" })} />
                 </div>
 
                 {/* Risks */}

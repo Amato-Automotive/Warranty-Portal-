@@ -21,11 +21,13 @@ export const AsmRaisePosm = ({ storeId, storeName, open, onOpenChange, onRaised 
     const { toast } = useToast();
     const [shop, setShop] = useState<{ items: PosmItem[]; brands: Brand[]; usage: Usage } | null>(null);
     const [error, setError] = useState("");
+    const [urgent, setUrgent] = useState(false);
 
     useEffect(() => {
         if (!open) return;
         setShop(null);
         setError("");
+        setUrgent(false);
         api.get(`/asm-portal/stores/${storeId}/posm-catalog`)
             .then(res => {
                 const d = res.data.data;
@@ -36,7 +38,9 @@ export const AsmRaisePosm = ({ storeId, storeName, open, onOpenChange, onRaised 
 
     const send = async (lines: Parameters<typeof requestForm>[0], note: string) => {
         try {
-            const r = await api.post(`/asm-portal/stores/${storeId}/posm`, requestForm(lines, note),
+            const form = requestForm(lines, note);
+            if (urgent) form.append("urgent", "true");
+            const r = await api.post(`/asm-portal/stores/${storeId}/posm`, form,
                 { headers: { "Content-Type": "multipart/form-data" } });
             toast({ title: `Request raised — ${r.data?.data?.ticketId ?? ""}`.trim(), description: r.data?.message });
             onOpenChange(false);
@@ -56,6 +60,10 @@ export const AsmRaisePosm = ({ storeId, storeName, open, onOpenChange, onRaised 
                     <DialogDescription className="text-xs">
                         The store's own items and limits. It goes to head office as the store's request, marked as raised by you.
                     </DialogDescription>
+                    <label className="mt-2 inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-red-200 bg-red-50/60 px-3 py-1.5 text-sm font-semibold text-red-800">
+                        <input type="checkbox" checked={urgent} onChange={e => setUrgent(e.target.checked)} className="h-4 w-4 accent-red-600" />
+                        Mark urgent: the plant makes it first
+                    </label>
                 </DialogHeader>
                 <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
                     {error

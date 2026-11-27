@@ -56,6 +56,10 @@ const step = (req: AuthRequest, e: Omit<HistoryEntry, 'at' | 'by_role' | 'by' | 
     by: req.user?.id ?? null, by_name: (req.user as any)?.name ?? null,
 });
 
+/** Who marked a request urgent, as the plant sees it: "Ravi (ASM)" or "Head office · Name". */
+const urgentBy = (req: AuthRequest, role: 'admin' | 'asm' | 'franchise', asmName?: string | null) =>
+    (role === 'asm' ? `${asmName || (req.user as any)?.name || 'ASM'} (ASM)` : `Head office${(req.user as any)?.name ? ` · ${(req.user as any).name}` : ''}`).slice(0, 120);
+
 /** The item lists, as the admin last saved them (defaults until then). */
 async function loadCatalog(): Promise<PosmCatalog> {
     const [rows]: any = await db.execute('SELECT catalog FROM posm_settings WHERE id = 1');
@@ -469,6 +473,10 @@ class POSMController {
                 ...(opts.byRole === 'asm' && opts.asmName ? { by_name: opts.asmName } : {}),
             }],
         });
+        /* The ASM or head office may mark it urgent as they raise it; a store asks its ASM. */
+        if (opts.byRole !== 'franchise' && String(req.body?.urgent) === 'true') {
+            await db.execute('UPDATE posm_requests SET urgent = 1, urgent_by = ?, urgent_at = NOW() WHERE id = ?', [urgentBy(req, opts.byRole, opts.asmName), requestId]);
+        }
         if (note || noteFiles.length) {
             await posmRepository.createMessage({
                 request_id: requestId, sender_id: userId, sender_role: opts.byRole,
@@ -589,6 +597,37 @@ class POSMController {
         } catch (error: any) {
             console.error('Submit POSM items by ASM error:', error);
             return res.status(500).json({ success: false, error: 'Failed to raise the POSM request' });
+        }
+    }
+
+    /**
+     * Mark a request urgent, or not, so the plant makes it first.
+     * PUT /api/posm/admin/:id/urgent (head office) and /api/asm-portal/posm/:id/urgent (the store's ASM) — { urgent: boolean }
+     */
+    setUrgent = async (req: AuthRequest, res: Response) => {
+        try {
+            const id = Number(req.params.id);
+            const current: any = await posmRepository.findRequest(id);
+            if (!current) return res.status(404).json({ success: false, error: 'Request not found' });
+            const role = req.user?.role === 'asm' ? 'asm' : 'admin';
+            let asmName: string | undefined;
+            if (role === 'asm') {
+                const store = await asmStore(req.user!.id, String(current.franchise_id));
+                if (!store) return res.status(404).json({ success: false, error: 'Request not found' });
+                asmName = store.asm_name;
+            }
+            const urgent = req.body?.urgent === true;
+            const by = urgent ? urgentBy(req, role, asmName) : null;
+            await db.execute('UPDATE posm_requests SET urgent = ?, urgent_by = ?, urgent_at = ? WHERE id = ?', [urgent ? 1 : 0, by, urgent ? new Date() : null, id]);
+            await ActivityLogService.log({
+                adminId: req.user!.id, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
+                actionType: urgent ? 'POSM_MARKED_URGENT' : 'POSM_URGENT_REMOVED', targetType: 'POSM_REQUEST', targetId: String(id), targetName: current.ticket_id,
+                details: { by: role, ticket: current.ticket_id }, ipAddress: req.ip || req.socket?.remoteAddress,
+            }).catch(() => {});
+            return res.json({ success: true, urgent, urgent_by: by });
+        } catch (error: any) {
+            console.error('POSM urgent error:', error);
+            return res.status(500).json({ success: false, error: 'Could not change it' });
         }
     }
 

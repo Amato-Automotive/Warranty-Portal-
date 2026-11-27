@@ -7,7 +7,7 @@ import { vendorRepository } from '../repositories/vendor.repository.js';
 import { ActivityLogService } from '../services/activity-log.service.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
-    APPROVAL_LABEL, DEFAULT_SETTINGS, DEPOTS, NOIDA_SOURCE, POSM_ITEMS, POSM_STATUSES, checkPlantEdit, needsReason, noidaGroupKey, orderNeedsApproval, readStatus, summarise,
+    APPROVAL_LABEL, DEFAULT_LIMITS, DEFAULT_SETTINGS, DEPOTS, NOIDA_SOURCE, POSM_ITEMS, POSM_STATUSES, checkPlantEdit, needsReason, noidaGroupKey, orderNeedsApproval, readStatus, summarise,
     type Depot, type LineFlag, type StoreSettings,
 } from '../services/posmHistory.js';
 
@@ -179,7 +179,7 @@ export class POSMHistoryController {
             if (!store) return res.status(404).json({ success: false, error: 'Store not found' });
             const type = req.body?.store_type === 'new' ? 'new' : 'old';
             const lim = (v: unknown, d: number) => { const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= 0 && n <= 1000 ? n : d; };
-            const frp = lim(req.body?.frp_limit, 2), jacket = lim(req.body?.jacket_limit, 20);
+            const frp = lim(req.body?.frp_limit, DEFAULT_LIMITS[type].frp_limit), jacket = lim(req.body?.jacket_limit, DEFAULT_LIMITS[type].jacket_limit);
             const [[before]]: any = await db.execute('SELECT * FROM posm_store_settings WHERE store_id = ?', [storeId]);
             await db.execute(
                 `INSERT INTO posm_store_settings (store_id, store_type, type_assumed, frp_limit, jacket_limit, updated_by) VALUES (?, ?, 0, ?, ?, ?)
@@ -286,19 +286,19 @@ export class POSMHistoryController {
     static async plantLines(req: AuthRequest, res: Response) {
         try {
             const [rows]: any = await db.query(
-                `SELECT h.${LINE_COLS.split(',').map(c => c.trim()).join(', h.')}, vd.store_name AS portal_store_name, p.name AS updated_by_name, pr.ticket_id
+                `SELECT h.${LINE_COLS.split(',').map(c => c.trim()).join(', h.')}, vd.store_name AS portal_store_name, p.name AS updated_by_name, pr.ticket_id, pr.urgent AS req_urgent, pr.urgent_by AS req_urgent_by
                    FROM posm_dispatch_history h
                    LEFT JOIN vendor_details vd ON vd.id = h.store_id
                    LEFT JOIN profiles p ON p.id = h.updated_by
                    LEFT JOIN posm_requests pr ON pr.id = h.request_id
                   WHERE h.deleted_at IS NULL AND h.source LIKE 'Plant%'
-                  ORDER BY COALESCE(h.request_date, h.dispatch_date) DESC, h.sheet_row`);
+                  ORDER BY (pr.urgent = 1 AND h.status NOT IN ('Dispatched', 'In Transit', 'Delivered')) DESC, COALESCE(h.request_date, h.dispatch_date) DESC, h.sheet_row`);
             const today = istToday();
             res.json({
                 success: true, today,
                 lines: rows.map((r: any) => {
                     const l = readLine(r);
-                    return { ...l, address: r.address ?? null, portal_store_name: r.portal_store_name ? String(r.portal_store_name).trim() : null, updated_by_name: r.updated_by_name ?? null, needs_reason: needsReason(l, today) };
+                    return { ...l, address: r.address ?? null, portal_store_name: r.portal_store_name ? String(r.portal_store_name).trim() : null, updated_by_name: r.updated_by_name ?? null, needs_reason: needsReason(l, today), urgent: Boolean(r.req_urgent), urgent_by: r.req_urgent_by ?? null };
                 }),
             });
         } catch (error) {

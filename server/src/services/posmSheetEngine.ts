@@ -81,8 +81,13 @@ async function portalIdColumn(sheetId: string, tab: { title: string; id: number 
 /* ---------------- Plant ---------------- */
 
 /** The plant values kept in step, in the portal's form (ISO dates, portal statuses). */
-const PLANT_FIELDS = ['status', 'expected_dispatch', 'dispatch_date', 'docket_no', 'courier', 'reason', 'remarks', 'qty', 'design', 'major_colour', 'minor_colour', 'address'] as const;
+const PLANT_FIELDS = ['status', 'expected_dispatch', 'dispatch_date', 'docket_no', 'courier', 'reason', 'remarks', 'qty', 'design', 'major_colour', 'minor_colour', 'address', 'distributor', 'store_kind', 'brand'] as const;
 type PlantVals = Record<(typeof PLANT_FIELDS)[number], string>;
+/** The plant's fields its sheet sets when a row is first linked to a portal line. */
+const FIRST_LINK_FROM_SHEET = ['status', 'expected_dispatch', 'dispatch_date', 'docket_no', 'distributor', 'store_kind', 'brand'] as const;
+
+/** Old / New as one spelling, so "OLD" in the sheet and "Old" in the portal are the same. */
+const kindOf = (v: unknown) => { const t = txt(v).toLowerCase(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; };
 
 function plantFromRow(row: string[], c: Record<string, number>): PlantVals {
     const req = readSheetDate(row[c.request_date]);
@@ -92,13 +97,14 @@ function plantFromRow(row: string[], c: Record<string, number>): PlantVals {
         dispatch_date: readSheetDate(row[c.dispatch_date], year) ?? '', docket_no: txt(row[c.docket_no]), courier: txt(row[c.courier]),
         reason: txt(row[c.note]), remarks: txt(row[c.remarks]), qty: String(qtyOf(row[c.qty]) || ''), design: txt(row[c.design]),
         major_colour: txt(row[c.major_colour]), minor_colour: txt(row[c.minor_colour]), address: txt(row[c.address]),
+        distributor: txt(row[c.distributor]), store_kind: kindOf(row[c.store_kind]), brand: txt(row[c.brand]),
     };
 }
 function plantFromLine(l: any): PlantVals {
     return {
         status: l.status, expected_dispatch: day(l.expected_dispatch) ?? '', dispatch_date: day(l.dispatch_date) ?? '', docket_no: txt(l.docket_no), courier: txt(l.courier),
         reason: txt(l.reason), remarks: txt(l.remarks), qty: String(Number(l.qty) || ''), design: txt(l.design), major_colour: txt(l.major_colour),
-        minor_colour: txt(l.minor_colour), address: txt(l.address),
+        minor_colour: txt(l.minor_colour), address: txt(l.address), distributor: txt(l.distributor), store_kind: kindOf(l.store_kind), brand: txt(l.brand),
     };
 }
 /** A plant value as the sheet writes it. */
@@ -111,6 +117,7 @@ function plantCell(f: keyof PlantVals, v: string): unknown {
 const PLANT_COL: Record<keyof PlantVals, string> = {
     status: 'status', expected_dispatch: 'expected_dispatch', dispatch_date: 'dispatch_date', docket_no: 'docket_no', courier: 'courier', reason: 'note',
     remarks: 'remarks', qty: 'qty', design: 'design', major_colour: 'major_colour', minor_colour: 'minor_colour', address: 'address',
+    distributor: 'distributor', store_kind: 'store_kind', brand: 'brand',
 };
 
 /** A new plant row for a line made in the portal. */
@@ -190,7 +197,23 @@ async function syncPlantTab(tab: { title: string; id: number }, depot: (typeof P
         const b = firstBind.has(id) ? null : json<{ s: PlantVals; p: PlantVals } | null>(l.sheet_snapshot, null);
         const toPortal: Partial<PlantVals> = {};
         const nextS: PlantVals = { ...s }, nextP: PlantVals = { ...p };
+        /*
+         * First link: the plant's own work in the sheet wins (decided 27 Nov) — a
+         * status, dispatch, docket or EDD the plant already updated must reach the
+         * portal, not wait for an edit that may never come.
+         */
+        if (firstBind.has(id)) for (const f of FIRST_LINK_FROM_SHEET) {
+            if (s[f] === p[f]) continue;
+            toPortal[f] = s[f]; nextP[f] = s[f];
+            rep.fields[f] = (rep.fields[f] ?? 0) + 1;
+            if (rep.samples.length < 30) rep.samples.push(`${l.sheet_store_name}: ${f} "${p[f]}" -> "${s[f]}" (from the sheet, first link)`);
+        }
         if (b?.s && b?.p) for (const f of PLANT_FIELDS) {
+            /* A field the last sync did not carry yet (distributor, Old/New, branding before 27 Nov): the sheet's value is taken once. */
+            if (b.s[f] === undefined) {
+                if (s[f] !== p[f]) { toPortal[f] = s[f]; nextP[f] = s[f]; rep.fields[f] = (rep.fields[f] ?? 0) + 1; if (rep.samples.length < 30) rep.samples.push(`${l.sheet_store_name}: ${f} "${p[f]}" -> "${s[f]}" (from the sheet, newly synced field)`); }
+                continue;
+            }
             const d = decide(s[f], p[f], b.s[f] ?? '', b.p[f] ?? '');
             if (d.clash) { rep.conflicts++; rep.notes.push(`${l.sheet_store_name} ${l.design ?? l.item}: ${f} changed in both; the portal's "${p[f]}" kept over the sheet's "${s[f]}"`); }
             if (d.toSheet !== undefined) { w.set(tab.title, r + 1, c[PLANT_COL[f]], plantCell(f, p[f])); nextS[f] = p[f]; rep.toSheet++; }

@@ -69,6 +69,7 @@ router.get('/admin/all', authenticateToken, requireRole('admin'), requirePermiss
 router.put('/:id/status', authenticateToken, requireRole('admin'), requirePermission('posm', 'write'), signalAttention, POSMController.updateRequest);
 router.post('/:id/action', authenticateToken, requireRole('admin'), requirePermission('posm', 'write'), signalAttention, POSMController.act);
 router.post('/:id/lines', authenticateToken, requireRole('admin'), requirePermission('posm', 'write'), signalAttention, POSMController.actOnLines);
+router.put('/admin/:id/urgent', authenticateToken, requireRole('admin'), requirePermission('posm', 'write'), POSMController.setUrgent);
 router.put('/:id/history/:index', authenticateToken, requireRole('admin'), requirePermission('posm', 'write'), POSMController.editHistoryNote);
 // Raise a request on a franchise's behalf — for requirements phoned or emailed
 // in. Kept separate from the franchise route below so that one stays session-

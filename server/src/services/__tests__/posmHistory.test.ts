@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readStatus, readStoreType, summarise, DEFAULT_SETTINGS, checkPlantEdit, needsReason, orderNeedsApproval, noidaGroupKey, type HistoryLine } from '../posmHistory.js';
+import { readStatus, readStoreType, summarise, DEFAULT_SETTINGS, DEFAULT_LIMITS, checkPlantEdit, needsReason, orderNeedsApproval, noidaGroupKey, type HistoryLine } from '../posmHistory.js';
 
 const L = (item: string, qty: number, status: string, dispatch_date: string | null = null): HistoryLine => ({ item, qty, status, dispatch_date });
 
@@ -43,13 +43,12 @@ describe('POSM dispatch history', () => {
         assert.equal(s.frp.left, 2);
     });
 
-    test('a new store has no limit, but once it has had FRP or jackets, more needs approval', () => {
-        const fresh = summarise([L('Visiting Card', 200, 'Delivered')], { ...DEFAULT_SETTINGS, store_type: 'new', type_assumed: false });
-        assert.equal(fresh.approval, 'new_open');
-        assert.equal(fresh.frp.limit, null);
-        const used = summarise([L('FRP', 3, 'WIP')], { ...DEFAULT_SETTINGS, store_type: 'new', type_assumed: false });
-        assert.equal(used.approval, 'new_used');
-        assert.equal(used.needs_approval, true);
+    test('a new store has limits too: FRP 2, Sample Jackets 30', () => {
+        const fresh = { ...DEFAULT_SETTINGS, store_type: 'new' as const, type_assumed: false, ...DEFAULT_LIMITS.new };
+        assert.equal(summarise([L('Sample Jacket', 25, 'Delivered')], fresh).approval, 'within');
+        assert.equal(summarise([L('Sample Jacket', 30, 'Delivered')], fresh).approval, 'reached');
+        assert.equal(summarise([L('Sample Jacket', 25, 'Delivered')], DEFAULT_SETTINGS).approval, 'over');
+        assert.equal(summarise([L('FRP', 3, 'Delivered')], fresh).frp.state, 'over');
     });
 
     test('the last dispatch is the latest sent line', () => {
@@ -87,9 +86,9 @@ describe('POSM dispatch history', () => {
     test('a new order past the limit, counting what is pending, needs approval', () => {
         assert.match(orderNeedsApproval([L('FRP', 1, 'Delivered'), L('FRP', 1, 'WIP')], DEFAULT_SETTINGS, [{ item: 'FRP', qty: 1 }])!, /past the limit of 2/);
         assert.equal(orderNeedsApproval([L('FRP', 1, 'Delivered')], DEFAULT_SETTINGS, [{ item: 'FRP', qty: 1 }]), null);
-        const fresh = { ...DEFAULT_SETTINGS, store_type: 'new' as const, type_assumed: false };
-        assert.equal(orderNeedsApproval([], fresh, [{ item: 'FRP', qty: 5 }]), null);
-        assert.match(orderNeedsApproval([L('Sample Jacket', 20, 'Delivered')], fresh, [{ item: 'FRP', qty: 1 }])!, /one-time/);
+        const fresh = { ...DEFAULT_SETTINGS, store_type: 'new' as const, type_assumed: false, ...DEFAULT_LIMITS.new };
+        assert.equal(orderNeedsApproval([L('Sample Jacket', 20, 'Delivered')], fresh, [{ item: 'Sample Jacket', qty: 10 }]), null);
+        assert.match(orderNeedsApproval([L('Sample Jacket', 20, 'Delivered')], fresh, [{ item: 'Sample Jacket', qty: 11 }])!, /past the limit of 30/);
     });
 
     test('Noida lines of one dispatch share a key', () => {

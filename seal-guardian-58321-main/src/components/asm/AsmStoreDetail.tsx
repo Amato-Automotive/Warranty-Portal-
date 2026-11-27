@@ -38,6 +38,9 @@ interface PosmRequest {
     updated_at: string | null;
     /** Item lines on requests from the item flow; null on the older free-text ones. */
     items: PosmLine[] | null;
+    /** Marked urgent by the ASM or head office, so the plant makes it first. */
+    urgent?: number | boolean;
+    urgent_by?: string | null;
     messages: { sender_role: string; sender_name: string | null; message: string; attachments: string[]; created_at: string }[];
 }
 
@@ -252,16 +255,28 @@ const GrievanceRow = ({ g, onReply }: { g: Grievance; onReply: (g: Grievance, te
     </Row>
 );
 
-const PosmRow = ({ r, onReply }: { r: PosmRequest; onReply: (r: PosmRequest, text: string, files: File[]) => Promise<boolean> }) => {
+const PosmRow = ({ r, onReply, onUrgent }: { r: PosmRequest; onReply: (r: PosmRequest, text: string, files: File[]) => Promise<boolean>; onUrgent: (r: PosmRequest, urgent: boolean) => Promise<void> }) => {
     const status = r.status || "open";
+    const urgent = Boolean(r.urgent);
+    const [busy, setBusy] = useState(false);
     return (
         <Row
             kind="POSM"
             sub={r.ticket_id}
             title={r.requirement}
-            status={`${sentence(status)}, asked ${POSM_DONE.includes(status) ? formatDay(r.created_at) : ageOf(r.created_at)}${raisedBy(r.created_by_role, r.created_by_name)}`}
+            status={`${urgent && !POSM_DONE.includes(status) ? "URGENT · " : ""}${sentence(status)}, asked ${POSM_DONE.includes(status) ? formatDay(r.created_at) : ageOf(r.created_at)}${raisedBy(r.created_by_role, r.created_by_name)}`}
             statusClass={statusTone(status, POSM_DONE)}
         >
+            {!POSM_DONE.includes(status) && (
+                <div className="flex flex-wrap items-center gap-2">
+                    {urgent && <span className="rounded bg-red-50 px-1.5 py-0.5 text-xs font-bold text-red-700">Urgent{r.urgent_by ? ` · marked by ${r.urgent_by}` : ""}</span>}
+                    <Button size="sm" variant="outline" disabled={busy} className={urgent ? "" : "border-red-200 text-red-700 hover:bg-red-50"}
+                        onClick={async () => { setBusy(true); try { await onUrgent(r, !urgent); } finally { setBusy(false); } }}>
+                        {urgent ? "Not urgent any more" : "Mark urgent"}
+                    </Button>
+                    {!urgent && <span className="text-xs text-slate-400">The plant makes urgent requests first.</span>}
+                </div>
+            )}
             {r.items?.length
                 ? <POSMLines lines={r.items} />
                 : <p className="text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">{r.requirement}</p>}
@@ -319,6 +334,16 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
         }
     };
 
+    const urgentPosm = async (r: PosmRequest, urgent: boolean) => {
+        try {
+            await api.put(`/asm-portal/posm/${r.id}/urgent`, { urgent });
+            toast({ title: urgent ? `${r.ticket_id} marked urgent` : `${r.ticket_id} no longer urgent` });
+            await load(true);
+        } catch (e) {
+            toast({ title: "Could not change it", description: getErrorMessage(e, "Please try again."), variant: "destructive" });
+        }
+    };
+
     const replyGrievance = async (g: Grievance, text: string) => {
         try {
             await api.post(`/asm-portal/grievances/${g.id}/remarks`, { remarks: text });
@@ -371,7 +396,7 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
     // Open work, oldest first: that is the order it should be chased in.
     const waiting = [
         ...openG.map(g => ({ at: g.created_at, el: <GrievanceRow key={`g${g.id}`} g={g} onReply={replyGrievance} /> })),
-        ...openP.map(r => ({ at: r.created_at, el: <PosmRow key={`p${r.id}`} r={r} onReply={replyPosm} /> })),
+        ...openP.map(r => ({ at: r.created_at, el: <PosmRow key={`p${r.id}`} r={r} onReply={replyPosm} onUrgent={urgentPosm} /> })),
     ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
     return (
@@ -517,7 +542,7 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                             <div className="mt-3">
                                 {history === "grievances"
                                     ? closedG.length ? <List>{closedG.map(g => <GrievanceRow key={g.id} g={g} onReply={replyGrievance} />)}</List> : <p className="text-sm text-slate-500">No closed complaints.</p>
-                                    : closedP.length ? <List>{closedP.map(r => <PosmRow key={r.id} r={r} onReply={replyPosm} />)}</List> : <p className="text-sm text-slate-500">No closed POSM requests.</p>}
+                                    : closedP.length ? <List>{closedP.map(r => <PosmRow key={r.id} r={r} onReply={replyPosm} onUrgent={urgentPosm} />)}</List> : <p className="text-sm text-slate-500">No closed POSM requests.</p>}
                             </div>
                         </section>
                     )}

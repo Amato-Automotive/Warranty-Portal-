@@ -168,7 +168,7 @@ export async function storeDetailForAsm(asmId: string, vendorDetailsId: string) 
 
     // POSM: everything but head office's internal notes.
     const [posm]: any = await db.execute(
-        `SELECT r.id, r.ticket_id, r.requirement, r.status, r.created_by_role, r.created_at, r.updated_at,
+        `SELECT r.id, r.ticket_id, r.requirement, r.status, r.created_by_role, r.created_at, r.updated_at, r.urgent, r.urgent_by,
                 r.items, r.dispatch, r.delivery, r.history, creator.name AS created_by_name
            FROM posm_requests r
            LEFT JOIN profiles creator ON creator.id = r.created_by

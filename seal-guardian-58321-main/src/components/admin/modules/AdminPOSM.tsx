@@ -24,6 +24,9 @@ import { useAuth } from "@/contexts/AuthContext";
 interface POSMRequest {
     id: number;
     ticket_id: string;
+    /** Marked urgent by the ASM or head office: the plant makes it first. */
+    urgent?: number | boolean;
+    urgent_by?: string | null;
     franchise_id: string;
     store_name: string;
     store_code?: string | null;
@@ -133,6 +136,8 @@ const AdminPOSMFull = () => {
     const [creating, setCreating] = useState(false);
     const [storeShop, setStoreShop] = useState<{ items: PosmItem[]; brands: Brand[]; usage: Usage } | null>(null);
     const [ignoreLimits, setIgnoreLimits] = useState(false);
+    const [onBehalfUrgent, setOnBehalfUrgent] = useState(false);
+    const [urgentBusy, setUrgentBusy] = useState(false);
 
     /* quiet: a background refresh, with no spinner and no error toast. */
     const fetchRequests = async (quiet = false) => {
@@ -197,7 +202,21 @@ const AdminPOSMFull = () => {
     const counts = Object.fromEntries(STAGES.map(st => [st.key, filtered.filter(r => st.statuses.includes(r.status)).length]));
     // Oldest first while there is work to do; the most recent first once done.
     const queue = filtered.filter(r => stageOf(r.status) === stage)
-        .sort((a, b) => stage === "done" ? b.updated_at.localeCompare(a.updated_at) : a.created_at.localeCompare(b.created_at));
+        /* Urgent first while it is still being worked on. */
+        .sort((a, b) => stage === "done" ? b.updated_at.localeCompare(a.updated_at) : (Number(Boolean(b.urgent)) - Number(Boolean(a.urgent))) || a.created_at.localeCompare(b.created_at));
+
+    const toggleUrgent = async () => {
+        if (!ticket) return;
+        setUrgentBusy(true);
+        try {
+            const r = await api.put(`/posm/admin/${ticket.id}/urgent`, { urgent: !ticket.urgent });
+            setTicket(t => (t ? { ...t, urgent: r.data.urgent, urgent_by: r.data.urgent_by } : t));
+            setRequests(list => list.map(x => (x.id === ticket.id ? { ...x, urgent: r.data.urgent, urgent_by: r.data.urgent_by } : x)));
+            toast({ title: r.data.urgent ? `${ticket.ticket_id} marked urgent` : `${ticket.ticket_id} no longer urgent`, description: r.data.urgent ? "The plant sees it first." : undefined });
+        } catch (e) {
+            toast({ title: "Could not change it", description: getErrorMessage(e, "Try again"), variant: "destructive" });
+        } finally { setUrgentBusy(false); }
+    };
 
     /* ---------- steps ---------- */
     /* Quantities can be set until dispatch: before approval they go with Approve,
@@ -367,7 +386,7 @@ const AdminPOSMFull = () => {
     /* ---------- raise for a store ---------- */
     const openOnBehalf = async () => {
         setOnBehalfOpen(true); setOnBehalfFranchiseId(null); setOnBehalfRequirement(""); setOnBehalfFiles([]);
-        setFranchiseSearch(""); setOnBehalfMode('items'); setIgnoreLimits(false); setStoreShop(null);
+        setFranchiseSearch(""); setOnBehalfMode('items'); setIgnoreLimits(false); setOnBehalfUrgent(false); setStoreShop(null);
         if (franchises.length > 0) return;
         try {
             const res = await api.get("/admin/vendors");
@@ -396,7 +415,7 @@ const AdminPOSMFull = () => {
         if (!onBehalfFranchiseId) return false;
         try {
             const r = await api.post("/posm/admin/on-behalf/items",
-                requestForm(picked, note, { franchiseId: onBehalfFranchiseId, ignore_limits: String(ignoreLimits) }),
+                requestForm(picked, note, { franchiseId: onBehalfFranchiseId, ignore_limits: String(ignoreLimits), ...(onBehalfUrgent ? { urgent: "true" } : {}) }),
                 { headers: { "Content-Type": "multipart/form-data" } });
             toast({ title: `Request raised — ${r.data?.data?.ticketId ?? ""}`.trim(), description: r.data?.message });
             afterRaise(r.data?.data?.requestId);
@@ -500,7 +519,7 @@ const AdminPOSMFull = () => {
                                 <button key={r.id} type="button" onClick={() => setSelectedId(r.id)}
                                     className={cn("w-full text-left p-4 space-y-1 hover:bg-slate-50", selectedId === r.id && "bg-orange-50/70 hover:bg-orange-50/70")}>
                                     <div className="flex items-start justify-between gap-2">
-                                        <p className="font-bold text-slate-800 leading-tight">{r.store_name}</p>
+                                        <p className="font-bold text-slate-800 leading-tight">{r.urgent && stage !== "done" ? <span className="mr-1.5 rounded bg-red-600 px-1.5 py-0.5 align-middle text-[10px] font-black uppercase text-white">Urgent</span> : null}{r.store_name}</p>
                                         <span className="text-[11px] text-slate-400 whitespace-nowrap">{formatToIST(r.created_at)}</span>
                                     </div>
                                     <p className="text-[11px] text-slate-400">
@@ -539,8 +558,17 @@ const AdminPOSMFull = () => {
                                     </p>
                                 </div>
                             </div>
-                            <StatusPill status={ticket.status} lines={ticket.items} />
+                            <div className="flex flex-wrap items-center gap-2">
+                                {!['delivered', 'closed', 'rejected'].includes(ticket.status) && (
+                                    <Button size="sm" variant="outline" disabled={urgentBusy} onClick={toggleUrgent}
+                                        className={ticket.urgent ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100" : "text-slate-600"} title={ticket.urgent_by ? `Marked by ${ticket.urgent_by}` : "The plant makes urgent requests first"}>
+                                        {ticket.urgent ? "Urgent ✓" : "Mark urgent"}
+                                    </Button>
+                                )}
+                                <StatusPill status={ticket.status} lines={ticket.items} />
+                            </div>
                         </div>
+                        {ticket.urgent && ticket.urgent_by && !['delivered', 'closed', 'rejected'].includes(ticket.status) ? <p className="-mt-3 text-xs font-semibold text-red-700">Urgent · marked by {ticket.urgent_by}</p> : null}
 
                         {/* The actions open at this stage */}
                         {(shownActions.length > 0 || (!hasItems && canUndo(ticket.history))) && (
@@ -766,6 +794,11 @@ const AdminPOSMFull = () => {
                                 {onBehalfMode === 'items' && (
                                     <label className="flex items-center gap-2 text-xs text-slate-600">
                                         <Switch checked={ignoreLimits} onCheckedChange={setIgnoreLimits} aria-label="Ignore item limits" /> Ignore the item limits for this request
+                                    </label>
+                                )}
+                                {onBehalfMode === 'items' && (
+                                    <label className="flex items-center gap-2 text-xs font-semibold text-red-700">
+                                        <Switch checked={onBehalfUrgent} onCheckedChange={setOnBehalfUrgent} aria-label="Mark urgent" /> Mark urgent (the plant makes it first)
                                     </label>
                                 )}
                             </div>
