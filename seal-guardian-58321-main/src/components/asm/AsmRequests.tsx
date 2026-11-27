@@ -87,14 +87,17 @@ export function AsmPosmHub() {
     const [reload, setReload] = useState(0);
     return (
         <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex rounded-full bg-white p-1 ring-1 ring-slate-200" role="tablist">
+            {/* Tabs and the button stay on one line, a phone too: tighter padding and a shorter label below sm. */}
+            <div className="flex items-center justify-between gap-2">
+                <div className="inline-flex shrink-0 rounded-full bg-white p-1 ring-1 ring-slate-200" role="tablist">
                     {([["sent", "Sent to stores"], ["requests", "Requests"]] as const).map(([k, l]) => (
                         <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
-                            className={cn("rounded-full px-4 py-1.5 text-sm font-semibold", tab === k ? "bg-orange-500 text-white" : "text-slate-600 hover:bg-orange-50")}>{l}</button>
+                            className={cn("whitespace-nowrap rounded-full px-2.5 py-1.5 text-xs font-semibold sm:px-4 sm:text-sm", tab === k ? "bg-orange-500 text-white" : "text-slate-600 hover:bg-orange-50")}>{l}</button>
                     ))}
                 </div>
-                <Button className="ml-auto bg-orange-500 hover:bg-orange-600" onClick={() => setPicking(true)}><Plus className="mr-1.5 h-4 w-4" />New POSM request</Button>
+                <Button className="h-9 shrink-0 whitespace-nowrap rounded-full bg-orange-500 px-3 text-[13px] font-semibold shadow-sm hover:bg-orange-600 sm:px-4 sm:text-sm" onClick={() => setPicking(true)} aria-label="New POSM request">
+                    <Plus className="mr-1 h-4 w-4" /><span className="sm:hidden">New request</span><span className="hidden sm:inline">New POSM request</span>
+                </Button>
             </div>
             {tab === "sent" ? <AsmPosm /> : <PosmRequests reload={reload} />}
             <StorePicker open={picking} title="New POSM request" onClose={() => setPicking(false)} onPick={s => { setPicking(false); setRaiseFor(s); }} />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, Loader2, Minus, Search, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, Loader2, Minus, Search, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { displayName } from "@/lib/asmStores";
 import { AsmStoreDetail } from "./AsmStoreDetail";
 import { StorePulse } from "./StorePulse";
+import { AsmSelect } from "./AsmSelect";
 
 /**
  * Warranties for the ASM, built around their stores: how the period compares
@@ -20,12 +21,17 @@ import { StorePulse } from "./StorePulse";
  * tooltip; ups and downs carry an arrow as well as a colour.
  */
 
-type PeriodId = "mtd" | "last_month" | "last_90";
+type PeriodId = "mtd" | "last_month" | "last_90" | "custom";
 const PERIODS: { id: PeriodId; label: string }[] = [
     { id: "mtd", label: "This month" },
     { id: "last_month", label: "Last month" },
     { id: "last_90", label: "Last 90 days" },
+    { id: "custom", label: "Custom dates" },
 ];
+/** What the server is asked for: a named period, or custom with its two days. */
+type PeriodQuery = { period: PeriodId; from?: string; to?: string };
+/** Today in India as YYYY-MM-DD, the latest day the date pickers allow. */
+const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
 type Segment = "growing" | "dropping" | "silent" | "steady" | "new";
 type StoreStat = {
     store_id: string; store_name: string; city: string | null; live: boolean; weekly: number[]; last_warranty: string | null;
@@ -59,6 +65,11 @@ function Change({ v, flat = 5 }: { v: number | null; flat?: number }) {
 export function AsmWarranties() {
     const [tab, setTab] = useState<"stores" | "list">("stores");
     const [period, setPeriod] = useState<PeriodId>("mtd");
+    /* Custom dates: what is typed, and what was applied (the numbers follow only the applied range). */
+    const [draft, setDraft] = useState(() => ({ from: `${istToday().slice(0, 8)}01`, to: istToday() }));
+    const [range, setRange] = useState(draft);
+    const draftOk = Boolean(draft.from && draft.to && draft.from <= draft.to && draft.to <= istToday());
+    const query = useMemo<PeriodQuery>(() => (period === "custom" ? { period, ...range } : { period }), [period, range]);
     const [listFilter, setListFilter] = useState<{ store?: string; storeName?: string; status?: "pending" | "validated" | "rejected" }>({});
     const [openId, setOpenId] = useState<string | null>(null);
     const openStore = (id: string | null) => { setOpenId(id); document.getElementById("main-dashboard-content-area")?.scrollTo({ top: 0 }); };
@@ -74,13 +85,29 @@ export function AsmWarranties() {
                             className={cn("rounded-full px-4 py-1.5 text-sm font-semibold", tab === k ? "bg-orange-500 text-white" : "text-slate-600 hover:bg-orange-50")}>{l}</button>
                     ))}
                 </div>
-                <select value={period} onChange={e => setPeriod(e.target.value as PeriodId)} aria-label="Period" className="ml-auto h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
-                    {PERIODS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
+                <AsmSelect value={period} onChange={v => setPeriod(v as PeriodId)} label="Period" className="ml-auto"
+                    options={PERIODS.map(p => ({ value: p.id, label: p.label }))} />
             </div>
+            {period === "custom" && (
+                <form onSubmit={e => { e.preventDefault(); if (draftOk) setRange(draft); }}
+                    className="flex flex-wrap items-end gap-2 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+                    <CalendarDays className="mb-2 hidden h-4 w-4 text-orange-500 sm:block" aria-hidden />
+                    {(["from", "to"] as const).map(k => (
+                        <label key={k} className="min-w-0 flex-1 sm:flex-none">
+                            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{k === "from" ? "From" : "To"}</span>
+                            <input type="date" value={draft[k]} max={istToday()} min={k === "to" ? draft.from : undefined}
+                                onChange={e => setDraft(d => ({ ...d, [k]: e.target.value }))}
+                                className="h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-200 sm:w-44" />
+                        </label>
+                    ))}
+                    <button type="submit" disabled={!draftOk || (draft.from === range.from && draft.to === range.to)}
+                        className="h-9 w-full rounded-full bg-orange-500 px-5 text-sm font-semibold text-white shadow-sm hover:bg-orange-600 disabled:opacity-40 sm:w-auto">Apply</button>
+                    {!draftOk && draft.from && draft.to && <p className="w-full text-xs text-red-600">The start must be on or before the end, and not after today.</p>}
+                </form>
+            )}
             {tab === "stores"
-                ? <ByStore period={period} onOpenStore={openStore} onShowList={showList} />
-                : <WarrantyList period={period} filter={listFilter} onClearStore={() => setListFilter(f => ({ ...f, store: undefined, storeName: undefined }))} onOpenStore={openStore} />}
+                ? <ByStore period={query} onOpenStore={openStore} onShowList={showList} />
+                : <WarrantyList period={query} filter={listFilter} onClearStore={() => setListFilter(f => ({ ...f, store: undefined, storeName: undefined }))} onOpenStore={openStore} />}
         </div>
     );
 }
@@ -101,7 +128,7 @@ const SORTS: { id: string; label: string; cmp: (a: StoreStat, b: StoreStat) => n
     { id: "quiet", label: "Longest since a warranty", cmp: (a, b) => (daysSince(b.last_warranty) ?? 9999) - (daysSince(a.last_warranty) ?? 9999) },
 ];
 
-function ByStore({ period, onOpenStore, onShowList }: { period: PeriodId; onOpenStore: (id: string) => void; onShowList: (f: { store?: string; storeName?: string; status?: "pending" | "validated" | "rejected" }) => void }) {
+function ByStore({ period, onOpenStore, onShowList }: { period: PeriodQuery; onOpenStore: (id: string) => void; onShowList: (f: { store?: string; storeName?: string; status?: "pending" | "validated" | "rejected" }) => void }) {
     const { toast } = useToast();
     const [d, setD] = useState<Stats | null>(null);
     const [seg, setSeg] = useState<(typeof SEGMENTS)[number]["id"]>("all");
@@ -109,7 +136,7 @@ function ByStore({ period, onOpenStore, onShowList }: { period: PeriodId; onOpen
     const [q, setQ] = useState("");
     useEffect(() => {
         setD(null);
-        api.get("/asm-portal/warranty-stats", { params: { period } }).then(r => setD(r.data))
+        api.get("/asm-portal/warranty-stats", { params: period }).then(r => setD(r.data))
             .catch(e => toast({ title: "Could not load the warranty numbers", description: getErrorMessage(e, "Try again"), variant: "destructive" }));
     }, [period, toast]);
     const trend = useMemo(() => {
@@ -193,6 +220,7 @@ function ByStore({ period, onOpenStore, onShowList }: { period: PeriodId; onOpen
 
             <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
                 <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 p-3">
+                    <div className="flex flex-wrap items-center gap-2">
                     {SEGMENTS.map(s => {
                         const n = d.stores.filter(s.test).length;
                         return (
@@ -201,10 +229,13 @@ function ByStore({ period, onOpenStore, onShowList }: { period: PeriodId; onOpen
                             </button>
                         );
                     })}
-                    <select value={sort} onChange={e => setSort(e.target.value)} aria-label="Sort stores" className="ml-auto h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
-                        {SORTS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-                    </select>
-                    <div className="relative w-full sm:w-56"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" /><Input value={q} onChange={e => setQ(e.target.value)} placeholder="Search store or city" className="h-9 pl-8" aria-label="Search store or city" /></div>
+                    </div>
+                    {/* Search and sort share a row, on a phone too. */}
+                    <div className="flex w-full items-center gap-2 lg:ml-auto lg:w-auto">
+                        <div className="relative min-w-0 flex-1 lg:w-56 lg:flex-none"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><Input value={q} onChange={e => setQ(e.target.value)} placeholder="Search store or city" className="h-9 rounded-full border-slate-200 pl-9 shadow-sm focus-visible:ring-orange-200 focus-visible:ring-offset-0" aria-label="Search store or city" /></div>
+                        <AsmSelect value={sort} onChange={setSort} label="Sort stores" className="max-w-[48%] shrink-0"
+                            options={SORTS.map(s => ({ value: s.id, label: s.label }))} />
+                    </div>
                 </div>
                 {segInfo.hint && <p className="border-b border-slate-100 px-4 py-2 text-xs text-slate-500">{segInfo.hint}</p>}
                 <div className="overflow-x-auto">
@@ -273,7 +304,7 @@ const STATUS: Record<Row["status"], { label: string; tone: string }> = {
 };
 
 function WarrantyList({ period, filter, onClearStore, onOpenStore }: {
-    period: PeriodId; filter: { store?: string; storeName?: string; status?: "pending" | "validated" | "rejected" };
+    period: PeriodQuery; filter: { store?: string; storeName?: string; status?: "pending" | "validated" | "rejected" };
     onClearStore: () => void; onOpenStore: (id: string) => void;
 }) {
     const { toast } = useToast();
@@ -288,7 +319,7 @@ function WarrantyList({ period, filter, onClearStore, onOpenStore }: {
     useEffect(() => { setPage(1); }, [period]);
     useEffect(() => {
         setLoading(true);
-        api.get("/asm-portal/warranties", { params: { period, ...(status !== "all" ? { status } : {}), ...(filter.store ? { store: filter.store } : {}), ...(query ? { q: query } : {}), page } })
+        api.get("/asm-portal/warranties", { params: { ...period, ...(status !== "all" ? { status } : {}), ...(filter.store ? { store: filter.store } : {}), ...(query ? { q: query } : {}), page } })
             .then(r => setD(r.data))
             .catch(e => toast({ title: "Could not load the warranties", description: getErrorMessage(e, "Try again"), variant: "destructive" }))
             .finally(() => setLoading(false));
@@ -309,7 +340,7 @@ function WarrantyList({ period, filter, onClearStore, onOpenStore }: {
                         {l} <span className="tabular-nums opacity-80">{fmt(c[k])}</span>
                     </button>
                 ))}
-                <div className="relative ml-auto w-full sm:w-72"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" /><Input value={q} onChange={e => setQ(e.target.value)} placeholder="UID, customer or car number" className="h-9 pl-8" aria-label="Search by UID, customer or car number" /></div>
+                <div className="relative ml-auto w-full sm:w-72"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><Input value={q} onChange={e => setQ(e.target.value)} placeholder="UID, customer or car number" className="h-9 rounded-full border-slate-200 pl-9 shadow-sm focus-visible:ring-orange-200 focus-visible:ring-offset-0" aria-label="Search by UID, customer or car number" /></div>
             </div>
             <div className="relative overflow-x-auto rounded-2xl border border-slate-100 bg-white shadow-sm">
                 {loading && <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60"><Loader2 className="h-5 w-5 animate-spin text-orange-500" /></div>}

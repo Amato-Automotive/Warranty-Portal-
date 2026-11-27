@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { last12, periodOf, storeStat, totals } from '../asmWarrantyStats.js';
+import { customPeriod, last12, periodOf, storeStat, totals } from '../asmWarrantyStats.js';
 
 describe('ASM warranties by store', () => {
     test('this month is compared with the same days of last month', () => {
@@ -17,6 +17,16 @@ describe('ASM warranties by store', () => {
         const n = periodOf('last_90', '2026-11-27');
         assert.deepEqual([n.from, n.to, n.prevTo], ['2026-08-30', '2026-11-27', '2026-08-29']);
         assert.equal(n.prevFrom, '2026-06-01');
+    });
+
+    test('custom dates are compared with as many days just before', () => {
+        const c = customPeriod('2026-11-10', '2026-11-19', '2026-11-27')!;
+        assert.deepEqual([c.from, c.to, c.prevFrom, c.prevTo], ['2026-11-10', '2026-11-19', '2026-10-31', '2026-11-09']);
+        assert.equal(customPeriod('2026-11-05', '2026-11-05', '2026-11-27')!.prevFrom, '2026-11-04');
+        assert.equal(customPeriod('2026-11-20', '2026-11-10', '2026-11-27'), null);
+        assert.equal(customPeriod('2026-11-20', '2026-11-28', '2026-11-27'), null);
+        assert.equal(customPeriod('2026-02-30', '2026-03-01', '2026-11-27'), null);
+        assert.equal(customPeriod('2025-01-01', '2026-11-01', '2026-11-27'), null);
     });
 
     test('segments: a real drop, a small wobble, silent, new', () => {

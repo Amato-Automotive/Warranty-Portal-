@@ -8,7 +8,7 @@
 export type PeriodId = 'mtd' | 'last_month' | 'last_90';
 export const PERIOD_IDS: PeriodId[] = ['mtd', 'last_month', 'last_90'];
 
-export interface Period { id: PeriodId; from: string; to: string; prevFrom: string; prevTo: string; label: string; prevLabel: string }
+export interface Period { id: PeriodId | 'custom'; from: string; to: string; prevFrom: string; prevTo: string; label: string; prevLabel: string }
 
 const D = (s: string) => new Date(`${s}T00:00:00Z`);
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -36,6 +36,22 @@ export function periodOf(id: PeriodId, today: string): Period {
     const from = monthStart(today), prevFrom = prevMonth(today);
     const day = Number(today.slice(8, 10)), prevTo = addDays(prevFrom, Math.min(day, Number(monthEnd(prevFrom).slice(8, 10))) - 1);
     return { id: 'mtd', from, to: today, prevFrom, prevTo, label: `${short(from)} – ${short(today)}`, prevLabel: `${short(prevFrom)} – ${short(prevTo)}` };
+}
+
+/**
+ * A range the ASM picks, both days included, compared with the same number of
+ * days just before it. Null when the dates are not real days, run backwards,
+ * reach past today or span more than a year.
+ */
+export function customPeriod(from: string, to: string, today: string): Period | null {
+    const ok = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && iso(D(v)) === v;
+    if (!ok(from) || !ok(to) || from > to || to > today) return null;
+    const days = Math.round((D(to).getTime() - D(from).getTime()) / 86400000) + 1;
+    if (days > 366) return null;
+    const prevTo = addDays(from, -1), prevFrom = addDays(prevTo, -(days - 1));
+    const label = from === to ? short(from) : `${short(from)} – ${short(to)}`;
+    const prevLabel = prevFrom === prevTo ? short(prevFrom) : `${short(prevFrom)} – ${short(prevTo)}`;
+    return { id: 'custom', from, to, prevFrom, prevTo, label, prevLabel };
 }
 
 export interface StoreCount { store_id: string; cur: { approved: number; rejected: number; pending: number }; prev: number }

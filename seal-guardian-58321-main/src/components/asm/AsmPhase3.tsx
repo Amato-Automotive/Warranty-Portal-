@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { displayName } from "@/lib/asmStores";
 import { AsmStoreDetail } from "./AsmStoreDetail";
+import { AsmSelect } from "./AsmSelect";
 
 /** The ASM's stores' orders to their distributors, and their monthly review & feedback (read-only). */
 
@@ -120,9 +121,8 @@ export function AsmFeedback() {
         <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
                 <p className="text-sm text-slate-500">The monthly review & feedback your stores give head office.{!d.enabled && " The form is switched off at the moment."}</p>
-                <select value={d.month} onChange={e => setMonth(e.target.value)} aria-label="Month" className="ml-auto h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
-                    {d.months.map(m => <option key={m} value={m}>{monthText(m)}</option>)}
-                </select>
+                <AsmSelect value={d.month} onChange={setMonth} label="Month" className="ml-auto"
+                    options={d.months.map(m => ({ value: m, label: monthText(m) }))} />
             </div>
             <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"><p className="text-2xl font-black tabular-nums text-slate-900">{d.responses.length}</p><p className="text-sm font-bold text-slate-600">Stores answered</p><p className="text-xs text-slate-400">{monthText(d.month)}</p></div>

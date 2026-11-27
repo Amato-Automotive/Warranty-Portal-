@@ -7,7 +7,7 @@ import { SELL_MORE_ID, setsTotal, type Sets } from '../services/sellMoreEarnMore
 import { DEFAULT_SETTINGS, type StoreSettings } from '../services/posmHistory.js';
 import { asmAlerts, posmByStore, type PLine } from '../services/asmInsights.js';
 import { inAudience, monthOf, readFeedback, type FeedbackAnswer } from '../services/feedbackForm.js';
-import { PERIOD_IDS, last12, periodOf, storeStat, totals, type PeriodId, type StoreCount } from '../services/asmWarrantyStats.js';
+import { PERIOD_IDS, customPeriod, last12, periodOf, storeStat, totals, type PeriodId, type StoreCount } from '../services/asmWarrantyStats.js';
 
 /**
  * The ASM's view of their stores' schemes, POSM and alerts. Read-only, and
@@ -244,7 +244,7 @@ export class AsmInsightsController {
     }
 
     /**
-     * GET /api/asm-portal/warranty-stats?period=mtd|last_month|last_90 — warranties by store:
+     * GET /api/asm-portal/warranty-stats?period=mtd|last_month|last_90|custom (&from&to) — warranties by store:
      * this period against the one before, approval rate, rejections, segment; the ASM's
      * 12-month trend; and the rejection reasons with how many stores each hits.
      */
@@ -254,7 +254,12 @@ export class AsmInsightsController {
             if (!asmId) return res.status(403).json({ error: 'Your ASM account was not found' });
             const id = PERIOD_IDS.includes(req.query.period as PeriodId) ? (req.query.period as PeriodId) : 'mtd';
             const today = istToday();
-            const p = periodOf(id, today);
+            let p = periodOf(id, today);
+            if (req.query.period === 'custom') {
+                const c = customPeriod(String(req.query.from ?? ''), String(req.query.to ?? ''), today);
+                if (!c) return res.status(400).json({ error: 'Pick a start and end date, up to a year apart and not after today' });
+                p = c;
+            }
             const stores = await storesOfAsm(asmId);
             const ids = stores.map((s: any) => String(s.vendor_details_id));
             const empty = { success: true, period: p, totals: totals([]), stores: [], trend: [], reasons: [] };
