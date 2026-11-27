@@ -218,7 +218,7 @@ export function ownStages<T extends FlowLine>(lines: T[], req: {
 }
 
 export const STAGE_TEXT: Record<LineStage, string> = {
-    pending: 'To approve', approved: 'Approved', in_production: 'In production', on_hold: 'On hold',
+    pending: 'To approve', approved: 'Approved', in_production: 'WIP', on_hold: 'On hold',
     dispatched: 'Dispatched', delivered: 'Delivered', rejected: 'Rejected',
 };
 
@@ -231,7 +231,7 @@ const PAST: Record<keyof typeof FROM, string> = {
 export function stepText(action: LineAction, names: string[], lines?: FlowLine[]): string {
     const who = names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ');
     const verb: Record<LineAction, string> = {
-        approve: 'approved', hold: 'put on hold', reject: 'not approved', start: 'in production', dispatch: 'dispatched',
+        approve: 'approved', hold: 'put on hold', reject: 'not approved', start: 'WIP', dispatch: 'dispatched',
         deliver: 'delivered', resume: 'resumed', undo: 'step undone', edit: 'updated',
     };
     let s = `${who}: ${verb[action]}`;

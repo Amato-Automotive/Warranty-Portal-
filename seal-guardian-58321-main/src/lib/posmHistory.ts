@@ -28,6 +28,8 @@ export interface HistoryLine {
     courier: string | null; docket_no: string | null; dispatched_by: string | null; reason: string | null; remarks: string | null; address?: string | null; match_note: string | null;
     flags: LineFlag[];
     portal_store_name?: string | null;
+    /** A line made from a POSM request item. */
+    request_id?: number | null; request_line?: number | null; ticket_id?: string | null; dispatch_to?: string | null;
 }
 
 export interface UnlinkedGroup {
@@ -39,9 +41,11 @@ export interface UnlinkedGroup {
 export const POSM_ITEMS = [
     "FRP", "Sample Jacket", "Visiting Card", "Franchise Certificate", "T-Shirt", "Swatch / Shade Book", "Dr. Marq Stand", "ACP Board",
     "QR Code Sticker / Sun", "Push & Pull Sticker", "Petrol/Diesel Sticker", "Demo Sticker", "Wobbler / Dangler", "Notepad & Pen", "Brochure", "Calendar",
+    /* Items stores order through POSM requests that the sheets had no column for. */
+    "Catalogue", "POSM Kit", "Art work",
 ] as const;
 
-export const POSM_STATUSES = ["Not updated", "In production", "Ready to dispatch", "On hold", "Out of stock", "Dispatched", "In Transit", "Delivered", "Return"] as const;
+export const POSM_STATUSES = ["Not updated", "WIP", "Ready to dispatch", "On hold", "Out of stock", "Dispatched", "In Transit", "Delivered", "Return"] as const;
 export const SENT_STATUSES = new Set(["Dispatched", "In Transit", "Delivered"]);
 
 export const FLAG_LABEL: Record<LineFlag, string> = {

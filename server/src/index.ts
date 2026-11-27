@@ -1,4 +1,5 @@
 import express from 'express';
+import { runPosmSheetSync } from './services/posmSheetEngine.js';
 import { withScreenPermissions } from './services/adminScreenPermissions.js';
 import { createServer } from 'http';
 import cors from 'cors';
@@ -637,6 +638,19 @@ async function runMigrations() {
          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+    /* A dispatch line made from a POSM request item, and where the store asked it sent (FRP / Sample jacket). */
+    await addColumn('posm_dispatch_history', 'request_id', 'request_id INT NULL');
+    await addColumn('posm_dispatch_history', 'request_line', 'request_line INT NULL');
+    await addColumn('posm_dispatch_history', 'dispatch_to', 'dispatch_to VARCHAR(60) NULL');
+    try { await pool.query('ALTER TABLE posm_dispatch_history ADD UNIQUE KEY uq_pdh_request_line (request_id, request_line)'); } catch { /* already there */ }
+    /* Two-way sync with the plant / Noida sheets: the values last agreed with the sheet, and the Noida row (one dispatch) a line belongs to. */
+    await addColumn('posm_dispatch_history', 'sheet_snapshot', 'sheet_snapshot JSON NULL');
+    await addColumn('posm_dispatch_history', 'sheet_synced_at', 'sheet_synced_at TIMESTAMP NULL');
+    await addColumn('posm_dispatch_history', 'dispatch_group', 'dispatch_group VARCHAR(64) NULL');
+    await pool.query(`CREATE TABLE IF NOT EXISTS posm_sheet_sync_runs (id INT AUTO_INCREMENT PRIMARY KEY, started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, finished_at TIMESTAMP NULL, ok TINYINT(1) NULL, report JSON NULL, error TEXT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* "In production" is called WIP now. */
+    await pool.query("UPDATE posm_dispatch_history SET status = 'WIP' WHERE status = 'In production'");
+
     // Lead Management's lists the admin keeps (review outcomes, channels), and
     // the two outcome columns as text, so an outcome the admin adds can be stored.
     await pool.query(`CREATE TABLE IF NOT EXISTS lead_options (
@@ -804,6 +818,14 @@ if (process.env.DISABLE_SCHEDULERS === '1') {
 
   // The plant's production sheets into Claims, every 10 minutes (the sheets the admin added).
   startClaimSheetSchedule();
+
+  // POSM dispatch <-> the plant's and the Noida office's sheets, both ways, every 5 minutes (POSM_SHEET_SYNC=off stops it).
+  if (process.env.POSM_SHEET_SYNC !== 'off') {
+    const posmSheets = () => runPosmSheetSync().then(r => console.log('[POSM sheets]', r.tabs.map(t => `${t.tab.trim()}: ${t.toPortal} to portal, ${t.toSheet} to sheet, ${t.addedToSheet} rows added, ${t.newFromSheet} new from sheet${t.conflicts ? `, ${t.conflicts} clashes` : ''}`).join(' | ')))
+      .catch(err => console.error('[POSM sheets] sync failed:', err?.message));
+    setTimeout(posmSheets, 60 * 1000).unref?.();
+    setInterval(posmSheets, 5 * 60 * 1000).unref?.();
+  }
 
   // The day before each scheme window opens, the stores it is for are reminded (in-app).
   const remind = () => runSchemeReminders().catch(err => console.error('[Schemes] reminders failed:', err?.message));

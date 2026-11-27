@@ -15,6 +15,10 @@ type Limit = PosmLimits & { used_month?: number; used_year?: number };
 type Form = { kind: "approve" | "reject" | "hold" | "dispatch" | "edit"; indexes: number[] };
 type Ship = { courier: string; tracking: string; date: string };
 
+/** FRP and Sample jacket are made at the plant: approving them needs the depot. */
+const isPlantItem = (id: string) => id === "frp" || id === "jacket";
+const DEPOT_LABEL: Record<string, string> = { ludhiana: "United Ludhiana depot", jaipur: "Janak Jaipur depot" };
+
 const today = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
 const NOTE_LABEL: Partial<Record<LineStage, string>> = { rejected: "Reason", on_hold: "Why on hold" };
 const STAGE_ORDER: LineStage[] = ["pending", "approved", "in_production", "on_hold", "dispatched", "delivered", "rejected"];
@@ -48,6 +52,7 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
     const [fNote, setFNote] = useState("");
     const [fQty, setFQty] = useState("");
     const [fShip, setFShip] = useState<Ship>({ courier: "", tracking: "", date: today() });
+    const [fDepot, setFDepot] = useState("");
     const [busy, setBusy] = useState(false);
 
     useEffect(() => { setTicked([]); setQty({}); setNotes({}); setForm(null); }, [requestId]);
@@ -76,18 +81,22 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
         setFQty(one ? String(one.approved_qty && one.approved_qty > 0 ? one.approved_qty : one.qty) : "");
         const d = [...indexes].map(i => lines[i]?.dispatch).find(Boolean);
         setFShip(kind === "edit" && d ? { courier: d.courier, tracking: d.tracking, date: d.date ?? "" } : { courier: "", tracking: "", date: today() });
+        setFDepot("");
         setForm({ kind, indexes });
     };
 
     /* One item's Approve: the quantity and note typed on its card. */
-    const approveOne = (i: number) => post("approve", [{ index: i, qty: qtyOf(i) }], notes[i]?.trim() ? { note: notes[i].trim() } : {});
+    const approveOne = (i: number) => {
+        if (isPlantItem(lines[i].item_id)) { open("approve", [i]); setFQty(String(qtyOf(i) ?? lines[i].qty)); setFNote(notes[i] ?? ""); return; }
+        return post("approve", [{ index: i, qty: qtyOf(i) }], notes[i]?.trim() ? { note: notes[i].trim() } : {});
+    };
 
     const submitForm = () => {
         if (!form) return;
         const specs = form.indexes.map(index => ({ index }));
         const one = form.indexes.length === 1 ? lines[form.indexes[0]] : null;
         switch (form.kind) {
-            case "approve": return post("approve", form.indexes.map(index => ({ index, qty: one ? Math.floor(Number(fQty)) : qtyOf(index) })), fNote.trim() ? { note: fNote.trim() } : {});
+            case "approve": return post("approve", form.indexes.map(index => ({ index, qty: one ? Math.floor(Number(fQty)) : qtyOf(index) })), { ...(fNote.trim() ? { note: fNote.trim() } : {}), ...(fDepot ? { depot: fDepot } : {}) });
             case "reject": return post("reject", specs, { note: fNote.trim() });
             case "hold": return post("hold", specs, fNote.trim() ? { note: fNote.trim() } : {});
             case "dispatch": return post("dispatch", specs, { dispatch: fShip });
@@ -106,8 +115,8 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
 
     /* What the ticked items can do together: each button takes the ticked items it fits. */
     const bulk: { a: LineAction; label: string; tone?: string; run: (idx: number[]) => void }[] = [
-        { a: "approve", label: "Approve", tone: "bg-emerald-600 hover:bg-emerald-700 text-white", run: idx => post("approve", idx.map(index => ({ index, qty: qtyOf(index) }))) },
-        { a: "start", label: "Start production", run: idx => post("start", idx.map(index => ({ index }))) },
+        { a: "approve", label: "Approve", tone: "bg-emerald-600 hover:bg-emerald-700 text-white", run: idx => idx.some(i => isPlantItem(lines[i].item_id)) ? open("approve", idx) : post("approve", idx.map(index => ({ index, qty: qtyOf(index) }))) },
+        { a: "start", label: "Mark WIP", run: idx => post("start", idx.map(index => ({ index }))) },
         { a: "dispatch", label: "Dispatch…", tone: "bg-orange-600 hover:bg-orange-700 text-white", run: idx => open("dispatch", idx) },
         { a: "deliver", label: "Mark delivered", run: idx => post("deliver", idx.map(index => ({ index }))) },
         { a: "resume", label: "Resume", run: idx => post("resume", idx.map(index => ({ index }))) },
@@ -121,6 +130,7 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
     const formOk = !form ? false
         : form.kind === "reject" ? fNote.trim().length >= 3
         : form.kind === "dispatch" ? !!fShip.courier.trim()
+        : form.kind === "approve" && formLines.some(l => isPlantItem(l.item_id)) && !fDepot ? false
         : form.kind === "approve" && formOne ? Number(fQty) >= 1
         : form.kind === "edit" && formStage === "rejected" ? fNote.trim().length >= 3
         : form.kind === "edit" && (formStage === "dispatched" || formStage === "delivered") ? !!fShip.courier.trim()
@@ -194,6 +204,7 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
                                         </div>
                                     ) : null}
                                     {usage && <p className="text-[11px] font-semibold text-amber-600 mt-0.5">{usage}</p>}
+                                    {l.depot && <p className="text-[11px] font-semibold text-blue-700 mt-0.5">Plant: {DEPOT_LABEL[l.depot]}</p>}
                                 </div>
                                 <span className={cn("col-start-3 sm:col-start-auto justify-self-start sm:justify-self-end rounded-full px-2.5 py-0.5 text-[11px] font-bold whitespace-nowrap", LINE_STAGE[s].tone)}>
                                     {LINE_STAGE[s].label}
@@ -250,7 +261,7 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
                                     ? <Button size="sm" disabled={busy} onClick={() => approveOne(i)} className="h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700">Approve</Button>
                                     : <Button size="sm" disabled={busy} onClick={() => open("approve", [i])} className="h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700">Approve instead</Button>)}
                                 {acts.includes("resume") && <Button size="sm" disabled={busy} onClick={() => post("resume", [{ index: i }])} className="h-8 rounded-lg bg-slate-900">Resume</Button>}
-                                {acts.includes("start") && <Button size="sm" variant="outline" disabled={busy} onClick={() => post("start", [{ index: i }])} className="h-8 rounded-lg">Start production</Button>}
+                                {acts.includes("start") && <Button size="sm" variant="outline" disabled={busy} onClick={() => post("start", [{ index: i }])} className="h-8 rounded-lg">Mark WIP</Button>}
                                 {acts.includes("dispatch") && <Button size="sm" disabled={busy} onClick={() => open("dispatch", [i])} className="h-8 rounded-lg bg-orange-600 hover:bg-orange-700">Dispatch…</Button>}
                                 {acts.includes("deliver") && <Button size="sm" disabled={busy} onClick={() => post("deliver", [{ index: i }])} className="h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700">Mark delivered</Button>}
                                 {acts.includes("hold") && <Button size="sm" variant="outline" disabled={busy} onClick={() => open("hold", [i])} className="h-8 rounded-lg">Hold…</Button>}
@@ -276,6 +287,17 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
+                        {form?.kind === "approve" && formLines.some(l => isPlantItem(l.item_id)) && (
+                            <label className="block space-y-1">
+                                <span className="text-xs font-semibold text-slate-600">Plant depot for the {formLines.filter(l => isPlantItem(l.item_id)).map(l => l.item_name).join(" and ")}</span>
+                                <select value={fDepot} onChange={e => setFDepot(e.target.value)} aria-label="Plant depot" className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm">
+                                    <option value="">Choose the depot</option>
+                                    <option value="ludhiana">United Ludhiana depot</option>
+                                    <option value="jaipur">Janak Jaipur depot</option>
+                                </select>
+                                <span className="block text-[11px] text-slate-500">It goes to that depot's list in POSM Dispatch for the plant to make and send.</span>
+                            </label>
+                        )}
                         {formOne && (form?.kind === "approve" || (form?.kind === "edit" && formStage !== "rejected")) && (
                             <label className="flex items-center gap-2 text-sm text-slate-600">
                                 {formOne.qty} asked → send

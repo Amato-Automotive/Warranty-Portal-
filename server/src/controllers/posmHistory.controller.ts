@@ -1,3 +1,5 @@
+import { runPosmSheetSync } from '../services/posmSheetEngine.js';
+import { syncDispatchToRequest } from '../services/posmSync.service.js';
 import { Response } from 'express';
 import db from '../config/database.js';
 import { AuthRequest } from '../middleware/auth.js';
@@ -42,7 +44,7 @@ const day = (v: unknown) => {
 };
 
 const LINE_COLS = `id, source, store_id, store_code, sheet_store_name, city, state, distributor, asm, item, design, major_colour, minor_colour, brand, store_kind,
-    qty, status, request_date, dispatch_date, delivery_date, expected_dispatch, status_changed_on, courier, docket_no, dispatched_by, reason, remarks, address, match_note, flags, updated_at`;
+    qty, status, request_date, dispatch_date, delivery_date, expected_dispatch, status_changed_on, courier, docket_no, dispatched_by, reason, remarks, address, match_note, flags, updated_at, request_id, request_line, dispatch_to, dispatch_group`;
 
 const readLine = (r: any) => ({
     id: r.id, source: r.source, store_id: r.store_id ? String(r.store_id) : null, store_code: r.store_code, sheet_store_name: r.sheet_store_name,
@@ -52,6 +54,8 @@ const readLine = (r: any) => ({
     request_date: day(r.request_date), dispatch_date: day(r.dispatch_date), delivery_date: day(r.delivery_date), expected_dispatch: day(r.expected_dispatch), status_changed_on: day(r.status_changed_on),
     courier: r.courier, docket_no: r.docket_no, dispatched_by: r.dispatched_by, reason: r.reason, remarks: r.remarks, address: r.address, match_note: r.match_note,
     flags: json<LineFlag[]>(r.flags, []), updated_at: r.updated_at,
+    request_id: r.request_id ?? null, request_line: r.request_line ?? null, dispatch_to: r.dispatch_to ?? null, ticket_id: r.ticket_id ?? null,
+    dispatch_group: r.dispatch_group ?? null,
 });
 
 const readSettings = (r: any): StoreSettings => r
@@ -248,6 +252,7 @@ export class POSMHistoryController {
                 `UPDATE posm_dispatch_history SET qty = ?, status = ?, flags = ?, updated_by = ?${status !== was.status ? ', status_changed_on = CURDATE()' : ''} WHERE id = ?`,
                 [qty, status, JSON.stringify(flags), req.user?.id ?? null, was.id]);
             log(req, 'POSM_HISTORY_LINE_EDITED', { line_id: was.id, store_id: was.store_id, item: was.item, before: { qty: was.qty, status: was.status, flags: was.flags }, after: { qty, status, flags } });
+            await syncDispatchToRequest(was.id, { id: req.user?.id ?? null, name: (req.user as any)?.name ?? null }, 'admin').catch(e => console.error('[POSM sync] edit -> request:', e));
             res.json({ success: true });
         } catch (error) {
             console.error('[POSM history] update line:', error);
@@ -259,6 +264,8 @@ export class POSMHistoryController {
     static async removeLine(req: AuthRequest, res: Response) {
         try {
             const restore = req.query.restore === '1';
+            const [[linked]]: any = await db.execute('SELECT h.request_id, pr.ticket_id FROM posm_dispatch_history h LEFT JOIN posm_requests pr ON pr.id = h.request_id WHERE h.id = ?', [req.params.id]);
+            if (linked?.request_id && !restore) return res.status(400).json({ success: false, error: `This line comes from POSM request ${linked.ticket_id ?? linked.request_id}: reject the item there instead` });
             const [result]: any = await db.execute(
                 `UPDATE posm_dispatch_history SET deleted_at = ${restore ? 'NULL' : 'NOW()'}, updated_by = ? WHERE id = ? AND deleted_at IS ${restore ? 'NOT NULL' : 'NULL'}`,
                 [req.user?.id ?? null, req.params.id]);
@@ -277,10 +284,11 @@ export class POSMHistoryController {
     static async plantLines(req: AuthRequest, res: Response) {
         try {
             const [rows]: any = await db.query(
-                `SELECT h.${LINE_COLS.split(',').map(c => c.trim()).join(', h.')}, vd.store_name AS portal_store_name, p.name AS updated_by_name
+                `SELECT h.${LINE_COLS.split(',').map(c => c.trim()).join(', h.')}, vd.store_name AS portal_store_name, p.name AS updated_by_name, pr.ticket_id
                    FROM posm_dispatch_history h
                    LEFT JOIN vendor_details vd ON vd.id = h.store_id
                    LEFT JOIN profiles p ON p.id = h.updated_by
+                   LEFT JOIN posm_requests pr ON pr.id = h.request_id
                   WHERE h.deleted_at IS NULL AND h.source LIKE 'Plant%'
                   ORDER BY COALESCE(h.request_date, h.dispatch_date) DESC, h.sheet_row`);
             const today = istToday();
@@ -311,6 +319,7 @@ export class POSMHistoryController {
                 `UPDATE posm_dispatch_history SET ${fields.map(f => `${f} = ?`).join(', ')}, updated_by = ?${r.statusChanged ? ', status_changed_on = ?' : ''} WHERE id = ?`,
                 [...fields.map(f => r.set[f] ?? null), req.user?.id ?? null, ...(r.statusChanged ? [istToday()] : []), was.id]);
             log(req, 'POSM_PLANT_LINE_UPDATED', { line_id: was.id, store_id: was.store_id, item: was.item, before: Object.fromEntries(fields.map(f => [f, (was as any)[f]])), after: r.set });
+            await syncDispatchToRequest(was.id, { id: req.user?.id ?? null, name: (req.user as any)?.name ?? null }, 'plant').catch(e => console.error('[POSM sync] plant -> request:', e));
             res.json({ success: true });
         } catch (error) {
             console.error('[POSM plant] update:', error);
@@ -365,9 +374,9 @@ export class POSMHistoryController {
     static async noidaDispatches(req: AuthRequest, res: Response) {
         try {
             const [rows]: any = await db.query(
-                `SELECT h.${LINE_COLS.split(',').map(c => c.trim()).join(', h.')}, vd.store_name AS portal_store_name
-                   FROM posm_dispatch_history h LEFT JOIN vendor_details vd ON vd.id = h.store_id
-                  WHERE h.deleted_at IS NULL AND h.source = ? ORDER BY h.dispatch_date DESC, h.sheet_row`, [NOIDA_SOURCE]);
+                `SELECT h.${LINE_COLS.split(',').map(c => c.trim()).join(', h.')}, vd.store_name AS portal_store_name, pr.ticket_id
+                   FROM posm_dispatch_history h LEFT JOIN vendor_details vd ON vd.id = h.store_id LEFT JOIN posm_requests pr ON pr.id = h.request_id
+                  WHERE h.deleted_at IS NULL AND h.source = ? ORDER BY COALESCE(h.dispatch_date, h.request_date) DESC, h.sheet_row`, [NOIDA_SOURCE]);
             const groups = new Map<string, any>();
             for (const r of rows) {
                 const l = readLine(r);
@@ -375,8 +384,9 @@ export class POSMHistoryController {
                 const g = groups.get(key) ?? {
                     key, line_ids: [] as string[], store_id: l.store_id, store_code: l.store_code, store_name: r.portal_store_name ? String(r.portal_store_name).trim() : l.sheet_store_name,
                     distributor: l.distributor, asm: l.asm, state: l.state, dispatch_date: l.dispatch_date, dispatched_by: l.dispatched_by, courier: l.courier, docket_no: l.docket_no,
-                    delivery_date: l.delivery_date, status: l.status, remarks: l.remarks, items: {} as Record<string, number>, flags: [] as string[],
+                    delivery_date: l.delivery_date, status: l.status, remarks: l.remarks, items: {} as Record<string, number>, flags: [] as string[], tickets: [] as string[],
                 };
+                if ((l as any).ticket_id && !g.tickets.includes((l as any).ticket_id)) g.tickets.push((l as any).ticket_id);
                 g.line_ids.push(l.id);
                 g.items[l.item] = (g.items[l.item] ?? 0) + l.qty;
                 if (!g.remarks && l.remarks) g.remarks = l.remarks;
@@ -422,9 +432,13 @@ export class POSMHistoryController {
                 if (!existing.length) return res.status(404).json({ success: false, error: 'Dispatch not found' });
             }
             const was = existing.map(readLine);
+            /* A line from a POSM request is removed by rejecting the item on the request, not here. */
+            const fromRequest = was.find((l: any) => l.request_id && !items[l.item]);
+            if (fromRequest) return res.status(400).json({ success: false, error: `${fromRequest.item} comes from a POSM request: reject it on the request instead of setting it to 0` });
             const store = was[0]?.store_id ? await storeInfo(was[0].store_id) : await storeInfo(String(b.store_id ?? ''));
             if (!was.length && !store) return res.status(400).json({ success: false, error: 'Pick the store' });
             const first = was[0];
+            const newGroup = uuidv4();
             const conn = await db.getConnection();
             try {
                 await conn.beginTransaction();
@@ -445,19 +459,45 @@ export class POSMHistoryController {
                 for (const [item, qty] of Object.entries(items)) {
                     if (byItem.has(item)) continue;
                     await conn.execute(
-                        `INSERT INTO posm_dispatch_history (id, source, store_id, store_code, sheet_store_name, city, state, distributor, asm, item, qty, status, dispatch_date, delivery_date, dispatched_by, courier, docket_no, remarks, flags, updated_by)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)`,
+                        `INSERT INTO posm_dispatch_history (id, source, store_id, store_code, sheet_store_name, city, state, distributor, asm, item, qty, status, dispatch_date, delivery_date, dispatched_by, courier, docket_no, remarks, flags, updated_by, dispatch_group)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
                         [uuidv4(), NOIDA_SOURCE, store?.id ?? first?.store_id ?? null, store?.store_code ?? first?.store_code ?? null, store?.store_name ?? first?.sheet_store_name ?? null,
                             store?.city ?? first?.city ?? null, store?.state ?? first?.state ?? null, store?.distributor ?? first?.distributor ?? null, store?.asm ?? first?.asm ?? null,
-                            item, qty, shared.status, shared.dispatch_date, shared.delivery_date, shared.dispatched_by, shared.courier, shared.docket_no, shared.remarks, req.user?.id ?? null]);
+                            item, qty, shared.status, shared.dispatch_date, shared.delivery_date, shared.dispatched_by, shared.courier, shared.docket_no, shared.remarks, req.user?.id ?? null,
+                            /* One dispatch is one row in the Noida sheet. */ (first as any)?.dispatch_group ?? newGroup]);
                 }
                 await conn.commit();
             } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
             log(req, ids.length ? 'POSM_NOIDA_DISPATCH_EDITED' : 'POSM_NOIDA_DISPATCH_ADDED', { store_id: store?.id ?? first?.store_id ?? null, line_ids: ids, items, ...shared });
+            for (const id of ids) await syncDispatchToRequest(id, { id: req.user?.id ?? null, name: (req.user as any)?.name ?? null }, 'noida').catch(e => console.error('[POSM sync] noida -> request:', e));
             res.json({ success: true });
         } catch (error) {
             console.error('[POSM noida] save:', error);
             res.status(500).json({ success: false, error: 'Could not save the dispatch' });
+        }
+    }
+
+    /* ---------- The plant and Noida sheets ---------- */
+
+    /** The latest syncs with the plant's and Noida office's sheets. */
+    static async sheetSyncStatus(req: AuthRequest, res: Response) {
+        try {
+            const [rows]: any = await db.query('SELECT id, started_at, finished_at, ok, report, error FROM posm_sheet_sync_runs ORDER BY id DESC LIMIT 10');
+            res.json({ success: true, runs: rows.map((r: any) => ({ ...r, report: json(r.report, null) })), off: process.env.POSM_SHEET_SYNC === 'off' });
+        } catch (error) {
+            console.error('[POSM sheets] status:', error);
+            res.status(500).json({ success: false, error: 'Could not load the sheet sync' });
+        }
+    }
+
+    /** Syncs with the sheets now instead of waiting for the next 5 minutes. */
+    static async sheetSyncNow(req: AuthRequest, res: Response) {
+        try {
+            const report = await runPosmSheetSync();
+            log(req, 'POSM_SHEET_SYNC_RUN', { tabs: report.tabs.map(({ notes: _n, samples: _s, ...t }) => t) });
+            res.json({ success: true, report });
+        } catch (error: any) {
+            res.status(error?.message?.includes('already running') ? 409 : 500).json({ success: false, error: error?.message || 'Could not sync with the sheets' });
         }
     }
 

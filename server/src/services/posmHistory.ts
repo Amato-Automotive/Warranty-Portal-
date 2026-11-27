@@ -18,13 +18,15 @@
 export const POSM_ITEMS = [
     'FRP', 'Sample Jacket', 'Visiting Card', 'Franchise Certificate', 'T-Shirt', 'Swatch / Shade Book', 'Dr. Marq Stand', 'ACP Board',
     'QR Code Sticker / Sun', 'Push & Pull Sticker', 'Petrol/Diesel Sticker', 'Demo Sticker', 'Wobbler / Dangler', 'Notepad & Pen', 'Brochure', 'Calendar',
+    /* Items stores order through POSM requests that the sheets had no column for. */
+    'Catalogue', 'POSM Kit', 'Art work',
 ] as const;
 
-export const POSM_STATUSES = ['Not updated', 'In production', 'Ready to dispatch', 'On hold', 'Out of stock', 'Dispatched', 'In Transit', 'Delivered', 'Return'] as const;
+export const POSM_STATUSES = ['Not updated', 'WIP', 'Ready to dispatch', 'On hold', 'Out of stock', 'Dispatched', 'In Transit', 'Delivered', 'Return'] as const;
 export type PosmStatus = (typeof POSM_STATUSES)[number];
 
 const SENT = new Set(['Dispatched', 'In Transit', 'Delivered']);
-const PENDING = new Set(['Not updated', 'In production', 'Ready to dispatch', 'On hold', 'Out of stock']);
+const PENDING = new Set(['Not updated', 'WIP', 'Ready to dispatch', 'On hold', 'Out of stock']);
 export const isSent = (status: string) => SENT.has(status);
 export const isPending = (status: string) => PENDING.has(status);
 
@@ -109,7 +111,8 @@ export function readStoreType(v: unknown): Pick<StoreSettings, 'store_type' | 't
 
 /** A status as written in the sheet, or "Not updated" if it is not one of ours. */
 export function readStatus(v: unknown): PosmStatus {
-    const s = String(v ?? '').trim().toLowerCase();
+    /* "In production" is the old name of WIP. */
+    const s = String(v ?? '').trim().toLowerCase().replace(/^in production$/, 'wip');
     return POSM_STATUSES.find(x => x.toLowerCase() === s) ?? 'Not updated';
 }
 

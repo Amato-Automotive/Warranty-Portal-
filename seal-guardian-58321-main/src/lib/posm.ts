@@ -72,6 +72,8 @@ export interface PosmLine {
     delivered_by?: "admin" | "franchise" | null;
     /** The line before each step (Undo puts it back). */
     trail?: unknown[];
+    /** FRP / Sample jacket: the plant depot chosen on approval. */
+    depot?: "ludhiana" | "jaipur";
 }
 
 /* ---------- each item moves on its own (the server's posmLineFlow decides; this mirrors it for the buttons) ---------- */
@@ -82,7 +84,7 @@ export type LineAction = "approve" | "hold" | "reject" | "start" | "dispatch" | 
 export const LINE_STAGE: Record<LineStage, { label: string; store: string; tone: string }> = {
     pending: { label: "To approve", store: "Waiting", tone: "bg-slate-100 text-slate-700" },
     approved: { label: "Approved", store: "Approved", tone: "bg-emerald-50 text-emerald-700" },
-    in_production: { label: "In production", store: "In production", tone: "bg-blue-50 text-blue-700" },
+    in_production: { label: "WIP", store: "WIP (being made)", tone: "bg-blue-50 text-blue-700" },
     on_hold: { label: "On hold", store: "On hold", tone: "bg-yellow-50 text-yellow-800" },
     dispatched: { label: "Dispatched", store: "Dispatched", tone: "bg-orange-50 text-orange-700" },
     delivered: { label: "Delivered", store: "Delivered", tone: "bg-emerald-100 text-emerald-800" },
@@ -119,7 +121,7 @@ export function mixedLabel(lines?: PosmLine[] | null): string | null {
     if (new Set(live).size < 2) return null;
     if (live.includes("delivered")) return "Partly delivered";
     if (live.includes("dispatched")) return "Partly dispatched";
-    if (live.includes("in_production")) return "Partly in production";
+    if (live.includes("in_production")) return "Partly WIP";
     if (live.includes("approved")) return "Partly approved";
     return null;
 }
@@ -157,13 +159,13 @@ export const lineText = (l: PosmLine) => (l.display ?? []).map(d => `${d.label}:
 export const PROGRESS = [
     { status: "open", label: "Sent" },
     { status: "approved", label: "Approved" },
-    { status: "in_production", label: "In production" },
+    { status: "in_production", label: "WIP" },
     { status: "dispatched", label: "Dispatched" },
     { status: "delivered", label: "Delivered" },
 ] as const;
 
 export const STATUS_LABEL: Record<string, string> = {
-    open: "Sent", under_review: "Under review", approved: "Approved", in_production: "In production",
+    open: "Sent", under_review: "Under review", approved: "Approved", in_production: "WIP",
     pending: "On hold", dispatched: "Dispatched", delivered: "Delivered", closed: "Closed", rejected: "Rejected",
 };
 
@@ -205,7 +207,7 @@ export const ACTIONS_AT: Record<string, PosmAction[]> = {
 };
 
 export const ACTION_LABEL: Record<PosmAction, string> = {
-    approve: "Approve", hold: "Put on hold", reject: "Reject…", start: "Start production", dispatch: "Dispatch…",
+    approve: "Approve", hold: "Put on hold", reject: "Reject…", start: "Mark WIP", dispatch: "Dispatch…",
     resume: "Resume", deliver: "Mark delivered", close: "Close", reopen: "Reopen",
 };
 
@@ -235,7 +237,7 @@ export const HISTORY_TEXT: Record<HistoryEntry["action"], string> = {
 export const STAGES: { key: string; label: string; statuses: string[] }[] = [
     { key: "approve", label: "To approve", statuses: ["open", "under_review"] },
     { key: "approved", label: "Approved", statuses: ["approved"] },
-    { key: "production", label: "In production", statuses: ["in_production"] },
+    { key: "production", label: "WIP", statuses: ["in_production"] },
     { key: "hold", label: "On hold", statuses: ["pending"] },
     { key: "dispatched", label: "Dispatched", statuses: ["dispatched"] },
     { key: "done", label: "Done", statuses: ["delivered", "closed", "rejected"] },

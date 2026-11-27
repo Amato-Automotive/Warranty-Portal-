@@ -1,3 +1,5 @@
+import { syncRequestToDispatch } from '../services/posmSync.service.js';
+import { DISPATCH_TO_FIELD, DISPATCH_TO_OPTIONS, isPlantItem } from '../services/posmSyncRules.js';
 import { Response } from 'express';
 import db from '../config/database.js';
 import { AuthRequest } from '../middleware/auth.js';
@@ -58,7 +60,18 @@ const step = (req: AuthRequest, e: Omit<HistoryEntry, 'at' | 'by_role' | 'by' | 
 async function loadCatalog(): Promise<PosmCatalog> {
     const [rows]: any = await db.execute('SELECT catalog FROM posm_settings WHERE id = 1');
     const raw = rows[0]?.catalog;
-    return readCatalog(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    return withDispatchTo(readCatalog(typeof raw === 'string' ? JSON.parse(raw) : raw));
+}
+
+/** FRP and Sample jacket always ask where to send them: to the distributor or to the franchise. */
+function withDispatchTo(catalog: PosmCatalog): PosmCatalog {
+    return {
+        ...catalog,
+        items: catalog.items.map(it => !isPlantItem(it.id) || (it.fields ?? []).some((f: any) => f.id === DISPATCH_TO_FIELD) ? it : {
+            ...it,
+            fields: [...(it.fields ?? []), { id: DISPATCH_TO_FIELD, label: 'Dispatch to', type: 'select', required: true, options: [...DISPATCH_TO_OPTIONS] } as any],
+        }),
+    };
 }
 
 const fileUrl = (f: any) => f.path || f.secure_url || f.url;
@@ -587,6 +600,8 @@ class POSMController {
                     status, items: r.lines, ...(status === 'delivered' ? { delivery } : {}),
                     history: [...(access.request.history ?? []), step(req, { action: 'received', status: status as HistoryEntry['status'], note: onWay.map(x => x.l.item_name).join(', '), lines: r.touched })],
                 });
+                /* Received by the store: its dispatch lines are delivered too. */
+                await syncRequestToDispatch(access.requestId, r.touched, req.user?.id ?? null).catch(e => console.error('[POSM sync] delivery -> dispatch:', e));
             } else {
                 await posmRepository.updateRequest(access.requestId, {
                     status: 'delivered', delivery,
@@ -1003,6 +1018,13 @@ class POSMController {
             const a = String(action) as LineAction;
             const r = stepLines(lines, a, items, { note, dispatch, by: 'admin' });
             if ('error' in r) return res.status(400).json({ success: false, error: r.error });
+            /* FRP / Sample jacket go to a plant depot, which the admin picks when approving. */
+            if (a === 'approve') {
+                const plantLines = r.touched.filter(i => isPlantItem(r.lines[i].item_id));
+                const depot = String(req.body?.depot ?? '');
+                if (plantLines.length && depot !== 'ludhiana' && depot !== 'jaipur') return res.status(400).json({ success: false, error: 'Pick the plant depot (Ludhiana or Jaipur) for the FRP / Sample jacket' });
+                for (const i of plantLines) r.lines[i] = { ...r.lines[i], depot: depot as 'ludhiana' | 'jaipur' };
+            }
             if (a === 'edit') {
                 const what = editText(lines, r.lines, r.touched);
                 if (!what) return res.json({ success: true, message: 'Nothing changed', data: { ...current } });
@@ -1037,6 +1059,8 @@ class POSMController {
         if (status === 'delivered' && !current.delivery) fields.delivery = { by: 'admin', at: new Date().toISOString(), photos: [] };
         if (!['delivered', 'closed'].includes(status) && current.delivery) fields.delivery = null;
         await posmRepository.updateRequest(requestId, fields);
+        /* The items just touched, onto their POSM dispatch lines. */
+        await syncRequestToDispatch(requestId, touched, req.user?.id ?? null).catch(e => console.error('[POSM sync] request -> dispatch:', e));
 
         await ActivityLogService.log({
             adminId: req.user!.id, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
