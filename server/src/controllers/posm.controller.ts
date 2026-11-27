@@ -700,7 +700,7 @@ class POSMController {
 
             // Without head office's internal notes, which the list used to carry.
             const requests = await posmRepository.getFranchiseRequests(vendor.id);
-            return res.json({ success: true, data: requests.map(({ internal_notes, ...r }) => r) });
+            return res.json({ success: true, data: requests.map(({ internal_notes, urgent: _u, urgent_by: _ub, urgent_at: _ua, ...r }: any) => r) });
 
         } catch (error: any) {
             console.error('Get franchise requests error:', error);
@@ -733,7 +733,10 @@ class POSMController {
             }
 
             // Head office's internal notes are theirs alone: never to the store or its ASM.
-            const { internal_notes, ...visible } = access.request as any;
+            const { internal_notes, ...shown } = access.request as any;
+            /* The urgent mark is for head office, the ASM and the plant; the store does not see it (decided 27 Nov). */
+            const { urgent: _u, urgent_by: _ub, urgent_at: _ua, ...forStore } = shown;
+            const visible = req.user?.role === 'vendor' ? forStore : shown;
             return res.json({
                 success: true,
                 data: {
