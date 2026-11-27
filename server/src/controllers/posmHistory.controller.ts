@@ -510,10 +510,17 @@ export class POSMHistoryController {
             if (!vendor) return res.status(404).json({ success: false, error: 'Store not found' });
             const storeId = String(vendor.id);
             const [rows]: any = await db.execute(
-                `SELECT ${LINE_COLS} FROM posm_dispatch_history WHERE store_id = ? AND deleted_at IS NULL ORDER BY COALESCE(dispatch_date, request_date) DESC, item`, [storeId]);
-            /* The store sees what was sent and when, not head office's notes. */
-            const lines = rows.map(readLine).map(({ id, item, design, major_colour, minor_colour, qty, status, request_date, dispatch_date, delivery_date, courier, docket_no }: any) =>
-                ({ id, item, design, major_colour, minor_colour, qty, status, request_date, dispatch_date, delivery_date, courier, docket_no }));
+                `SELECT h.${LINE_COLS.split(',').map(c => c.trim()).join(', h.')}, pr.ticket_id AS req_ticket
+                   FROM posm_dispatch_history h LEFT JOIN posm_requests pr ON pr.id = h.request_id
+                  WHERE h.store_id = ? AND h.deleted_at IS NULL ORDER BY COALESCE(h.dispatch_date, h.request_date) DESC, h.item`, [storeId]);
+            /*
+             * The store sees what was sent, what is coming and which request it answers;
+             * never head office's notes (reason, remarks, flags), the expected date or
+             * the urgent mark (decided 27 Nov).
+             */
+            const lines = rows.map((r: any) => ({ ...readLine(r), ticket_id: r.req_ticket ?? null }))
+                .map(({ id, source, item, design, major_colour, minor_colour, qty, status, request_date, dispatch_date, delivery_date, courier, docket_no, dispatch_group, ticket_id }: any) =>
+                    ({ id, from: /^Plant/i.test(source) ? 'Plant' : 'Head office', item, design, major_colour, minor_colour, qty, status, request_date, dispatch_date, delivery_date, courier, docket_no, dispatch_group: dispatch_group ?? null, ticket_id }));
             const settings = (await settingsFor([storeId])).get(storeId) ?? DEFAULT_SETTINGS;
             const summary = summarise(lines, settings);
             res.json({ success: true, summary, store_type: settings.store_type, lines });

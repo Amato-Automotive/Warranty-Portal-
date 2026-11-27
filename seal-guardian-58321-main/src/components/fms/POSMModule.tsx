@@ -12,7 +12,7 @@ import {
 } from "@/lib/posm";
 import { POSMLines, POSMTracker } from "@/components/posm/POSMLines";
 import { POSMShop, requestForm } from "@/components/posm/POSMShop";
-import { POSMReceived } from "@/components/posm/POSMReceived";
+import { POSMAllowanceStrip, POSMReceived } from "@/components/posm/POSMReceived";
 
 interface POSMRequest {
     id: number;
@@ -209,7 +209,11 @@ const POSMModule: React.FC = () => {
                         {catalogError ? <>{catalogError} <Button variant="link" onClick={loadCatalog}>Try again</Button></> : <Loader2 className="h-6 w-6 animate-spin text-brand-orange mx-auto" />}
                     </div>
                 ) : (
-                    <POSMShop items={catalog.items} brands={brands} usage={usage} onSend={send} />
+                    <div className="space-y-3">
+                        {/* What the store may still ask for of FRP and Sample Jackets before head office must approve. */}
+                        <POSMAllowanceStrip />
+                        <POSMShop items={catalog.items} brands={brands} usage={usage} onSend={send} />
+                    </div>
                 )
             ) : (
                 <div className="grid md:grid-cols-[minmax(0,340px)_minmax(0,1fr)] gap-4 items-start">
