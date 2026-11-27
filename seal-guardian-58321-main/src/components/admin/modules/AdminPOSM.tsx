@@ -37,7 +37,7 @@ interface POSMRequest {
     contact_name: string;
     contact_email: string;
     requirement: string;
-    created_by_role?: 'franchise' | 'admin' | 'asm';
+    created_by_role?: 'franchise' | 'admin' | 'asm' | 'distributor';
     created_by_name?: string | null;
     status: string;
     internal_notes: string | null;
@@ -369,7 +369,7 @@ const AdminPOSMFull = () => {
         const csv = [headers.join(","), ...filtered.map(r => [
             cell(formatToIST(r.created_at)), cell(r.ticket_id), cell(r.store_name), cell(r.store_code), cell(r.store_address), cell(r.store_city),
             cell(r.store_state), cell(r.store_pincode), cell(r.contact_name), cell(r.contact_email), cell(r.requirement), cell(statusText(r.status)),
-            cell(r.created_by_role === 'admin' ? 'Admin (on behalf)' : r.created_by_role === 'asm' ? 'ASM (on behalf)' : 'Franchise'), cell(r.created_by_name),
+            cell(r.created_by_role === 'admin' ? 'Admin (on behalf)' : r.created_by_role === 'asm' ? 'ASM (on behalf)' : r.created_by_role === 'distributor' ? 'Distributor (on behalf)' : 'Franchise'), cell(r.created_by_name),
             cell((r.items || []).map(l => `${l.item_name} ${l.qty}/${l.line_status === 'rejected' ? 0 : (l.approved_qty ?? '-')}`).join('; ')),
             cell(r.dispatch?.courier ? [r.dispatch.courier, r.dispatch.tracking, r.dispatch.date].filter(Boolean).join(' ') : ''),
             cell(formatToIST(r.updated_at)),
@@ -526,6 +526,7 @@ const AdminPOSMFull = () => {
                                         {[r.store_city, r.store_state].filter(Boolean).join(" · ")} · <span className="font-mono">{r.ticket_id}</span>
                                         {r.created_by_role === 'admin' && <span className="ml-1 text-purple-600 font-semibold">· by admin</span>}
                                         {r.created_by_role === 'asm' && <span className="ml-1 text-sky-700 font-semibold">· by ASM</span>}
+                                        {r.created_by_role === 'distributor' && <span className="ml-1 text-teal-700 font-semibold">· by distributor</span>}
                                     </p>
                                     <p className="text-sm text-slate-600 line-clamp-2">{itemsText(r)}</p>
                                     {r.items?.length && mixedLabel(r.items) ? <p className="text-[11px] font-semibold text-orange-600">{stagesText(r.items)}</p> : null}
@@ -555,6 +556,7 @@ const AdminPOSMFull = () => {
                                         {[ticket.store_city, ticket.store_state].filter(Boolean).join(", ")} · {brandsText(ticket.allowed_brands)}
                                         {ticket.created_by_role === 'admin' && <span className="text-purple-600"> · raised by {ticket.created_by_name || "an admin"}</span>}
                                         {ticket.created_by_role === 'asm' && <span className="text-sky-700"> · raised by {ticket.created_by_name || "the ASM"} (ASM)</span>}
+                                        {ticket.created_by_role === 'distributor' && <span className="text-teal-700"> · raised by {ticket.created_by_name || "the distributor"} (distributor)</span>}
                                     </p>
                                 </div>
                             </div>
@@ -681,7 +683,7 @@ const AdminPOSMFull = () => {
                                     <p key={`s${i}`} className={cn("text-center text-[11px] font-semibold text-slate-400", f.h.undone && "line-through")}>
                                         {formatToIST(f.h.at)} · {f.h.action === "item" ? "" : `${HISTORY_TEXT[f.h.action] ?? f.h.action}`}
                                         {f.h.note ? `${f.h.action === "item" ? "" : " · "}${f.h.note}` : ""}
-                                        {f.h.by_role === "admin" && f.h.by_name ? ` · ${f.h.by_name}` : f.h.by_role === "asm" ? ` · ${f.h.by_name || "ASM"} (ASM)` : f.h.by_role === "franchise" ? " · by the store" : ""}
+                                        {f.h.by_role === "admin" && f.h.by_name ? ` · ${f.h.by_name}` : f.h.by_role === "asm" ? ` · ${f.h.by_name || "ASM"} (ASM)` : f.h.by_role === "distributor" ? ` · ${f.h.by_name || "distributor"} (distributor)` : f.h.by_role === "franchise" ? " · by the store" : ""}
                                         {f.h.edited_at ? <span className="italic"> · edited</span> : null}
                                         {f.h.by_role === "admin" && f.idx >= 0 && (
                                             <button type="button" onClick={() => { setEditingStep(f.idx); setStepNote(f.h.note ?? ""); }}

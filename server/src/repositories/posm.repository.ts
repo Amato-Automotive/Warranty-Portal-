@@ -8,7 +8,7 @@ export interface POSMRequest {
     ticket_id: string;
     franchise_id: string;
     requirement: string;
-    created_by_role?: 'franchise' | 'admin' | 'asm';
+    created_by_role?: 'franchise' | 'admin' | 'asm' | 'distributor';
     created_by?: string | null;
     status: 'open' | 'under_review' | 'approved' | 'in_production' | 'pending' | 'dispatched' | 'delivered' | 'closed' | 'rejected';
     internal_notes?: string | null;
@@ -28,7 +28,7 @@ export interface POSMMessage {
     id: number;
     request_id: number;
     sender_id: string;
-    sender_role: 'admin' | 'franchise' | 'asm';
+    sender_role: 'admin' | 'franchise' | 'asm' | 'distributor';
     message: string | null;
     attachments: any | null; // JSON string or parsed object
     created_at?: Date;

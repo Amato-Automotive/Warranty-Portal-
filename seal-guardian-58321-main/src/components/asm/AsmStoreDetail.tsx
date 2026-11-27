@@ -90,7 +90,7 @@ const formatWhen = (iso: string | null) =>
     iso ? new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
 /** Who raised a ticket on the store's behalf, as a trailing phrase; empty when the store did. */
 const raisedBy = (role: string, name: string | null) =>
-    role === "admin" ? " by head office" : role === "asm" ? ` by ${name || "the ASM"} (ASM)` : "";
+    role === "admin" ? " by head office" : role === "asm" ? ` by ${name || "the ASM"} (ASM)` : role === "distributor" ? ` by ${name || "the distributor"} (distributor)` : "";
 
 const ageOf = (iso: string) => {
     const d = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);

@@ -425,9 +425,11 @@ class POSMController {
      * set aside the item limits.
      */
     private async createItemRequest(req: AuthRequest, res: Response, opts: {
-        franchiseId: string; byRole: 'franchise' | 'admin' | 'asm'; ignoreLimits?: boolean;
+        franchiseId: string; byRole: 'franchise' | 'admin' | 'asm' | 'distributor'; ignoreLimits?: boolean;
         /** For an ASM: their name, for the store's notification and the timeline. */
         asmName?: string;
+        /** For a distributor raising for one of its stores: its name. */
+        distName?: string;
     }) {
         const userId = req.user!.id;
         let raw: unknown;
@@ -467,14 +469,16 @@ class POSMController {
                 ...step(req, {
                     action: 'sent', status: 'open',
                     note: opts.byRole === 'admin' ? "Raised on the store's behalf"
-                        : opts.byRole === 'asm' ? `Raised by ${opts.asmName || 'the ASM'} (ASM) for the store` : null,
+                        : opts.byRole === 'asm' ? `Raised by ${opts.asmName || 'the ASM'} (ASM) for the store`
+                        : opts.byRole === 'distributor' ? `Raised by ${opts.distName || 'the distributor'} (distributor) for the store` : null,
                 }),
                 // The session holds the name at login; an ASM may have corrected it since.
                 ...(opts.byRole === 'asm' && opts.asmName ? { by_name: opts.asmName } : {}),
+                ...(opts.byRole === 'distributor' ? { by_role: 'distributor' as const, by_name: opts.distName ?? null } : {}),
             }],
         });
         /* The ASM or head office may mark it urgent as they raise it; a store asks its ASM. */
-        if (opts.byRole !== 'franchise' && String(req.body?.urgent) === 'true') {
+        if ((opts.byRole === 'admin' || opts.byRole === 'asm') && String(req.body?.urgent) === 'true') {
             await db.execute('UPDATE posm_requests SET urgent = 1, urgent_by = ?, urgent_at = NOW() WHERE id = ?', [urgentBy(req, opts.byRole, opts.asmName), requestId]);
         }
         if (note || noteFiles.length) {
@@ -486,7 +490,7 @@ class POSMController {
         await ActivityLogService.log({
             adminId: userId, adminName: (req.user as any)?.name, adminEmail: (req.user as any)?.email,
             actionType: opts.byRole === 'admin' ? 'CREATE_POSM_REQUEST_ON_BEHALF'
-                : opts.byRole === 'asm' ? 'CREATE_POSM_REQUEST_BY_ASM' : 'CREATE_POSM_REQUEST',
+                : opts.byRole === 'asm' ? 'CREATE_POSM_REQUEST_BY_ASM' : opts.byRole === 'distributor' ? 'CREATE_POSM_REQUEST_BY_DISTRIBUTOR' : 'CREATE_POSM_REQUEST',
             targetType: 'POSM_REQUEST', targetId: String(requestId), targetName: store.store_name,
             details: { ticketId, requestId, items: lines.length, franchiseId: opts.franchiseId, ignoreLimits: !!opts.ignoreLimits },
             ipAddress: req.ip || req.socket?.remoteAddress,
@@ -506,6 +510,16 @@ class POSMController {
                 await NotificationService.broadcast({
                     title: `New POSM Request: ${ticketId}`,
                     message: `${opts.asmName || 'An ASM'} (ASM) asked for ${store.store_name || 'a store'}: ${summary.slice(0, 140)}`,
+                    type: 'posm', targetRole: 'admin',
+                });
+            } else if (opts.byRole === 'distributor') {
+                if (store.user_id) await NotificationService.notify(store.user_id, {
+                    title: `POSM ${ticketId} raised for you`,
+                    message: `${opts.distName || 'Your distributor'} (your distributor) asked for: ${summary.slice(0, 140)}`, type: 'posm',
+                });
+                await NotificationService.broadcast({
+                    title: `New POSM Request: ${ticketId}`,
+                    message: `${opts.distName || 'A distributor'} (distributor) asked for ${store.store_name || 'a store'}: ${summary.slice(0, 140)}`,
                     type: 'posm', targetRole: 'admin',
                 });
             } else {
@@ -628,6 +642,89 @@ class POSMController {
         } catch (error: any) {
             console.error('POSM urgent error:', error);
             return res.status(500).json({ success: false, error: 'Could not change it' });
+        }
+    }
+
+    /* ---------- A distributor raising POSM for its stores ---------- */
+
+    /** The signed-in distributor, if the login is one. */
+    private async distributorOf(userId: string): Promise<{ id: string; name: string } | null> {
+        const [[d]]: any = await db.execute('SELECT id, name FROM distributors WHERE profile_id = ? LIMIT 1', [userId]);
+        return d ? { id: String(d.id), name: String(d.name ?? '').trim() } : null;
+    }
+
+    /** One of the distributor's stores (linked in franchise_distributors), or null. */
+    private async distributorStore(distributorId: string, storeId: string): Promise<{ id: string; store_name: string; allowed_brands: string | null } | null> {
+        const [[s]]: any = await db.execute(
+            `SELECT vd.id, TRIM(vd.store_name) AS store_name, vd.allowed_brands FROM franchise_distributors fd
+               JOIN vendor_details vd ON vd.user_id = fd.franchise_user_id
+              WHERE fd.distributor_id = ? AND vd.id = ? LIMIT 1`, [distributorId, storeId]);
+        return s ? { id: String(s.id), store_name: s.store_name, allowed_brands: s.allowed_brands ?? null } : null;
+    }
+
+    /** GET /api/posm/distributor/stores — the distributor's stores to raise POSM for. */
+    getDistributorStores = async (req: AuthRequest, res: Response) => {
+        try {
+            const d = await this.distributorOf(req.user!.id);
+            if (!d) return res.status(403).json({ success: false, error: 'Only a distributor can do this' });
+            const [rows]: any = await db.execute(
+                `SELECT DISTINCT vd.id, TRIM(vd.store_name) AS store_name, vd.store_code, vd.city FROM franchise_distributors fd
+                   JOIN vendor_details vd ON vd.user_id = fd.franchise_user_id
+                  WHERE fd.distributor_id = ? AND COALESCE(vd.is_franchise, 1) = 1 AND vd.user_id <> ?
+                  ORDER BY store_name`, [d.id, req.user!.id]);
+            return res.json({ success: true, distributor: d.name, stores: rows.map((r: any) => ({ id: String(r.id), store_name: r.store_name, store_code: r.store_code ?? null, city: r.city ?? null })) });
+        } catch (error: any) {
+            console.error('POSM distributor stores error:', error);
+            return res.status(500).json({ success: false, error: 'Could not load your stores' });
+        }
+    }
+
+    /** GET /api/posm/distributor/stores/:id/catalog — what that store may order, with its brands and limits. */
+    getCatalogForDistributor = async (req: AuthRequest, res: Response) => {
+        try {
+            const d = await this.distributorOf(req.user!.id);
+            const store = d ? await this.distributorStore(d.id, String(req.params.id)) : null;
+            if (!store) return res.status(404).json({ success: false, error: 'Store not found' });
+            const catalog = await loadCatalog();
+            return res.json({ success: true, data: {
+                catalog: storeCatalog(catalog, storeBrands(store.allowed_brands)), brands: storeBrands(store.allowed_brands), usage: await storeUsage(store.id),
+            } });
+        } catch (error: any) {
+            console.error('POSM catalog for distributor error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to load the POSM items' });
+        }
+    }
+
+    /** POST /api/posm/distributor/stores/:id/items — as /posm/items, for one of the distributor's stores (no urgent: that is the ASM's and head office's). */
+    submitItemsByDistributor = async (req: AuthRequest, res: Response) => {
+        try {
+            const d = await this.distributorOf(req.user!.id);
+            const store = d ? await this.distributorStore(d.id, String(req.params.id)) : null;
+            if (!d || !store) return res.status(404).json({ success: false, error: 'Store not found' });
+            return await this.createItemRequest(req, res, { franchiseId: store.id, byRole: 'distributor', distName: d.name });
+        } catch (error: any) {
+            console.error('Submit POSM items by distributor error:', error);
+            return res.status(500).json({ success: false, error: 'Failed to raise the POSM request' });
+        }
+    }
+
+    /** GET /api/posm/distributor/requests — POSM requests of the distributor's stores, newest first (head office's notes and the urgent mark left out). */
+    getDistributorRequests = async (req: AuthRequest, res: Response) => {
+        try {
+            const d = await this.distributorOf(req.user!.id);
+            if (!d) return res.status(403).json({ success: false, error: 'Only a distributor can do this' });
+            const [rows]: any = await db.execute(
+                `SELECT r.id, r.ticket_id, r.requirement, r.status, r.items, r.created_by_role, creator.name AS created_by_name, r.created_at, r.updated_at, r.dispatch,
+                        vd.id AS store_id, TRIM(vd.store_name) AS store_name, vd.city
+                   FROM posm_requests r JOIN vendor_details vd ON vd.id = r.franchise_id
+                   LEFT JOIN profiles creator ON creator.id = r.created_by
+                  WHERE vd.user_id IN (SELECT franchise_user_id FROM franchise_distributors WHERE distributor_id = ?) AND vd.user_id <> ?
+                  ORDER BY r.created_at DESC LIMIT 300`, [d.id, req.user!.id]);
+            const parse = (v: unknown) => { if (v == null) return null; if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return null; } };
+            return res.json({ success: true, requests: rows.map((r: any) => ({ ...r, store_id: String(r.store_id), items: parse(r.items), dispatch: parse(r.dispatch) })) });
+        } catch (error: any) {
+            console.error('POSM distributor requests error:', error);
+            return res.status(500).json({ success: false, error: 'Could not load the requests' });
         }
     }
 

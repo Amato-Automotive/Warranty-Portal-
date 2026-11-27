@@ -13,12 +13,14 @@ import {
 import { POSMLines, POSMTracker } from "@/components/posm/POSMLines";
 import { POSMShop, requestForm } from "@/components/posm/POSMShop";
 import { POSMAllowanceStrip, POSMReceived } from "@/components/posm/POSMReceived";
+import { DistributorPOSM } from "@/components/posm/DistributorPOSM";
+import { useB2BCart } from "@/contexts/B2BCartContext";
 
 interface POSMRequest {
     id: number;
     ticket_id: string;
     requirement: string;
-    created_by_role?: 'franchise' | 'admin' | 'asm';
+    created_by_role?: 'franchise' | 'admin' | 'asm' | 'distributor';
     created_by_name?: string | null;
     status: string;
     created_at: string;
@@ -57,7 +59,9 @@ const dmy = (d?: string | null) => (d ? d.split('-').reverse().join('/') : '');
 
 const POSMModule: React.FC = () => {
     const { toast } = useToast();
-    const [view, setView] = useState<'order' | 'mine' | 'received'>('order');
+    const [view, setView] = useState<'order' | 'mine' | 'received' | 'stores'>('order');
+    /* A distributor also raises POSM for its stores. */
+    const { isDistributor } = useB2BCart();
 
     // Ordering
     const [catalog, setCatalog] = useState<PosmCatalog | null>(null);
@@ -193,7 +197,7 @@ const POSMModule: React.FC = () => {
             {/* Order / My requests */}
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="inline-flex rounded-xl border border-gray-100 bg-white p-1 shadow-sm">
-                    {([['order', 'Order POSM'], ['mine', `My requests${active.length ? ` (${active.length})` : ''}`], ['received', 'Received']] as const).map(([v, label]) => (
+                    {([['order', 'Order POSM'], ['mine', `My requests${active.length ? ` (${active.length})` : ''}`], ['received', 'Received'], ...(isDistributor ? [['stores', 'For my stores']] as const : [])] as const).map(([v, label]) => (
                         <button key={v} type="button" onClick={() => { setView(v); if (v === 'mine') setSelected(null); }}
                             className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-colors",
                                 view === v ? "bg-gray-900 text-white" : "text-gray-500 hover:text-gray-800")}>
@@ -203,7 +207,7 @@ const POSMModule: React.FC = () => {
                 </div>
             </div>
 
-            {view === 'received' ? <POSMReceived /> : view === 'order' ? (
+            {view === 'stores' ? <DistributorPOSM /> : view === 'received' ? <POSMReceived /> : view === 'order' ? (
                 !catalog ? (
                     <div className="rounded-2xl border border-gray-100 bg-white p-10 text-center text-sm text-gray-500">
                         {catalogError ? <>{catalogError} <Button variant="link" onClick={loadCatalog}>Try again</Button></> : <Loader2 className="h-6 w-6 animate-spin text-brand-orange mx-auto" />}
@@ -254,7 +258,7 @@ const POSMModule: React.FC = () => {
                                         <p className="text-[11px] text-gray-400">
                                             Sent {formatToIST(r.created_at)}
                                             {r.status === 'dispatched' && r.dispatch?.courier ? ` · ${r.dispatch.courier}${r.dispatch.tracking ? ` ${r.dispatch.tracking}` : ''}` : ''}
-                                            {r.created_by_role === 'admin' ? ' · added by Autoform' : r.created_by_role === 'asm' ? ` · raised by ${r.created_by_name || 'your ASM'} (your ASM)` : ''}
+                                            {r.created_by_role === 'admin' ? ' · added by Autoform' : r.created_by_role === 'asm' ? ` · raised by ${r.created_by_name || 'your ASM'} (your ASM)` : r.created_by_role === 'distributor' ? ` · raised by ${r.created_by_name || 'your distributor'} (your distributor)` : ''}
                                         </p>
                                     </button>
                                 ))}
@@ -280,6 +284,9 @@ const POSMModule: React.FC = () => {
                                         )}
                                         {selected.created_by_role === 'asm' && (
                                             <p className="text-[11px] font-medium text-sky-700">Raised for you by {selected.created_by_name || 'your ASM'} (your ASM)</p>
+                                        )}
+                                        {selected.created_by_role === 'distributor' && (
+                                            <p className="text-[11px] font-medium text-teal-700">Raised for you by {selected.created_by_name || 'your distributor'} (your distributor)</p>
                                         )}
                                     </div>
                                 </div>
@@ -339,7 +346,8 @@ const POSMModule: React.FC = () => {
                                         <p key={`s${k}`} className={cn("text-center text-[11px] font-semibold text-gray-400", f.h.undone && "line-through")}>
                                             {formatToIST(f.h.at)} · {f.h.action === 'item' ? f.h.note : f.h.action === 'sent'
                                                 ? (f.h.by_role === 'admin' ? 'Raised for you by Autoform'
-                                                    : f.h.by_role === 'asm' ? `Raised for you by ${f.h.by_name || 'your ASM'} (your ASM)` : 'You sent the request')
+                                                    : f.h.by_role === 'asm' ? `Raised for you by ${f.h.by_name || 'your ASM'} (your ASM)`
+                                                    : f.h.by_role === 'distributor' ? `Raised for you by ${f.h.by_name || 'your distributor'} (your distributor)` : 'You sent the request')
                                                 : f.h.action === 'received' ? 'You confirmed it arrived' : HISTORY_TEXT[f.h.action] ?? f.h.action}
                                             {f.h.note && !['sent', 'reject', 'item'].includes(f.h.action) ? ` · ${f.h.note}` : ''}
                                         </p>

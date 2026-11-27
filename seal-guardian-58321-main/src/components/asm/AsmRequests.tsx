@@ -23,7 +23,7 @@ import { AsmPosm } from "./AsmInsights";
 type PickStore = { id: string; name: string; city: string | null; live: boolean };
 const fmtDay = (d: string | null) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "—");
 const sentence = (v: string) => { const s = v.replace(/_/g, " ").trim(); return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase(); };
-const raisedBy = (role: string, name: string | null) => (role === "admin" ? "Head office" : role === "asm" ? `${name || "ASM"} (you)` : role === "customer" ? "Customer" : "Store");
+const raisedBy = (role: string, name: string | null) => (role === "admin" ? "Head office" : role === "asm" ? `${name || "ASM"} (you)` : role === "distributor" ? `${name || "Distributor"} (distributor)` : role === "customer" ? "Customer" : "Store");
 const Loading = () => <div className="flex items-center justify-center gap-3 py-16 text-slate-400"><Loader2 className="h-5 w-5 animate-spin text-orange-500" />Loading…</div>;
 const Chip = ({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) => (
     <button type="button" onClick={onClick} className={cn("rounded-full px-3 py-1.5 text-sm font-semibold", on ? "bg-orange-500 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-orange-50")}>{children}</button>
