@@ -37,8 +37,10 @@ function usageNote(l?: Limit): string | null {
  * produced, dispatched and delivered on its own, with a note to the store,
  * Undo and Edit; ticked items take a step together.
  */
-export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
+export function POSMItemDesk({ requestId, lines, items, limits, suggestedDepot, onSaved }: {
     requestId: number;
+    /** The depot that already serves this store (or its distributor), from the plant's past dispatches. */
+    suggestedDepot?: { depot: "ludhiana" | "jaipur"; why: string } | null;
     lines: PosmLine[];
     items?: PosmItem[];
     limits?: Record<string, Limit>;
@@ -81,7 +83,7 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
         setFQty(one ? String(one.approved_qty && one.approved_qty > 0 ? one.approved_qty : one.qty) : "");
         const d = [...indexes].map(i => lines[i]?.dispatch).find(Boolean);
         setFShip(kind === "edit" && d ? { courier: d.courier, tracking: d.tracking, date: d.date ?? "" } : { courier: "", tracking: "", date: today() });
-        setFDepot("");
+        setFDepot(suggestedDepot?.depot ?? "");
         setForm({ kind, indexes });
     };
 
@@ -295,7 +297,10 @@ export function POSMItemDesk({ requestId, lines, items, limits, onSaved }: {
                                     <option value="ludhiana">United Ludhiana depot</option>
                                     <option value="jaipur">Janak Jaipur depot</option>
                                 </select>
-                                <span className="block text-[11px] text-slate-500">It goes to that depot's list in POSM Dispatch for the plant to make and send.</span>
+                                {suggestedDepot && fDepot === suggestedDepot.depot
+                                    ? <span className="block text-[11px] font-semibold text-emerald-700">Filled in: {suggestedDepot.why}. Change it if this order should go elsewhere.</span>
+                                    : !suggestedDepot && <span className="block text-[11px] font-semibold text-amber-700">This store has had nothing from the plant yet, so pick the depot.</span>}
+                                <span className="block text-[11px] text-slate-500">It goes to that depot's list in POSM Dispatch and its tab in the plant sheet.</span>
                             </label>
                         )}
                         {formOne && (form?.kind === "approve" || (form?.kind === "edit" && formStage !== "rejected")) && (

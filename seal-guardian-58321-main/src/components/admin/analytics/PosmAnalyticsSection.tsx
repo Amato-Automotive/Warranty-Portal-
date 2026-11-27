@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { ExportButton, exportToExcel } from "./Common";
+import { StoreDetail } from "../modules/POSMHistory";
 
 /**
  * POSM on the Analytics page: what has gone out, what the plant has open and
@@ -45,10 +46,13 @@ type DrillQuery = Record<string, string>;
 
 const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "UTC" });
 const fmt = (n: number) => n.toLocaleString("en-IN");
+/** Open POSM Dispatch on a given tab (read once by the POSM page). */
+const openPosmAt = (view: string | null, go: () => void) => { try { if (view) sessionStorage.setItem("posm:open-view", view); else sessionStorage.removeItem("posm:open-view"); } catch { /* no storage */ } go(); };
 
 /** The stores or lines behind a click, in a table with an export. */
 function DrillDialog({ q, onClose, onOpenPosm }: { q: DrillQuery; onClose: () => void; onOpenPosm: () => void }) {
     const { toast } = useToast();
+    const [store, setStore] = useState<string | null>(null);
     const [d, setD] = useState<{ title: string; type: "stores" | "lines"; rows: any[]; total: number } | null>(null);
     useEffect(() => {
         api.get("/posm/admin/analytics/drill", { params: q }).then(r => setD(r.data))
@@ -67,7 +71,7 @@ function DrillDialog({ q, onClose, onOpenPosm }: { q: DrillQuery; onClose: () =>
                 {!d ? <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-orange-500" /></div> : (
                     <div className="space-y-3">
                         <div className="flex justify-end gap-2">
-                            <Button variant="outline" size="sm" onClick={onOpenPosm}>Open POSM Dispatch</Button>
+                            <Button variant="outline" size="sm" onClick={() => openPosmAt(q.key === "unlinked" ? "unlinked" : q.kind === "status" || q.kind === "age" || q.key === "overdue" || q.key === "plant_overdue" || q.key === "plant_open" || q.key === "reason" ? "plant" : d.type === "stores" ? "stores" : "lines", onOpenPosm)}>Open POSM Dispatch</Button>
                             <ExportButton onClick={() => exportToExcel(d.rows.map(r => Object.fromEntries(cols.map(([k, h]) => [h, r[k] ?? ""]))), `POSM_${d.title.replace(/[^A-Za-z0-9]+/g, "_")}`)} />
                         </div>
                         <div className="max-h-[62vh] overflow-auto rounded-xl border border-slate-200">
@@ -75,7 +79,11 @@ function DrillDialog({ q, onClose, onOpenPosm }: { q: DrillQuery; onClose: () =>
                                 <thead className="sticky top-0 bg-slate-50 text-left text-slate-500"><tr>{cols.map(([, h]) => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold">{h}</th>)}</tr></thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {d.rows.map((r, i) => (
-                                        <tr key={r.id ?? r.store_id ?? i}>{cols.map(([k]) => <td key={k} className={cn("px-3 py-1.5 align-top", k === "store" && "font-semibold text-slate-900", k === "qty" && "text-right tabular-nums")}>{r[k] ?? ""}</td>)}</tr>
+                                        <tr key={r.id ?? r.store_id ?? i}>{cols.map(([k]) => <td key={k} className={cn("px-3 py-1.5 align-top", k === "store" && "font-semibold text-slate-900", k === "qty" && "text-right tabular-nums")}>
+                                            {k === "store" && r.store_id
+                                                ? <button type="button" onClick={() => setStore(String(r.store_id))} className="text-left font-semibold text-orange-600 hover:underline">{r.store || "(store)"}</button>
+                                                : r[k] ?? ""}
+                                        </td>)}</tr>
                                     ))}
                                     {!d.rows.length && <tr><td colSpan={cols.length} className="px-3 py-8 text-center text-slate-500">Nothing here.</td></tr>}
                                 </tbody>
@@ -83,6 +91,7 @@ function DrillDialog({ q, onClose, onOpenPosm }: { q: DrillQuery; onClose: () =>
                         </div>
                     </div>
                 )}
+                {store && <StoreDetail storeId={store} onClose={() => setStore(null)} onChanged={() => {}} />}
             </DialogContent>
         </Dialog>
     );
@@ -132,7 +141,7 @@ export function PosmAnalyticsSection({ onOpenPosm }: { onOpenPosm: () => void })
                         <CardTitle className="flex items-center gap-2 text-xl font-black uppercase tracking-tighter text-slate-800"><Package className="h-5 w-5 text-orange-500" />POSM Intelligence</CardTitle>
                         <CardDescription className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Material sent to stores from the Noida office and the plant · click anything to see the list</CardDescription>
                     </div>
-                    <Button variant="outline" size="sm" onClick={onOpenPosm}>Open POSM Dispatch</Button>
+                    <Button variant="outline" size="sm" onClick={() => openPosmAt("stores", onOpenPosm)}>Open POSM Dispatch</Button>
                 </div>
             </CardHeader>
             <CardContent className="space-y-6 p-6 sm:p-8">
@@ -142,7 +151,7 @@ export function PosmAnalyticsSection({ onOpenPosm }: { onOpenPosm: () => void })
                     <Tile label="Sent this month" value={fmt(t.sent_this_month)} note={`items · last month ${fmt(t.sent_last_month)}`} onClick={() => open({ kind: "tile", key: "sent_this_month" })} />
                     <Tile label="Open at the plant" value={fmt(t.plant_open)} note="FRP / jackets not yet dispatched" onClick={() => open({ kind: "tile", key: "plant_open" })} />
                     <Tile label="Overdue at the plant" value={fmt(t.plant_overdue)} tone={t.plant_overdue ? "text-red-600" : undefined} note="past the expected date" onClick={() => open({ kind: "tile", key: "plant_overdue" })} />
-                    <Tile label="Requests to approve" value={fmt(t.requests_waiting)} note={`${fmt(t.requests_wip)} approved / WIP`} onClick={onOpenPosm} />
+                    <Tile label="Requests to approve" value={fmt(t.requests_waiting)} note={`${fmt(t.requests_wip)} approved / WIP`} onClick={() => openPosmAt(null, onOpenPosm)} />
                     <Tile label="Stores over limit" value={fmt(t.stores_over)} tone={t.stores_over ? "text-red-600" : undefined} note="FRP 2 · jackets 20" onClick={() => open({ kind: "tile", key: "stores_over" })} />
                 </div>
 

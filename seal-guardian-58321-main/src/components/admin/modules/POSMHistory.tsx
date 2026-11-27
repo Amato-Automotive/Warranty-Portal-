@@ -104,7 +104,7 @@ function LineRow({ l, onChanged }: { l: HistoryLine; onChanged: () => void }) {
 }
 
 /** One store: its type and limits, what it has had of each item, and every line. */
-function StoreDetail({ storeId, onClose, onChanged }: { storeId: string; onClose: () => void; onChanged: () => void }) {
+export function StoreDetail({ storeId, onClose, onChanged }: { storeId: string; onClose: () => void; onChanged: () => void }) {
     const { toast } = useToast();
     const [d, setD] = useState<{ store: any; settings: StoreSettings; summary: StoreSummary; approval_label: string; lines: HistoryLine[] } | null>(null);
     const [form, setForm] = useState<StoreSettings | null>(null);
@@ -361,7 +361,13 @@ export function POSMHistory() {
     const canPlantEdit = can("posm", "write") || can("posm_plant", "write");
     const canNoidaEdit = can("posm", "write") || can("posm_noida", "write");
     const [d, setD] = useState<{ stores: HistoryStoreRow[]; totals: HistoryTotals } | null>(null);
-    const [view, setView] = useState<"noida" | "plant" | "stores" | "lines" | "unlinked">(headOffice ? "noida" : "plant");
+    const [view, setView] = useState<"noida" | "plant" | "stores" | "lines" | "unlinked">(() => {
+        /* Analytics can ask to open a given tab (e.g. Unlinked); read it once. */
+        let asked: string | null = null;
+        try { asked = sessionStorage.getItem("posm:open-view"); sessionStorage.removeItem("posm:open-view"); } catch { /* no storage */ }
+        if (headOffice && (asked === "noida" || asked === "plant" || asked === "stores" || asked === "lines" || asked === "unlinked")) return asked;
+        return headOffice ? "noida" : "plant";
+    });
     const [q, setQ] = useState("");
     const [filter, setFilter] = useState<Filter>("all");
     const [open, setOpen] = useState<string | null>(null);

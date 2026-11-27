@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { designOf, dispatchItemName, isPlantItem, nextLineStatus, stageForStatus, statusForStage } from '../posmSyncRules.js';
+import { designOf, dispatchItemName, isPlantItem, nextLineStatus, pickDepot, stageForStatus, statusForStage } from '../posmSyncRules.js';
 
 describe('POSM requests and dispatch lines', () => {
     test('FRP and Sample jacket go to the plant; the rest to the Noida office', () => {
@@ -35,5 +35,18 @@ describe('POSM requests and dispatch lines', () => {
         const d = designOf([{ label: 'Brand', value: 'Autoform' }, { label: 'Design', value: 'U-Focus' }, { label: 'Major colour', value: 'Black' }, { label: 'Minor colour', value: 'White' }, { label: 'Dispatch to', value: 'Direct dispatch to Franchise' }]);
         assert.deepEqual(d, { design: 'U-Focus', major_colour: 'Black', minor_colour: 'White', dispatch_to: 'Direct dispatch to Franchise' });
         assert.deepEqual(designOf(undefined), { design: null, major_colour: null, minor_colour: null, dispatch_to: null });
+    });
+});
+
+describe('pickDepot', () => {
+    test('the store\'s last depot wins', () => {
+        assert.equal(pickDepot({ last: 'jaipur', ludhiana: 3, jaipur: 1 }, { name: 'X', ludhiana: 9, jaipur: 0 })?.depot, 'jaipur');
+    });
+    test('no history: the distributor\'s only depot', () => {
+        assert.equal(pickDepot({ last: null, ludhiana: 0, jaipur: 0 }, { name: 'X', ludhiana: 0, jaipur: 4 })?.depot, 'jaipur');
+    });
+    test('a distributor served by both depots, or none: the admin picks', () => {
+        assert.equal(pickDepot({ last: null, ludhiana: 0, jaipur: 0 }, { name: 'Aman', ludhiana: 12, jaipur: 30 }), null);
+        assert.equal(pickDepot({ last: null, ludhiana: 0, jaipur: 0 }, null), null);
     });
 });

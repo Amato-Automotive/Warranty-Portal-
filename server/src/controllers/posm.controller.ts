@@ -1,5 +1,5 @@
 import { syncRequestToDispatch } from '../services/posmSync.service.js';
-import { DISPATCH_TO_FIELD, DISPATCH_TO_OPTIONS, isPlantItem } from '../services/posmSyncRules.js';
+import { DISPATCH_TO_FIELD, DISPATCH_TO_OPTIONS, isPlantItem, pickDepot, type DepotPick } from '../services/posmSyncRules.js';
 import { Response } from 'express';
 import db from '../config/database.js';
 import { AuthRequest } from '../middleware/auth.js';
@@ -77,6 +77,21 @@ function withDispatchTo(catalog: PosmCatalog): PosmCatalog {
 const fileUrl = (f: any) => f.path || f.secure_url || f.url;
 
 /** What a store already has of each item this month and year, for the limits. */
+/** The plant depot for a store's FRP / jackets, from what the plant has sent it and its distributor's stores before. */
+async function depotForStore(franchiseId: string): Promise<DepotPick | null> {
+    const [own]: any = await db.execute(
+        `SELECT source FROM posm_dispatch_history WHERE store_id = ? AND source LIKE 'Plant%' AND deleted_at IS NULL
+          ORDER BY COALESCE(dispatch_date, request_date) DESC, created_at DESC LIMIT 1`, [franchiseId]);
+    const last = own[0] ? (/Jaipur/i.test(own[0].source) ? 'jaipur' : 'ludhiana') : null;
+    const [dist]: any = await db.execute(
+        `SELECT d.name, SUM(h.source LIKE '%Ludhiana%') AS lud, SUM(h.source LIKE '%Jaipur%') AS jai
+           FROM vendor_details me JOIN distributors d ON d.id = me.distributor_id
+           JOIN vendor_details vd ON vd.distributor_id = d.id
+           JOIN posm_dispatch_history h ON h.store_id = vd.id AND h.source LIKE 'Plant%' AND h.deleted_at IS NULL
+          WHERE me.id = ? GROUP BY d.id, d.name`, [franchiseId]);
+    return pickDepot({ last, ludhiana: 0, jaipur: 0 }, dist[0] ? { name: dist[0].name, ludhiana: Number(dist[0].lud) || 0, jaipur: Number(dist[0].jai) || 0 } : null);
+}
+
 async function storeUsage(franchiseId: string, exceptRequestId?: number): Promise<Usage> {
     const [rows]: any = await db.execute(
         `SELECT id, status, created_at, items FROM posm_requests
@@ -686,7 +701,7 @@ class POSMController {
                     ...(req.user?.role === 'admin' ? access.request : visible),
                     messages,
                     ...(limits ? { limits } : {}),
-                    ...(req.user?.role === 'admin' ? { actions: actionsFor(access.request.status) } : {}),
+                    ...(req.user?.role === 'admin' ? { actions: actionsFor(access.request.status), suggested_depot: await depotForStore(access.request.franchise_id) } : {}),
                 }
             });
 
@@ -1021,8 +1036,10 @@ class POSMController {
             /* FRP / Sample jacket go to a plant depot, which the admin picks when approving. */
             if (a === 'approve') {
                 const plantLines = r.touched.filter(i => isPlantItem(r.lines[i].item_id));
-                const depot = String(req.body?.depot ?? '');
-                if (plantLines.length && depot !== 'ludhiana' && depot !== 'jaipur') return res.status(400).json({ success: false, error: 'Pick the plant depot (Ludhiana or Jaipur) for the FRP / Sample jacket' });
+                /* The admin's pick, else the depot that already serves this store or its distributor. */
+                let depot = String(req.body?.depot ?? '');
+                if (plantLines.length && depot !== 'ludhiana' && depot !== 'jaipur') depot = (await depotForStore(current.franchise_id))?.depot ?? '';
+                if (plantLines.length && depot !== 'ludhiana' && depot !== 'jaipur') return res.status(400).json({ success: false, error: 'This store has had nothing from the plant yet: pick the depot (Ludhiana or Jaipur) for the FRP / Sample jacket' });
                 for (const i of plantLines) r.lines[i] = { ...r.lines[i], depot: depot as 'ludhiana' | 'jaipur' };
             }
             if (a === 'edit') {

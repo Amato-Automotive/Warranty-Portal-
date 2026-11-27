@@ -92,7 +92,7 @@ export const AdminPOSM = () => {
 
 const AdminPOSMFull = () => {
     const { toast } = useToast();
-    const [page, setPage] = useState<'requests' | 'history' | 'builder'>('requests');
+    const [page, setPage] = useState<'requests' | 'history' | 'builder'>(() => { try { return sessionStorage.getItem('posm:open-view') ? 'history' : 'requests'; } catch { return 'requests'; } });
     const [requests, setRequests] = useState<POSMRequest[]>([]);
     const [loading, setLoading] = useState(true);
     const [catalogItems, setCatalogItems] = useState<PosmItem[]>([]);
@@ -621,7 +621,7 @@ const AdminPOSMFull = () => {
                         <div className="space-y-2">
                             <h3 className="text-sm font-black text-slate-800">Items</h3>
                             {hasItems ? (
-                                <POSMItemDesk requestId={ticket.id} lines={ticket.items!} items={catalogItems} limits={limits}
+                                <POSMItemDesk requestId={ticket.id} lines={ticket.items!} items={catalogItems} limits={limits} suggestedDepot={(ticket as any).suggested_depot ?? null}
                                     onSaved={fresh => {
                                         setRequests(list => list.map(x => x.id === ticket.id ? { ...x, ...fresh } : x));
                                         loadTicket(ticket.id);
