@@ -15,6 +15,7 @@ import { ProductDistributionSection } from '../analytics/ProductDistributionSect
 import { GeographicSection } from '../analytics/GeographicSection';
 import { FranchiseLeaderboard } from '../analytics/FranchiseLeaderboard';
 import { FraudAnalysisSection } from '../analytics/FraudAnalysisSection';
+import { PosmAnalyticsSection } from '../analytics/PosmAnalyticsSection';
 import { FraudAnalysisModal } from '../analytics/FraudAnalysisModal';
 import { LeadCharts, type LeadChartsData } from '../analytics/LeadCharts';
 
@@ -434,6 +435,8 @@ export const AdminAnalytics = ({ onNavigate }: { onNavigate: (module: AdminModul
                     months={MONTHS}
                 />
             </div>
+
+            <PosmAnalyticsSection onOpenPosm={() => onNavigate('posm' as AdminModule)} />
 
             <div className="space-y-8">
                 <FranchiseLeaderboard 

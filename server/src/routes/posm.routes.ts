@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import POSMController from '../controllers/posm.controller.js';
 import { POSMHistoryController } from '../controllers/posmHistory.controller.js';
+import { POSMAnalyticsController } from '../controllers/posmAnalytics.controller.js';
 import { authenticateToken, requireAnyPermission, requirePermission, requireRole } from '../middleware/auth.js';
 import { posmUpload, posmItemUpload, attachPublicUrls } from '../config/localUpload.js';
 import { signalAdminAttentionOnSuccess as signalAttention } from '../services/adminAttention.service.js';
@@ -41,6 +42,10 @@ router.get('/admin/history/plant', ...plantRead, POSMHistoryController.plantLine
 router.put('/admin/history/plant/lines/:id', ...plantWrite, POSMHistoryController.plantUpdate);
 router.post('/admin/history/plant/orders', ...historyWrite, POSMHistoryController.plantOrder);
 router.get('/admin/history/noida', ...historyRead, POSMHistoryController.noidaDispatches);
+/* POSM on the Analytics page: open to Analytics users as well as POSM head office. */
+const analyticsRead = [authenticateToken, requireRole('admin'), requireAnyPermission(['posm', 'posm_noida', 'analytics'], 'read')];
+router.get('/admin/analytics', ...analyticsRead, POSMAnalyticsController.overview);
+router.get('/admin/analytics/drill', ...analyticsRead, POSMAnalyticsController.drill);
 router.get('/admin/history/sheet-sync', ...plantRead, POSMHistoryController.sheetSyncStatus);
 router.post('/admin/history/sheet-sync', ...plantRead, POSMHistoryController.sheetSyncNow);
 router.post('/admin/history/noida', ...historyWrite, POSMHistoryController.noidaSave);
