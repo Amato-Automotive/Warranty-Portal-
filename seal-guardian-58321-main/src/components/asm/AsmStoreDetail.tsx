@@ -13,6 +13,8 @@ import {
 import { StorePulse } from "./StorePulse";
 import { AsmRaisePosm } from "./AsmRaisePosm";
 import { AsmRaiseGrievance } from "./AsmRaiseGrievance";
+import { AsmStorePosm } from "./AsmInsights";
+import { AsmStoreAudit } from "./AsmPhase2";
 import { ArrowLeft, ChevronDown, FileText, Loader2, Mail, MessageCircle, Paperclip, Phone, Plus, Send, X } from "lucide-react";
 
 /**
@@ -492,6 +494,10 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                             </dl>
                         )}
                     </section>
+
+                    <AsmStorePosm storeId={store.vendor_details_id} />
+
+                    <AsmStoreAudit storeId={store.vendor_details_id} />
 
                 </div>
 
