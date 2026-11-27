@@ -271,7 +271,7 @@ export function AsmPosm() {
     ];
     return (
         <div className="space-y-4">
-            <p className="text-sm text-slate-500">Material sent to your stores by the Noida office and the plant. FRP limit is 2 and Sample Jackets 20 for an old store; more needs head office approval.</p>
+            <p className="text-sm text-slate-500">Material sent to your stores by the Noida office and the plant. Limits: FRP 2; Sample Jackets 20 for an old store, 30 for a new one. More needs head office approval.</p>
             <div className="flex flex-wrap items-center gap-2">
                 {chips.map(([k, l, n]) => (
                     <button key={k} type="button" onClick={() => setOnly(k)} className={cn("rounded-full px-3 py-1.5 text-sm font-semibold", only === k ? "bg-orange-500 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-orange-50")}>{l} <span className="tabular-nums opacity-80">{n}</span></button>

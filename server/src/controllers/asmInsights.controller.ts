@@ -314,7 +314,7 @@ export class AsmInsightsController {
             const asmId = await asmIdFor(req);
             if (!asmId) return res.status(403).json({ error: 'Your ASM account was not found' });
             const [rows]: any = await db.execute(
-                `SELECT r.id, r.ticket_id, r.requirement, r.status, r.items, r.created_by_role, creator.name AS created_by_name, r.created_at, r.updated_at,
+                `SELECT r.id, r.ticket_id, r.requirement, r.status, r.items, r.urgent, r.urgent_by, r.created_by_role, creator.name AS created_by_name, r.created_at, r.updated_at,
                         vd.id AS store_id, TRIM(vd.store_name) AS store_name, vd.city
                    FROM posm_requests r JOIN vendor_details vd ON vd.id = r.franchise_id
                    LEFT JOIN profiles creator ON creator.id = r.created_by
@@ -324,7 +324,7 @@ export class AsmInsightsController {
                 requests: rows.map((r: any) => {
                     const items = json<any[] | null>(r.items, null);
                     return {
-                        id: r.id, ticket_id: r.ticket_id, status: r.status ?? 'open', created_by_role: r.created_by_role, created_by_name: r.created_by_name ?? null,
+                        id: r.id, ticket_id: r.ticket_id, status: r.status ?? 'open', urgent: Boolean(r.urgent), urgent_by: r.urgent_by ?? null, created_by_role: r.created_by_role, created_by_name: r.created_by_name ?? null,
                         created: day(r.created_at), updated: day(r.updated_at), store_id: String(r.store_id), store_name: r.store_name, city: r.city ?? null,
                         what: Array.isArray(items) && items.length ? items.map(l => `${l.item_name ?? l.item_id}${l.qty ? ` × ${l.approved_qty && l.approved_qty > 0 ? l.approved_qty : l.qty}` : ''}`).join(', ') : String(r.requirement ?? '').slice(0, 160),
                     };

@@ -76,7 +76,7 @@ function StorePicker({ open, title, onClose, onPick }: { open: boolean; title: s
 
 /* ---------------- POSM: sent to stores + requests ---------------- */
 
-type Request = { id: number; ticket_id: string; status: string; what: string; created_by_role: string; created_by_name: string | null; created: string | null; updated: string | null; store_id: string; store_name: string; city: string | null };
+type Request = { id: number; ticket_id: string; status: string; urgent: boolean; urgent_by: string | null; what: string; created_by_role: string; created_by_name: string | null; created: string | null; updated: string | null; store_id: string; store_name: string; city: string | null };
 const POSM_DONE = new Set(["delivered", "closed", "rejected"]);
 const reqTone = (s: string) => (s === "rejected" ? "bg-red-50 text-red-700" : POSM_DONE.has(s) ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800");
 
@@ -115,8 +115,21 @@ function PosmRequests({ reload }: { reload: number }) {
     const load = useCallback(() => api.get("/asm-portal/posm-requests").then(r => setRows(r.data.requests))
         .catch(e => { setRows([]); toast({ title: "Could not load the requests", description: getErrorMessage(e, "Try again"), variant: "destructive" }); }), [toast]);
     useEffect(() => { load(); }, [load, reload]);
+    const [busy, setBusy] = useState<number | null>(null);
+    /* Urgent: the plant makes it first. The ASM can mark any open request of their stores, the store's own ones too. */
+    const setUrgent = async (r: Request, urgent: boolean) => {
+        setBusy(r.id);
+        try {
+            await api.put(`/asm-portal/posm/${r.id}/urgent`, { urgent });
+            toast({ title: urgent ? `${r.ticket_id} marked urgent` : `${r.ticket_id} no longer urgent`, description: urgent ? "The plant makes it first." : undefined });
+            await load();
+        } catch (e) {
+            toast({ title: "Could not change it", description: getErrorMessage(e, "Try again"), variant: "destructive" });
+        } finally { setBusy(null); }
+    };
     const list = useMemo(() => (rows ?? []).filter(r => (only === "all" || !POSM_DONE.has(r.status))
-        && (!q.trim() || `${r.ticket_id} ${r.store_name} ${r.city ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))), [rows, only, q]);
+        && (!q.trim() || `${r.ticket_id} ${r.store_name} ${r.city ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())))
+        .sort((a, b) => Number(b.urgent && !POSM_DONE.has(b.status)) - Number(a.urgent && !POSM_DONE.has(a.status))), [rows, only, q]);
     if (page) return page;
     if (!rows) return <Loading />;
     const openCount = rows.filter(r => !POSM_DONE.has(r.status)).length;
@@ -129,18 +142,26 @@ function PosmRequests({ reload }: { reload: number }) {
             </div>
             <div className="overflow-x-auto rounded-2xl border border-slate-100 bg-white shadow-sm">
                 <table className="w-full text-sm">
-                    <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="px-4 py-2">Request</th><th className="px-3 py-2">Store</th><th className="px-3 py-2">What</th><th className="px-3 py-2">Raised by</th><th className="px-3 py-2">Status</th></tr></thead>
+                    <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="px-4 py-2">Request</th><th className="px-3 py-2">Store</th><th className="px-3 py-2">What</th><th className="px-3 py-2">Raised by</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Urgent</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                         {list.map(r => (
-                            <tr key={r.id} className="cursor-pointer align-top hover:bg-slate-50/60" onClick={() => open(r.store_id)} title="Open the store to see the request and its chat">
-                                <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs font-semibold text-slate-900">{r.ticket_id}<span className="block font-sans font-normal text-slate-400">{fmtDay(r.created)}</span></td>
+                            <tr key={r.id} className={cn("cursor-pointer align-top hover:bg-slate-50/60", r.urgent && !POSM_DONE.has(r.status) && "bg-red-50/40")} onClick={() => open(r.store_id)} title="Open the store to see the request and its chat">
+                                <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs font-semibold text-slate-900">{r.urgent && !POSM_DONE.has(r.status) && <span className="mb-0.5 block w-fit rounded bg-red-600 px-1 font-sans text-[10px] font-black uppercase text-white" title={r.urgent_by ? `Marked by ${r.urgent_by}` : undefined}>Urgent</span>}{r.ticket_id}<span className="block font-sans font-normal text-slate-400">{fmtDay(r.created)}</span></td>
                                 <td className="px-3 py-2.5"><span className="font-semibold text-slate-900">{displayName(r.store_name)}</span>{r.city && <span className="block text-xs text-slate-400">{r.city}</span>}</td>
                                 <td className="max-w-[320px] px-3 py-2.5 text-xs text-slate-700">{r.what || "—"}</td>
                                 <td className="px-3 py-2.5 text-xs text-slate-600">{raisedBy(r.created_by_role, r.created_by_name)}</td>
                                 <td className="px-3 py-2.5 text-xs"><span className={cn("whitespace-nowrap rounded px-1.5 py-0.5 font-bold", reqTone(r.status))}>{STATUS_LABEL[r.status] ?? sentence(r.status)}</span></td>
+                                <td className="px-3 py-2.5 text-xs" onClick={e => e.stopPropagation()}>
+                                    {POSM_DONE.has(r.status) ? <span className="text-slate-300">—</span> : (
+                                        <button type="button" disabled={busy === r.id} onClick={() => setUrgent(r, !r.urgent)}
+                                            className={cn("whitespace-nowrap rounded-md border px-2 py-1 font-semibold disabled:opacity-50", r.urgent ? "border-slate-200 text-slate-600 hover:bg-slate-50" : "border-red-200 text-red-700 hover:bg-red-50")}>
+                                            {r.urgent ? "Not urgent" : "Mark urgent"}
+                                        </button>
+                                    )}
+                                </td>
                             </tr>
                         ))}
-                        {!list.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">{rows.length ? "No open requests." : "None of your stores has asked for POSM on the portal yet."}</td></tr>}
+                        {!list.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">{rows.length ? "No open requests." : "None of your stores has asked for POSM on the portal yet."}</td></tr>}
                     </tbody>
                 </table>
             </div>
