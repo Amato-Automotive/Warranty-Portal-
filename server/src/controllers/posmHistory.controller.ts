@@ -18,10 +18,11 @@ const txt = (v: unknown, max: number) => { const s = String(v ?? '').trim(); ret
 /** A portal store with the distributor and ASM its latest POSM line gave. */
 async function storeInfo(id: string) {
     if (!id) return null;
-    const [[s]]: any = await db.execute(`SELECT id, store_code, store_name, city, state, COALESCE(allowed_brands, 'AF') AS brand FROM vendor_details WHERE id = ?`, [id]);
+    /* The admin store list gives the store's login id; accept that as well as the store id. */
+    const [[s]]: any = await db.execute(`SELECT id, store_code, store_name, city, state, COALESCE(allowed_brands, 'AF') AS brand FROM vendor_details WHERE id = ? OR user_id = ? ORDER BY id = ? DESC LIMIT 1`, [id, id, id]);
     if (!s) return null;
     const [[last]]: any = await db.execute(
-        `SELECT distributor, asm FROM posm_dispatch_history WHERE store_id = ? AND deleted_at IS NULL AND (distributor IS NOT NULL OR asm IS NOT NULL) ORDER BY COALESCE(dispatch_date, request_date) DESC LIMIT 1`, [id]);
+        `SELECT distributor, asm FROM posm_dispatch_history WHERE store_id = ? AND deleted_at IS NULL AND (distributor IS NOT NULL OR asm IS NOT NULL) ORDER BY COALESCE(dispatch_date, request_date) DESC LIMIT 1`, [s.id]);
     return { id: String(s.id), store_code: s.store_code ?? null, store_name: String(s.store_name ?? '').trim(), city: s.city ?? null, state: s.state ?? null, brand: s.brand, distributor: last?.distributor ?? null, asm: last?.asm ?? null };
 }
 
@@ -215,19 +216,20 @@ export class POSMHistoryController {
     static async link(req: AuthRequest, res: Response) {
         try {
             const storeId = String(req.body?.store_id ?? '');
-            const [[store]]: any = await db.execute('SELECT id, store_code, store_name FROM vendor_details WHERE id = ?', [storeId]);
+            /* The admin store list gives the store's login id; accept that as well as the store id. */
+            const [[store]]: any = await db.execute('SELECT id, store_code, store_name FROM vendor_details WHERE id = ? OR user_id = ? ORDER BY id = ? DESC LIMIT 1', [storeId, storeId, storeId]);
             if (!store) return res.status(400).json({ success: false, error: 'Pick the store' });
             const ids: string[] = Array.isArray(req.body?.line_ids) ? req.body.line_ids.map(String).slice(0, 2000) : [];
             const key = String(req.body?.group_key ?? '');
             let result: any;
             if (ids.length) {
-                [result] = await db.query('UPDATE posm_dispatch_history SET store_id = ?, updated_by = ? WHERE id IN (?) AND store_id IS NULL AND deleted_at IS NULL', [storeId, req.user?.id ?? null, ids]);
+                [result] = await db.query('UPDATE posm_dispatch_history SET store_id = ?, updated_by = ? WHERE id IN (?) AND store_id IS NULL AND deleted_at IS NULL', [store.id, req.user?.id ?? null, ids]);
             } else if (key.startsWith('code:')) {
-                [result] = await db.execute('UPDATE posm_dispatch_history SET store_id = ?, updated_by = ? WHERE store_code = ? AND store_id IS NULL AND deleted_at IS NULL', [storeId, req.user?.id ?? null, key.slice(5)]);
+                [result] = await db.execute('UPDATE posm_dispatch_history SET store_id = ?, updated_by = ? WHERE store_code = ? AND store_id IS NULL AND deleted_at IS NULL', [store.id, req.user?.id ?? null, key.slice(5)]);
             } else if (key.startsWith('name:')) {
-                [result] = await db.execute('UPDATE posm_dispatch_history SET store_id = ?, updated_by = ? WHERE store_code IS NULL AND COALESCE(sheet_store_name, \'\') = ? AND store_id IS NULL AND deleted_at IS NULL', [storeId, req.user?.id ?? null, key.slice(5)]);
+                [result] = await db.execute('UPDATE posm_dispatch_history SET store_id = ?, updated_by = ? WHERE store_code IS NULL AND COALESCE(sheet_store_name, \'\') = ? AND store_id IS NULL AND deleted_at IS NULL', [store.id, req.user?.id ?? null, key.slice(5)]);
             } else return res.status(400).json({ success: false, error: 'Nothing to link' });
-            log(req, 'POSM_HISTORY_LINKED', { store_id: storeId, store: store.store_name, group_key: key || null, lines: result?.affectedRows ?? 0 });
+            log(req, 'POSM_HISTORY_LINKED', { store_id: store.id, store: store.store_name, group_key: key || null, lines: result?.affectedRows ?? 0 });
             res.json({ success: true, linked: result?.affectedRows ?? 0 });
         } catch (error) {
             console.error('[POSM history] link:', error);
