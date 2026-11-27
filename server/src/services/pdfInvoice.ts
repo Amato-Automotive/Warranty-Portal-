@@ -1,5 +1,7 @@
 import { execFile } from 'child_process';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import sharp from 'sharp';
 import type { Request, Response, NextFunction } from 'express';
 
@@ -15,7 +17,16 @@ import type { Request, Response, NextFunction } from 'express';
  *  - its pages (up to 10) are saved as one tall picture beside it
  *    (<file>.preview.jpg), so admins scroll through it like a photo.
  * If Ghostscript is missing or fails, a PDF of up to 2 MB is kept as it came.
+ *
+ * The upload folders are append-only on the server (chattr +a): a file can be
+ * added or overwritten there, never renamed or deleted. So the working files
+ * (Ghostscript's output, the page pictures) live in the system temp folder,
+ * and only the final files are written into the upload folder.
  */
+
+/** A fresh folder in the system temp folder for one job; removed afterwards. */
+const workDir = () => fs.promises.mkdtemp(path.join(os.tmpdir(), 'pdfinv-'));
+const dropDir = (dir: string | null) => { if (dir) fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {}); };
 
 export const PDF_MAX_BYTES = 2 * 1024 * 1024;     // what is kept
 export const PDF_MAX_UPLOAD = 10 * 1024 * 1024;   // what may be picked
@@ -70,8 +81,10 @@ function gs(args: string[]): Promise<boolean> {
  * only if it is a valid, smaller PDF. Resolves with the sizes, or null if it could not run.
  */
 export async function shrinkPdf(input: string, quality: 'ebook' | 'screen' = 'ebook'): Promise<{ before: number; after: number } | null> {
-    const out = `${input}.gs.pdf`;
+    let dir: string | null = null;
     try {
+        dir = await workDir();
+        const out = path.join(dir, 'shrunk.pdf');
         const ok = await gs(['-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.5', `-dPDFSETTINGS=/${quality}`, '-dDetectDuplicateImages=true', `-sOutputFile=${out}`, input]);
         if (!ok) return null;
         const before = (await fs.promises.stat(input)).size;
@@ -85,7 +98,7 @@ export async function shrinkPdf(input: string, quality: 'ebook' | 'screen' = 'eb
         console.warn('[PDF] shrink failed for', input, e?.message);
         return null;
     } finally {
-        fs.promises.unlink(out).catch(() => {});
+        dropDir(dir);
     }
 }
 
@@ -98,13 +111,15 @@ export const PREVIEW_MAX_PAGES = 10;
  */
 export async function renderPreview(pdfPath: string): Promise<boolean> {
     const out = `${pdfPath}${PREVIEW_SUFFIX}`;
-    const pagePattern = `${pdfPath}.page-%02d.jpg`;
-    const pageFiles = Array.from({ length: PREVIEW_MAX_PAGES }, (_, i) => `${pdfPath}.page-${String(i + 1).padStart(2, '0')}.jpg`);
+    let dir: string | null = null;
     try {
+        dir = await workDir();
+        const pagePattern = path.join(dir, 'page-%02d.jpg');
+        const pageFiles = Array.from({ length: PREVIEW_MAX_PAGES }, (_, i) => path.join(dir!, `page-${String(i + 1).padStart(2, '0')}.jpg`));
         const ok = await gs(['-sDEVICE=jpeg', '-dJPEGQ=82', '-r110', '-dFirstPage=1', `-dLastPage=${PREVIEW_MAX_PAGES}`, '-dTextAlphaBits=4', '-dGraphicsAlphaBits=4', `-sOutputFile=${pagePattern}`, pdfPath]);
         const pages = pageFiles.filter(f => fs.existsSync(f));
         if (!ok || !pages.length) return false;
-        if (pages.length === 1) { await fs.promises.rename(pages[0], out); return true; }
+        if (pages.length === 1) { await fs.promises.copyFile(pages[0], out); return true; }
         /* Pages one below the other, each at the widest page's width, with an 12 px grey gap. */
         const metas = await Promise.all(pages.map(f => sharp(f).metadata()));
         const width = Math.max(...metas.map(m => m.width ?? 0));
@@ -116,10 +131,9 @@ export async function renderPreview(pdfPath: string): Promise<boolean> {
         return true;
     } catch (e: any) {
         console.warn('[PDF] preview failed for', pdfPath, e?.message);
-        fs.promises.unlink(out).catch(() => {});
         return false;
     } finally {
-        for (const f of pageFiles) fs.promises.unlink(f).catch(() => {});
+        dropDir(dir);
     }
 }
 
