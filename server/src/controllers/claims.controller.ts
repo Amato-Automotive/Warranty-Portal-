@@ -128,6 +128,61 @@ function oldCard(o: any) {
     return card;
 }
 const OLD_COLS = 'id, uid, customer_name, customer_email, customer_mobile, product_name, warranty_type, purchase_date, store_name, store_id, created_at';
+/** Cover now of one old warranty: covered, over, or not recorded (blank type). */
+function oldCover(o: any): 'covered' | 'over' | 'not_recorded' {
+    if (!warrantyYears(o.warranty_type)) return 'not_recorded';
+    return coverage({ status: 'validated', warranty_type: o.warranty_type, purchase_date: o.purchase_date, created_at: o.created_at }).covered ? 'covered' : 'over';
+}
+
+/**
+ * Old warranties placed on some stores (one store's own page, or an ASM's
+ * stores): a page of 50 matching the search, year and cover, plus counts over
+ * all of them by year, by cover now, and per store.
+ */
+async function oldWarrantiesOf(storeIds: string[], query: any) {
+    const q = String(query.q ?? '').trim().slice(0, 60);
+    const year = /^\d{4}$/.test(String(query.year ?? '')) ? Number(query.year) : null;
+    const cover = ['covered', 'over', 'not_recorded'].includes(String(query.cover)) ? String(query.cover) : null;
+    const page = Math.max(1, Math.min(500, Number(query.page) || 1));
+    const counts = { covered: 0, over: 0, not_recorded: 0 };
+    if (!storeIds.length) return { total: 0, found: 0, page, pages: 1, years: [] as { year: number; n: number }[], cover: counts, stores: [] as any[], warranties: [] as any[] };
+    const [all]: any = await db.query('SELECT id, store_id, warranty_type, purchase_date, created_at FROM old_warranties_seatcovers WHERE store_id IN (?)', [storeIds]);
+    const byYear = new Map<number, number>();
+    const byStore = new Map<string, { n: number; covered: number; over: number; not_recorded: number; first: string | null; last: string | null }>();
+    const coverOf = new Map<number, string>();
+    for (const o of all) {
+        const c = oldCover(o); counts[c]++; coverOf.set(Number(o.id), c);
+        const d = istDay(o.purchase_date);
+        if (d) byYear.set(Number(d.slice(0, 4)), (byYear.get(Number(d.slice(0, 4))) ?? 0) + 1);
+        const s = byStore.get(String(o.store_id)) ?? { n: 0, covered: 0, over: 0, not_recorded: 0, first: null, last: null };
+        s.n++; s[c]++;
+        if (d && (!s.first || d < s.first)) s.first = d;
+        if (d && (!s.last || d > s.last)) s.last = d;
+        byStore.set(String(o.store_id), s);
+    }
+    const ids = query.store && storeIds.includes(String(query.store)) ? [String(query.store)] : storeIds;
+    const where = ['store_id IN (?)']; const params: unknown[] = [ids];
+    if (year) { where.push('YEAR(purchase_date) = ?'); params.push(year); }
+    if (cover) {
+        const pick = all.filter((o: any) => coverOf.get(Number(o.id)) === cover && ids.includes(String(o.store_id))).map((o: any) => Number(o.id));
+        if (pick.length) { where.push('id IN (?)'); params.push(pick); } else where.push('1 = 0');
+    }
+    if (q) {
+        const digits = q.replace(/\D/g, '');
+        where.push("(uid LIKE ? OR customer_name LIKE ? OR product_name LIKE ? OR (? <> '' AND REGEXP_REPLACE(customer_mobile, '[^0-9]', '') LIKE ?))");
+        params.push(`%${q}%`, `%${q}%`, `%${q}%`, digits.length >= 4 ? 'y' : '', `%${digits}%`);
+    }
+    const W = where.join(' AND ');
+    const [[t]]: any = await db.query(`SELECT COUNT(*) AS n FROM old_warranties_seatcovers WHERE ${W}`, params);
+    const [rows]: any = await db.query(`SELECT ${OLD_COLS} FROM old_warranties_seatcovers WHERE ${W} ORDER BY purchase_date DESC, id DESC LIMIT 50 OFFSET ${(page - 1) * 50}`, params);
+    return {
+        total: all.length, found: Number(t.n), page, pages: Math.max(1, Math.ceil(Number(t.n) / 50)),
+        years: [...byYear].sort((a, b) => a[0] - b[0]).map(([year, n]) => ({ year, n })), cover: counts,
+        stores: [...byStore].map(([store_id, s]) => ({ store_id, ...s })),
+        warranties: rows.map((o: any) => ({ ...oldCard(o), store_id: String(o.store_id) })),
+    };
+}
+
 /** One of this store's old warranties by UID, or null. */
 async function oldWarrantyOf(storeId: string, uid: string) {
     if (!uid) return null;
@@ -394,7 +449,8 @@ async function claimComponents(): Promise<string[]> {
 function readNew(w: any, b: any, materials: string[], components: string[]): { problem: string; description: string | null; vehicle: any } | { error: string } {
     if (w.status !== 'validated') return { error: 'Warranty is not approved yet' };
     const cov = coverage(w);
-    const p = readProblem(b, cov.covered);
+    /* An old warranty with no cover recorded may still be claimed; head office confirms the cover (decided 28 Nov). */
+    const p = readProblem(b, cov.covered || Boolean(w.__cover_unknown));
     if ('error' in p) return p;
     const vehicle = readVehicle(b, w.product_type);
     if ('error' in vehicle) return vehicle;
@@ -554,36 +610,34 @@ export default class ClaimsController {
         try {
             const v = await storeOf(req.user!.id);
             if (!v) return bad(res, 'Store not found', 404);
-            const q = String(req.query.q ?? '').trim().slice(0, 60);
-            const year = /^\d{4}$/.test(String(req.query.year ?? '')) ? Number(req.query.year) : null;
-            const page = Math.max(1, Math.min(500, Number(req.query.page) || 1));
-            const where = ['store_id = ?']; const params: unknown[] = [v.id];
-            if (year) { where.push('YEAR(purchase_date) = ?'); params.push(year); }
-            if (q) {
-                const digits = q.replace(/\D/g, '');
-                where.push("(uid LIKE ? OR customer_name LIKE ? OR product_name LIKE ? OR (? <> '' AND REGEXP_REPLACE(customer_mobile, '[^0-9]', '') LIKE ?))");
-                params.push(`%${q}%`, `%${q}%`, `%${q}%`, digits.length >= 4 ? 'y' : '', `%${digits}%`);
-            }
-            const W = where.join(' AND ');
-            const [[t]]: any = await db.query(`SELECT COUNT(*) AS n FROM old_warranties_seatcovers WHERE ${W}`, params);
-            const [rows]: any = await db.query(`SELECT ${OLD_COLS} FROM old_warranties_seatcovers WHERE ${W} ORDER BY purchase_date DESC, id DESC LIMIT 50 OFFSET ${(page - 1) * 50}`, params);
-            /* Counts for the whole store, not the search: by year, and by cover now. */
-            const [years]: any = await db.query('SELECT YEAR(purchase_date) AS y, COUNT(*) AS n FROM old_warranties_seatcovers WHERE store_id = ? GROUP BY y ORDER BY y', [v.id]);
-            const [all]: any = await db.query('SELECT warranty_type, purchase_date, created_at FROM old_warranties_seatcovers WHERE store_id = ?', [v.id]);
-            const cover = { covered: 0, over: 0, not_recorded: 0 };
-            for (const o of all) {
-                if (!warrantyYears(o.warranty_type)) { cover.not_recorded++; continue; }
-                if (coverage({ status: 'validated', warranty_type: o.warranty_type, purchase_date: o.purchase_date, created_at: o.created_at }).covered) cover.covered++; else cover.over++;
-            }
-            return ok(res, {
-                total: all.length, found: Number(t.n), page, pages: Math.max(1, Math.ceil(Number(t.n) / 50)),
-                years: years.filter((r: any) => r.y).map((r: any) => ({ year: Number(r.y), n: Number(r.n) })), cover,
-                claims_live: await claimsLive(),
-                warranties: rows.map(oldCard),
-            });
+            const { stores: _stores, ...data } = await oldWarrantiesOf([String(v.id)], req.query);
+            return ok(res, { ...data, claims_live: await claimsLive() });
         } catch (e) {
             console.error('claims.storeOldWarranties', e);
             return bad(res, 'Could not load your old warranties', 500);
+        }
+    }
+
+    /**
+     * GET /api/asm-portal/old-warranties?store=&q=&year=&cover=&page= — the
+     * old-portal warranties placed on the ASM's stores, view only (the store
+     * raises any claim). Full customer details, as the store sees (28 Nov).
+     */
+    static async asmOldWarranties(req: AuthRequest, res: Response) {
+        try {
+            const [[asm]]: any = await db.execute('SELECT id FROM asms WHERE profile_id = ?', [req.user!.id]);
+            if (!asm) return bad(res, 'Your ASM account was not found', 403);
+            const [stores]: any = await db.execute('SELECT id, TRIM(store_name) AS store_name, city FROM vendor_details WHERE asm_id = ?', [asm.id]);
+            const named = new Map<string, any>(stores.map((x: any) => [String(x.id), x]));
+            const data = await oldWarrantiesOf([...named.keys()], req.query);
+            return ok(res, {
+                ...data,
+                stores: data.stores.map(x => ({ ...x, store_name: named.get(x.store_id)?.store_name ?? '', city: named.get(x.store_id)?.city ?? null })).sort((x, y) => y.n - x.n),
+                warranties: data.warranties.map((w: any) => ({ ...w, store_name: named.get(w.store_id)?.store_name ?? '' })),
+            });
+        } catch (e) {
+            console.error('claims.asmOldWarranties', e);
+            return bad(res, 'Could not load the old warranties', 500);
         }
     }
 
@@ -682,6 +736,9 @@ export default class ClaimsController {
             if (store.startsWith('name:')) {
                 where.push("c.raised_via = 'sheet' AND JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.fitted_store')) = ?");
                 params.push(store.slice(5));
+            } else if (store && req.query.sources === 'all') {
+                /* The franchise page: every claim placed on the store, the plant sheet's included. */
+                where.push('c.store_id = ?'); params.push(store);
             } else if (store) { where.push("c.store_id = ? AND c.raised_via <> 'sheet'"); params.push(store); }
             // The depot a sheet row came through (the sheet's DEPOT NAME).
             if (depot) { where.push("JSON_UNQUOTE(JSON_EXTRACT(c.snapshot, '$.depot')) = ?"); params.push(depot); }

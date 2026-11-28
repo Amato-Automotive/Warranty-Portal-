@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { StoreRatingsController } from '../controllers/storeRatings.controller.js';
 import { AdminController } from '../controllers/admin.controller.js';
+import { VendorTabCountsController } from '../controllers/vendorTabCounts.controller.js';
 import { DiagnosticController } from '../controllers/diagnostic.controller.js';
 import { ProductController } from '../controllers/product.controller.js';
 import { ImageRepairController } from '../controllers/imageRepair.controller.js';
@@ -45,6 +46,8 @@ router.get('/stats', ...adminAuth, requirePermission('overview', 'read'), AdminC
 router.get('/vendors', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getAllVendors);
 router.get('/vendor-asm-options', ...adminAuth, requireAnyPermission(['vendors', 'distributors'], 'read'), AdminController.getVendorAsmOptions);
 router.get('/vendors/:id', ...adminAuth, requirePermission('vendors', 'read'), AdminController.getVendorDetails);
+// The counts beside a franchise page's tabs.
+router.get('/vendors/:id/tab-counts', ...adminAuth, requirePermission('vendors', 'read'), VendorTabCountsController.counts);
 
 // Franchise & distributor activity: time in the portal and what they did.
 router.get('/activity', ...adminAuth, requirePermission('portal_activity', 'read'), async (req: Request, res: Response) => {

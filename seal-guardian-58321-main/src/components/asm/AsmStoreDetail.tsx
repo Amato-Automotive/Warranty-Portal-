@@ -15,6 +15,7 @@ import { AsmRaisePosm } from "./AsmRaisePosm";
 import { AsmRaiseGrievance } from "./AsmRaiseGrievance";
 import { AsmStorePosm } from "./AsmInsights";
 import { AsmStoreAudit } from "./AsmPhase2";
+import { AsmStoreOldWarranties } from "./AsmOldWarranties";
 import { ArrowLeft, ChevronDown, FileText, Loader2, Mail, MessageCircle, Paperclip, Phone, Plus, Send, X } from "lucide-react";
 
 /**
@@ -494,6 +495,8 @@ export const AsmStoreDetail = ({ storeId, onBack }: { storeId: string; onBack: (
                             </dl>
                         )}
                     </section>
+
+                    <AsmStoreOldWarranties storeId={store.vendor_details_id} />
 
                     <AsmStorePosm storeId={store.vendor_details_id} />
 

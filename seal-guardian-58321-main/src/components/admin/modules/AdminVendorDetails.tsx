@@ -29,6 +29,7 @@ import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { StoreActivityPanel } from "./AdminPortalActivity";
 import { OldWarrantyStoreRows } from "./AdminOldWarrantyPlacement";
+import { VendorClaimsTab, VendorPosmShipments, useTabCounts, withCount } from "./VendorTabExtras";
 
 interface AdminVendorDetailsProps {
     vendor: any;
@@ -49,6 +50,8 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
     const [selectedFranchise, setSelectedFranchise] = useState<any | null>(null);
     const [franchiseOrders, setFranchiseOrders] = useState<any[]>([]);
     const [loadingFranchiseOrders, setLoadingFranchiseOrders] = useState(false);
+    /* The counts beside the tabs, each by the rule its tab lists by. */
+    const tabCounts = useTabCounts(vendor.vendor_details_id ? String(vendor.vendor_details_id) : null);
 
     // Fetch full details on mount
     useEffect(() => {
@@ -1081,15 +1084,14 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
             </Card>
 
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
-                {/* Eight tabs do not fit one readable row, so the franchise view
-                    wraps onto two rather than squeezing the labels. */}
-                <TabsList className={`grid w-full h-auto p-1 bg-slate-100 rounded-lg ${isDistributorsView ? 'grid-cols-4' : 'grid-cols-3 sm:grid-cols-5 lg:grid-cols-9'}`}>
+                {/* Twelve tabs with their counts: two rows of six on a wide screen. */}
+                <TabsList className={`grid w-full h-auto p-1 bg-slate-100 rounded-lg ${isDistributorsView ? 'grid-cols-4' : 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-6'}`}>
                     <TabsTrigger value="warranties" className="py-2.5">Warranties ({vendor.warranties?.length || 0})</TabsTrigger>
                     <TabsTrigger value="manpower" className="py-2.5">Manpower ({vendor.manpower?.length || 0})</TabsTrigger>
                     {/* Time in the portal and what they did — franchises and distributors alike. */}
                     {vendor.vendor_details_id && <TabsTrigger value="activity" className="py-2.5">Activity</TabsTrigger>}
                     {/* Warranties from the old portal placed on this store. */}
-                    {vendor.vendor_details_id && <TabsTrigger value="old-warranties" className="py-2.5">Old warranties</TabsTrigger>}
+                    {vendor.vendor_details_id && <TabsTrigger value="old-warranties" className="py-2.5">{withCount("Old warranties", tabCounts?.old_warranties)}</TabsTrigger>}
                     {isDistributorsView && (
                         <TabsTrigger value="franchises" className="py-2.5">Franchises ({franchises.length})</TabsTrigger>
                     )}
@@ -1097,12 +1099,14 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                         franchises — so these tabs are for the franchise view only. */}
                     {!isDistributorsView && (
                         <>
-                            <TabsTrigger value="orders" className="py-2.5">Orders</TabsTrigger>
-                            <TabsTrigger value="posm" className="py-2.5">POSM</TabsTrigger>
-                            <TabsTrigger value="grievances" className="py-2.5">Complaints</TabsTrigger>
-                            <TabsTrigger value="audits" className="py-2.5">Audits</TabsTrigger>
-                            <TabsTrigger value="sourcing" className="py-2.5">Sourcing</TabsTrigger>
-                            <TabsTrigger value="announcements" className="py-2.5">Announcements</TabsTrigger>
+                            <TabsTrigger value="orders" className="py-2.5">{withCount("Orders", tabCounts?.orders)}</TabsTrigger>
+                            {/* Requests raised in the portal, plus the lines sent on the POSM sheet. */}
+                            <TabsTrigger value="posm" className="py-2.5">{withCount("POSM", tabCounts && tabCounts.posm_requests != null && tabCounts.posm_shipments != null ? tabCounts.posm_requests + tabCounts.posm_shipments : null)}</TabsTrigger>
+                            {vendor.vendor_details_id && <TabsTrigger value="claims" className="py-2.5">{withCount("Claims", tabCounts?.claims)}</TabsTrigger>}
+                            <TabsTrigger value="grievances" className="py-2.5">{withCount("Complaints", tabCounts?.complaints)}</TabsTrigger>
+                            <TabsTrigger value="audits" className="py-2.5">{withCount("Audits", tabCounts?.audits)}</TabsTrigger>
+                            <TabsTrigger value="sourcing" className="py-2.5">{withCount("Sourcing", tabCounts?.sourcing)}</TabsTrigger>
+                            <TabsTrigger value="announcements" className="py-2.5">{withCount("Announcements", tabCounts?.announcements)}</TabsTrigger>
                         </>
                     )}
                 </TabsList>
@@ -1129,9 +1133,20 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                                         vendorDetailsId={vendor.vendor_details_id || null}
                                         userId={vendor.user_id || vendor.id || null}
                                     />
+                                    {vendor.vendor_details_id && <div className="mt-6 border-t border-slate-100 pt-6"><VendorPosmShipments storeId={String(vendor.vendor_details_id)} /></div>}
                                 </CardContent>
                             </Card>
                         </TabsContent>
+
+                        {vendor.vendor_details_id && (
+                            <TabsContent value="claims">
+                                <Card className="border-orange-100 shadow-sm">
+                                    <CardContent className="pt-6">
+                                        <VendorClaimsTab storeId={String(vendor.vendor_details_id)} />
+                                    </CardContent>
+                                </Card>
+                            </TabsContent>
+                        )}
 
                         <TabsContent value="grievances">
                             <Card className="border-orange-100 shadow-sm">

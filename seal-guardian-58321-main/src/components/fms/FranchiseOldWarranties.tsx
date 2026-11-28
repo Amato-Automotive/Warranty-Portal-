@@ -57,7 +57,8 @@ function HowItWorks() {
     );
 }
 
-function Cover({ w }: { w: OldWarranty }) {
+/** The cover now: covered till, cover over, or not recorded. Also on the ASM's old warranties. */
+export function OldCover({ w }: { w: Pick<ClaimWarranty, "covered" | "cover_end" | "cover_unknown"> }) {
     if (w.covered) return <span className="whitespace-nowrap rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">Covered till {day(w.cover_end)}</span>;
     if (w.cover_unknown) return <span className="whitespace-nowrap rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Cover not recorded</span>;
     return <span className="whitespace-nowrap rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-600">Cover over{w.cover_end ? ` ${day(w.cover_end)}` : ""}</span>;
@@ -147,7 +148,7 @@ export function FranchiseOldWarranties() {
                                 <p className="font-mono text-[11px] text-gray-400">UID {w.uid}</p>
                             </div>
                             <div className="flex items-center gap-2">
-                                <Cover w={w} />
+                                <OldCover w={w} />
                                 {d?.claims_live && w.claimable && (
                                     <Button size="sm" className="rounded-xl bg-orange-700 font-bold hover:bg-orange-800" onClick={() => { setSent(null); setRaising(w); }}>Raise a claim</Button>
                                 )}

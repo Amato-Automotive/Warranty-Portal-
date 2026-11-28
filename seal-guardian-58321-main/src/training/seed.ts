@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- stand-ins for the API's JSON, which the screens read untyped */
+import { LIVE_POSM_CATALOG } from "./posmCatalog";
 /**
  * The training store's data. Made up, generated fresh on every load relative to
  * today, so the home's "this week" and "this month" always have something in
@@ -276,28 +277,16 @@ export function seed(mode: Mode): TrainingState {
     ];
 
     /* ---------- POSM ---------- */
-    const posmCatalog = {
-        items: [
-            { id: "standee", name: "Product standee", description: "6 ft roll-up standee for the shop front.", clipart: "banner", image: null, enabled: true,
-              qty_mode: "number", limits: { max_request: 2, max_month: 2 },
-              fields: [{ id: "design", label: "Design", type: "select", required: true, options: ["Seat covers", "PPF", "Floor mats"] }] },
-            { id: "catalogue", name: "Printed catalogue", description: "Seat cover catalogue for the counter.", clipart: "catalogue", image: null, enabled: true,
-              qty_mode: "number", limits: { max_request: 10, max_month: 20 }, fields: [] },
-            { id: "tshirt", name: "Staff T-shirts", description: "Branded T-shirts for installers.", clipart: "tshirt", image: null, enabled: true,
-              qty_mode: "sizes", limits: { max_request: 10 },
-              fields: [{ id: "sizes", label: "Sizes", type: "sizes", required: true, options: ["S", "M", "L", "XL", "XXL"] }] },
-            { id: "sticker", name: "Window stickers", description: "Autoform authorised dealer stickers.", clipart: "sticker", image: null, enabled: true,
-              qty_mode: "number", limits: { max_request: 20 }, fields: [] },
-        ],
-    };
+    /* The live items (posmCatalog.ts), so the store asks for what it would live. */
+    const posmCatalog = LIVE_POSM_CATALOG;
     const posmLine = (item: string, item_name: string, qty: number, stage: string, display: { label: string; value: string }[] = []) =>
         ({ item_id: item, item_name, qty, values: {}, display, approved_qty: stage === "pending" ? null : qty, line_status: stage, note: null });
     const posmRequests = distributor ? [] : [
-        { id: 3, ticket_id: "POSM-TR-0003", requirement: "Need these before Diwali please.", created_by_role: "franchise", created_by_name: owner, status: "open",
-          created_at: iso(now - 1 * DAY), updated_at: iso(now - 1 * DAY), items: [posmLine("standee", "Product standee", 1, "pending", [{ label: "Design", value: "Seat covers" }])],
+        { id: 3, ticket_id: "POSM-TR-0003", requirement: "Need jackets to show customers the new designs.", created_by_role: "franchise", created_by_name: owner, status: "open",
+          created_at: iso(now - 1 * DAY), updated_at: iso(now - 1 * DAY), items: [posmLine("jacket", "Sample jacket", 10, "pending", [{ label: "Dispatch to", value: "Direct dispatch to Franchise" }])],
           dispatch: null, delivery: null, history: [{ action: "sent", status: "open", at: iso(now - DAY), by_role: "franchise", by_name: owner }] },
         { id: 2, ticket_id: "POSM-TR-0002", requirement: "", created_by_role: "franchise", created_by_name: owner, status: "dispatched",
-          created_at: iso(now - 9 * DAY), updated_at: iso(now - 3 * DAY), items: [posmLine("catalogue", "Printed catalogue", 10, "dispatched")],
+          created_at: iso(now - 9 * DAY), updated_at: iso(now - 3 * DAY), items: [posmLine("frp", "FRP Cover", 1, "dispatched", [{ label: "Design", value: "D3 · Tan / Black · Lucenzo" }])],
           dispatch: { courier: "DTDC", tracking: "D1234567890", date: istDay(now - 3 * DAY) }, delivery: null,
           history: [
               { action: "sent", status: "open", at: iso(now - 9 * DAY), by_role: "franchise", by_name: owner },
@@ -305,7 +294,7 @@ export function seed(mode: Mode): TrainingState {
               { action: "dispatch", status: "dispatched", at: iso(now - 3 * DAY), by_role: "admin", by_name: "Marketing team" },
           ] },
         { id: 1, ticket_id: "POSM-TR-0001", requirement: "", created_by_role: "franchise", created_by_name: owner, status: "delivered",
-          created_at: iso(now - 40 * DAY), updated_at: iso(now - 30 * DAY), items: [posmLine("sticker", "Window stickers", 6, "delivered")],
+          created_at: iso(now - 40 * DAY), updated_at: iso(now - 30 * DAY), items: [posmLine("tshirt", "T-shirt", 2, "delivered", [{ label: "Sizes", value: "M × 1, L × 1" }])],
           dispatch: { courier: "Blue Dart", tracking: "BD99887766", date: istDay(now - 34 * DAY) }, delivery: { by: "franchise", at: iso(now - 30 * DAY), photos: [] },
           history: [
               { action: "sent", status: "open", at: iso(now - 40 * DAY), by_role: "franchise", by_name: owner },

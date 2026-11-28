@@ -2,7 +2,8 @@
 import axios, { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
 import { seed, iso, istDay, STORE_DETAILS_ID, type Mode } from "./seed";
 import { TRAINING_EXIT_KEY } from "./flag";
-import { seedClaims, registerClaimRoutes } from "./claims";
+import { seedClaims, registerClaimRoutes, warrantyCard } from "./claims";
+import { registerNewerRoutes } from "./newer";
 import { seedSellMore, registerSellMoreRoutes, sellMoreCard, sellMoreScheme, storeSellMore, isSellMoreId } from "./sellMore";
 import { seedForms, registerExtraRoutes, demoFitment } from "./extras";
 
@@ -242,6 +243,7 @@ const helpers = { fail: (status: number, message: string) => fail(status, messag
 registerClaimRoutes(onFirst, S, helpers);
 registerSellMoreRoutes(onFirst, S, { ...helpers, onlyBuyMore: mode === "distributor" });
 registerExtraRoutes(onFirst, S, { ...helpers, mode }, loadCatalogue);
+registerNewerRoutes(onFirst, S, { ...helpers, mode, warrantyCard, displayOf: (id: string, v: any) => displayOf(id, v) });
 
 /* auth */
 on("GET", "/auth/me", () => ({ success: true, user: S.user }));
