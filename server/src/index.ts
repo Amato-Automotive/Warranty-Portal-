@@ -595,6 +595,36 @@ async function runMigrations() {
     await addColumn('posm_requests', 'dispatch', 'dispatch JSON NULL');
     await addColumn('posm_requests', 'delivery', 'delivery JSON NULL');
     await addColumn('posm_requests', 'history', 'history JSON NULL');
+    /* Old (pre-portal) warranties: the store each belongs to, set from the placement decisions; store_name stays as written. */
+    await addColumn('old_warranties_seatcovers', 'store_id', 'store_id VARCHAR(36) NULL');
+    await addColumn('old_warranties_seatcovers', 'store_linked_at', 'store_linked_at TIMESTAMP NULL');
+    {
+        const [ix]: any = await pool.query("SHOW INDEX FROM old_warranties_seatcovers WHERE Key_name = 'idx_ow_store'");
+        if (!ix.length) await pool.query('ALTER TABLE old_warranties_seatcovers ADD INDEX idx_ow_store (store_id, purchase_date)');
+    }
+    /* Each old store name (name + email as written in the old portal) and where its warranties went. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS old_warranty_groups (
+        id VARCHAR(16) PRIMARY KEY,
+        store_name VARCHAR(255) NULL,
+        store_email VARCHAR(255) NULL,
+        rows_count INT NOT NULL DEFAULT 0,
+        period_first CHAR(7) NULL,
+        period_last CHAR(7) NULL,
+        state ENUM('placed','no_store','open') NOT NULL DEFAULT 'open',
+        store_id VARCHAR(36) NULL,
+        grade VARCHAR(16) NULL,
+        candidates JSON NULL,
+        note TEXT NULL,
+        decided_by VARCHAR(120) NULL,
+        decided_at TIMESTAMP NULL,
+        KEY idx_owg_state (state),
+        KEY idx_owg_store (store_id)
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    /* Same collation as vendor_details, so store ids compare (an early copy was made with the server default). */
+    {
+        const [[c]]: any = await pool.query("SELECT COLLATION_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'old_warranty_groups' AND COLUMN_NAME = 'store_id'");
+        if (c && c.c !== 'utf8mb4_unicode_ci') await pool.query('ALTER TABLE old_warranty_groups CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+    }
     /* Urgent: the ASM or head office marks a request so the plant makes it first. */
     /* A distributor can raise POSM for its stores (27 Nov): the raiser and message roles take 'distributor'. */
     for (const [table, col] of [['posm_requests', 'created_by_role'], ['posm_messages', 'sender_role']] as const) {

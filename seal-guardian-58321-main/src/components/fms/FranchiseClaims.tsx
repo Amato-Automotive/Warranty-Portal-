@@ -278,7 +278,8 @@ const StoreClaim = ({ claim, onBack, onChange }: { claim: Claim; onBack: () => v
 
 /* ─── Request for a customer ─────────────────────────────────────────────── */
 
-const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim) => void }) => {
+/** preset: a warranty already chosen (e.g. from Old warranties); backLabel names where Back goes. */
+export const StoreRaise = ({ onBack, onDone, preset, backLabel }: { onBack: () => void; onDone: (c: Claim) => void; preset?: ClaimWarranty; backLabel?: string }) => {
     const { toast } = useToast();
     const [q, setQ] = useState('');
     const [searching, setSearching] = useState(false);
@@ -286,7 +287,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
     const [own, setOwn] = useState<ClaimWarranty[] | null>(null);
     // Results of a search across all stores, for a car fitted somewhere else.
     const [found, setFound] = useState<ClaimWarranty[] | null>(null);
-    const [w, setW] = useState<ClaimWarranty | null>(null);
+    const [w, setW] = useState<ClaimWarranty | null>(preset ?? null);
     const [vehicle, setVehicle] = useState<VehicleValue>(EMPTY_VEHICLE);
     const [problem, setProblem] = useState('');
     const [description, setDescription] = useState('');
@@ -319,7 +320,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
                 <span className="block font-bold text-gray-900">{x.customer_name}</span>
                 <span className="block font-semibold text-gray-800">{x.product_name}</span>
                 <span className="block text-gray-600">{[vehicleNumberOf(x.registration_number), x.customer_phone, `UID ${x.uid}`].filter(Boolean).join(' · ')}</span>
-                <span className={cn("block text-xs font-semibold", x.covered ? "text-emerald-700" : "text-gray-500")}>{x.covered ? `Covered till ${day(x.cover_end)}` : x.claimable ? `${x.why} · alteration only` : x.why}{x.fitted_store ? ` · fitted by ${x.fitted_store}` : ''}</span>
+                <span className={cn("block text-xs font-semibold", x.covered ? "text-emerald-700" : "text-gray-500")}>{x.covered ? `Covered till ${day(x.cover_end)}` : x.cover_unknown ? x.why : x.claimable ? `${x.why} · alteration only` : x.why}{x.fitted_store ? ` · fitted by ${x.fitted_store}` : ''}</span>
             </span>
         </label>
     );
@@ -363,7 +364,7 @@ const StoreRaise = ({ onBack, onDone }: { onBack: () => void; onDone: (c: Claim)
 
     return (
         <div className="mx-auto w-full max-w-3xl space-y-4 mb-6 mt-8 md:mt-14">
-            <button onClick={onBack} className="inline-flex h-11 items-center gap-1 rounded-xl px-3 text-sm font-semibold hover:bg-gray-100"><ChevronLeft className="h-4 w-4" />All claims</button>
+            <button onClick={onBack} className="inline-flex h-11 items-center gap-1 rounded-xl px-3 text-sm font-semibold hover:bg-gray-100"><ChevronLeft className="h-4 w-4" />{backLabel ?? 'All claims'}</button>
             <div className="px-1">
                 <h1 className="text-2xl font-extrabold text-gray-900">Request for a customer</h1>
                 <p className="text-sm text-gray-500">Warranty claim / alteration</p>

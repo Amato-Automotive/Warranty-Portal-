@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { APP_URL, UPLOADS_BASE_DIR, urlToDiskPath } from '../config/localUpload.js';
 import {
-    applyClaimAction, actionsFor, coverage, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags, parseMaterials, readMaterial, readComponent, parseComponentGroups,
+    applyClaimAction, actionsFor, coverage, warrantyYears, problemsFor, kindOf, stepText, waitingOn, readVehicle, readProblem, asksAirbags, parseMaterials, readMaterial, readComponent, parseComponentGroups,
     STATUS_TEXT, REJECT_REASONS, HOLD_REASONS, PROBLEMS, PLANT_RIGHTS, OLD_PART_ENABLED,
     type Actor, type ClaimAction, type ClaimStatus, type FlowClaim, type PlantRight, type Who,
 } from '../services/claimFlow.js';
@@ -82,8 +82,10 @@ function snapshotOf(w: any) {
         customer_name: w.customer_name, customer_phone: w.customer_phone, customer_email: w.customer_email || null,
         car: [w.car_make, w.car_model].filter(Boolean).join(' ') || null,
         registration_number: w.registration_number || d.carRegistration || null,
-        warranty_type: w.warranty_type, cover_start: cov.start, cover_end: cov.end,
+        warranty_type: w.warranty_type, cover_start: cov.start, cover_end: w.__cover_unknown ? null : cov.end,
         fitted_store: d.storeName || null,
+        ...(w.__old ? { source: 'old_portal' } : {}),
+        ...(w.__cover_unknown ? { cover_unknown: true } : {}),
     };
 }
 
@@ -97,6 +99,40 @@ function warrantyCard(w: any) {
         problems: w.status === 'validated' ? problemsFor(w.product_type, cov.covered) : [],
         asks_airbags: asksAirbags(w.product_type),
     };
+}
+
+/**
+ * An old (pre-portal) seat cover warranty, shaped as a registration so the
+ * claim flow takes it as it is. Only the store it was placed with sees it.
+ * A blank cover type is "not recorded": the store may still claim, and head
+ * office confirms the cover (decided 28 Nov).
+ */
+/** A DATE column as India's day (the server runs on UTC). */
+const istDay = (v: unknown) => (v instanceof Date ? new Date(v.getTime() + 5.5 * 3600_000).toISOString().slice(0, 10) : v ? String(v).slice(0, 10) : null);
+
+function oldAsWarranty(o: any) {
+    const coverUnknown = !warrantyYears(o.warranty_type);
+    return {
+        /* The purchase day as India's date, so the cover ends on the same calendar day (the server runs on UTC). */
+        uid: o.uid, id: null, user_id: null, status: 'validated', warranty_type: o.warranty_type, purchase_date: istDay(o.purchase_date), created_at: o.created_at,
+        customer_name: o.customer_name, customer_phone: o.customer_mobile, customer_email: o.customer_email || null,
+        product_type: 'seat-cover', product_details: JSON.stringify({ productName: o.product_name, storeName: o.store_name }),
+        vendor_details_id: o.store_id, car_make: null, car_model: null, registration_number: null,
+        __old: true, __cover_unknown: coverUnknown,
+    };
+}
+function oldCard(o: any) {
+    const w = oldAsWarranty(o);
+    const card: any = { ...warrantyCard(w), old: true, purchase_date: istDay(o.purchase_date) };
+    if (w.__cover_unknown) Object.assign(card, { covered: false, cover_unknown: true, cover_end: null, why: 'Cover not recorded: head office confirms it', problems: problemsFor('seat-cover', true) });
+    return card;
+}
+const OLD_COLS = 'id, uid, customer_name, customer_email, customer_mobile, product_name, warranty_type, purchase_date, store_name, store_id, created_at';
+/** One of this store's old warranties by UID, or null. */
+async function oldWarrantyOf(storeId: string, uid: string) {
+    if (!uid) return null;
+    const [rows]: any = await db.execute(`SELECT ${OLD_COLS} FROM old_warranties_seatcovers WHERE uid = ? AND store_id = ? LIMIT 1`, [uid, storeId]);
+    return rows[0] ?? null;
 }
 
 /* Registration photos by product, in the order the warranty screen shows them. */
@@ -509,6 +545,48 @@ export default class ClaimsController {
         }
     }
 
+    /**
+     * GET /api/claims/store/old-warranties?q=&year=&page= — the store's old
+     * (pre-portal) warranties, 50 a page, with counts by year and by cover.
+     * Shown whether or not claims are switched on.
+     */
+    static async storeOldWarranties(req: AuthRequest, res: Response) {
+        try {
+            const v = await storeOf(req.user!.id);
+            if (!v) return bad(res, 'Store not found', 404);
+            const q = String(req.query.q ?? '').trim().slice(0, 60);
+            const year = /^\d{4}$/.test(String(req.query.year ?? '')) ? Number(req.query.year) : null;
+            const page = Math.max(1, Math.min(500, Number(req.query.page) || 1));
+            const where = ['store_id = ?']; const params: unknown[] = [v.id];
+            if (year) { where.push('YEAR(purchase_date) = ?'); params.push(year); }
+            if (q) {
+                const digits = q.replace(/\D/g, '');
+                where.push("(uid LIKE ? OR customer_name LIKE ? OR product_name LIKE ? OR (? <> '' AND REGEXP_REPLACE(customer_mobile, '[^0-9]', '') LIKE ?))");
+                params.push(`%${q}%`, `%${q}%`, `%${q}%`, digits.length >= 4 ? 'y' : '', `%${digits}%`);
+            }
+            const W = where.join(' AND ');
+            const [[t]]: any = await db.query(`SELECT COUNT(*) AS n FROM old_warranties_seatcovers WHERE ${W}`, params);
+            const [rows]: any = await db.query(`SELECT ${OLD_COLS} FROM old_warranties_seatcovers WHERE ${W} ORDER BY purchase_date DESC, id DESC LIMIT 50 OFFSET ${(page - 1) * 50}`, params);
+            /* Counts for the whole store, not the search: by year, and by cover now. */
+            const [years]: any = await db.query('SELECT YEAR(purchase_date) AS y, COUNT(*) AS n FROM old_warranties_seatcovers WHERE store_id = ? GROUP BY y ORDER BY y', [v.id]);
+            const [all]: any = await db.query('SELECT warranty_type, purchase_date, created_at FROM old_warranties_seatcovers WHERE store_id = ?', [v.id]);
+            const cover = { covered: 0, over: 0, not_recorded: 0 };
+            for (const o of all) {
+                if (!warrantyYears(o.warranty_type)) { cover.not_recorded++; continue; }
+                if (coverage({ status: 'validated', warranty_type: o.warranty_type, purchase_date: o.purchase_date, created_at: o.created_at }).covered) cover.covered++; else cover.over++;
+            }
+            return ok(res, {
+                total: all.length, found: Number(t.n), page, pages: Math.max(1, Math.ceil(Number(t.n) / 50)),
+                years: years.filter((r: any) => r.y).map((r: any) => ({ year: Number(r.y), n: Number(r.n) })), cover,
+                claims_live: await claimsLive(),
+                warranties: rows.map(oldCard),
+            });
+        } catch (e) {
+            console.error('claims.storeOldWarranties', e);
+            return bad(res, 'Could not load your old warranties', 500);
+        }
+    }
+
     /** Warranties by the customer's phone, the UID or the car number, across all stores. */
     static async storeSearch(req: AuthRequest, res: Response) {
         try {
@@ -523,7 +601,13 @@ export default class ClaimsController {
                      OR (? <> '' AND REGEXP_REPLACE(UPPER(registration_number), '[^A-Z0-9]', '') = ?)
                   ORDER BY created_at DESC LIMIT 20`,
                 [q, digits.length >= 10 ? 'y' : '', digits.slice(-10), reg.length >= 6 ? 'y' : '', reg]);
-            return ok(res, { warranties: ws.map(warrantyCard) });
+            /* The store's own old (pre-portal) warranties by UID or phone too. */
+            const v = await storeOf(req.user!.id);
+            const [olds]: any = v ? await db.execute(
+                `SELECT ${OLD_COLS} FROM old_warranties_seatcovers
+                  WHERE store_id = ? AND (uid = ? OR (? <> '' AND RIGHT(REGEXP_REPLACE(customer_mobile, '[^0-9]', ''), 10) = ?))
+                  ORDER BY purchase_date DESC LIMIT 20`, [v.id, q, digits.length >= 10 ? 'y' : '', digits.slice(-10)]) : [[]];
+            return ok(res, { warranties: [...ws.map(warrantyCard), ...olds.map(oldCard)] });
         } catch (e) {
             console.error('claims.storeSearch', e);
             return bad(res, 'Search failed', 500);
@@ -542,8 +626,11 @@ export default class ClaimsController {
             if (!v) return bad(res, 'Store not found', 404);
             const b = req.body ?? {};
             const [ws]: any = await db.execute('SELECT * FROM warranty_registrations WHERE uid = ? LIMIT 1', [String(b.warranty_uid ?? '')]);
-            const w = ws[0];
+            const old = ws[0] ? null : await oldWarrantyOf(String(v.id), String(b.warranty_uid ?? ''));
+            const w = ws[0] ?? (old ? oldAsWarranty(old) : null);
             if (!w) return bad(res, 'Warranty not found', 404);
+            /* An old warranty with no cover recorded: head office confirms the cover before deciding. */
+            if ((w as any).__cover_unknown) b.remarks = ['Old portal warranty, cover not recorded: please confirm the cover.', String(b.remarks ?? '').trim()].filter(Boolean).join(' ');
             const fields = readNew(w, b, await claimMaterials(), await claimComponents());
             if ('error' in fields) return bad(res, fields.error);
             const media = filesOf(req, 'media');

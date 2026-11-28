@@ -28,6 +28,7 @@ import { downloadCSV, formatToIST, cn, getWarrantyExpiration } from "@/lib/utils
 import api, { getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { StoreActivityPanel } from "./AdminPortalActivity";
+import { OldWarrantyStoreRows } from "./AdminOldWarrantyPlacement";
 
 interface AdminVendorDetailsProps {
     vendor: any;
@@ -1087,6 +1088,8 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                     <TabsTrigger value="manpower" className="py-2.5">Manpower ({vendor.manpower?.length || 0})</TabsTrigger>
                     {/* Time in the portal and what they did — franchises and distributors alike. */}
                     {vendor.vendor_details_id && <TabsTrigger value="activity" className="py-2.5">Activity</TabsTrigger>}
+                    {/* Warranties from the old portal placed on this store. */}
+                    {vendor.vendor_details_id && <TabsTrigger value="old-warranties" className="py-2.5">Old warranties</TabsTrigger>}
                     {isDistributorsView && (
                         <TabsTrigger value="franchises" className="py-2.5">Franchises ({franchises.length})</TabsTrigger>
                     )}
@@ -1181,6 +1184,14 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                 )}
 
                 {vendor.vendor_details_id && (
+                    <>
+                    <TabsContent value="old-warranties">
+                        <Card className="border-orange-100 shadow-sm">
+                            <CardContent className="pt-6">
+                                <OldWarrantyStoreRows storeId={String(vendor.vendor_details_id)} />
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
                     <TabsContent value="activity">
                         <Card className="border-orange-100 shadow-sm">
                             <CardContent className="pt-6">
@@ -1188,6 +1199,7 @@ export const AdminVendorDetails = ({ vendor: initialVendor, onBack, isDistributo
                             </CardContent>
                         </Card>
                     </TabsContent>
+                    </>
                 )}
 
                 <TabsContent value="warranties">

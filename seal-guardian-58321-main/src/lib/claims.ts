@@ -99,6 +99,11 @@ export interface ClaimWarranty {
     claimable: boolean;
     problems: string[];
     asks_airbags: boolean;
+    /** An old (pre-portal) warranty of this store. */
+    old?: boolean;
+    /** Old warranty with no cover type recorded: head office confirms the cover. */
+    cover_unknown?: boolean;
+    purchase_date?: string | null;
 }
 
 /** The issues: the plant's alteration-sheet reasons, merged and grouped. Mirrors the server. */

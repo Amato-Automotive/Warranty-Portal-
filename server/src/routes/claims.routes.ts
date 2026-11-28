@@ -28,6 +28,7 @@ router.post('/', authenticateToken, requireRole('customer'), handleUpload, Claim
 router.get('/store', authenticateToken, requireRole('vendor'), ClaimsController.storeList);
 router.get('/store/warranties', authenticateToken, requireRole('vendor'), ClaimsController.storeWarranties);
 router.get('/store/search', authenticateToken, requireRole('vendor'), ClaimsController.storeSearch);
+router.get('/store/old-warranties', authenticateToken, requireRole('vendor'), ClaimsController.storeOldWarranties);
 router.post('/store', authenticateToken, requireRole('vendor'), signalAttention, handleUpload, ClaimsController.storeRaise);
 
 // The plant: everyone with Warranty Claims read sees every claim; the steps
