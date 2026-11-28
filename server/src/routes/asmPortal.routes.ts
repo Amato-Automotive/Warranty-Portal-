@@ -45,6 +45,7 @@ router.get('/stores/:id/posm-sent', ...asmOnly, AsmInsightsController.storePosm)
 router.get('/alerts', ...asmOnly, AsmInsightsController.alerts);
 router.get('/audits', ...asmOnly, AsmInsightsController.audits);
 router.get('/claims', ...asmOnly, ClaimsController.asmList);
+router.get('/old-warranties', ...asmOnly, ClaimsController.asmOldWarranties);
 router.get('/orders', ...asmOnly, AsmInsightsController.orders);
 router.get('/warranties', ...asmOnly, AsmInsightsController.warranties);
 router.get('/warranty-stats', ...asmOnly, AsmInsightsController.warrantyStats);

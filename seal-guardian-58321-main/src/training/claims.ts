@@ -4,6 +4,7 @@ import {
     PROBLEMS, STATUS_TEXT, REJECT_REASONS, HOLD_REASONS, type FlowClaim, type Who,
 } from "../../../server/src/services/claimFlow";
 import { PLANT_VEHICLES } from "../../../server/src/services/plantVehicles";
+import { oldAsWarranty, oldCard } from "./newer";
 
 /**
  * Warranty claims in the training store. The steps are the server's own
@@ -28,7 +29,8 @@ function snapshotOf(w: any) {
         customer_name: w.customer_name, customer_phone: w.customer_phone, customer_email: w.customer_email || null,
         car: [w.car_make, w.car_model].filter(Boolean).join(" ") || null,
         registration_number: w.registration_number || d.carRegistration || null,
-        warranty_type: w.warranty_type, cover_start: cov.start, cover_end: cov.end,
+        warranty_type: w.warranty_type, cover_start: cov.start, cover_end: w.__cover_unknown ? null : cov.end,
+        ...(w.__old ? { source: "old_portal" } : {}), ...(w.__cover_unknown ? { cover_unknown: true } : {}),
         fitted_store: d.storeName || null,
     };
 }
@@ -174,7 +176,13 @@ interface Deps { fail: (status: number, message: string) => never; nextId: () =>
 
 export function registerClaimRoutes(on: On, S: any, d: Deps) {
     const findClaim = (id: string) => S.claims.find((c: any) => String(c.id) === id) ?? d.fail(404, "Claim not found");
-    const findWarrantyRow = (uid: string) => S.warranties.find((w: any) => w.uid === uid) ?? d.fail(404, "Warranty not found");
+    /* A new warranty, else one of the store's old (pre-portal) ones, as on the server. */
+    const findWarrantyRow = (uid: string) => {
+        const w = S.warranties.find((x: any) => x.uid === uid);
+        if (w) return w;
+        const o = (S.oldWarranties ?? []).find((x: any) => x.uid === uid);
+        return o ? oldAsWarranty(o) : d.fail(404, "Warranty not found");
+    };
 
     on("GET", "/claims/meta", () => ({
         success: true,
@@ -198,13 +206,16 @@ export function registerClaimRoutes(on: On, S: any, d: Deps) {
         const hits = S.warranties.filter((w: any) => w.uid === term
             || (digits.length === 10 && String(w.customer_phone).replace(/\D/g, "").slice(-10) === digits)
             || (reg.length >= 6 && String(w.registration_number ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "") === reg)).slice(0, 20);
-        return { success: true, warranties: hits.map(warrantyCard) };
+        const olds = (S.oldWarranties ?? []).filter((o: any) => o.uid === term || (digits.length === 10 && o.customer_mobile.slice(-10) === digits)).slice(0, 20);
+        return { success: true, warranties: [...hits.map(warrantyCard), ...olds.map((o: any) => oldCard(o, warrantyCard))] };
     });
     on("POST", "/claims/store", ({ body, form }: any) => {
         const w = findWarrantyRow(String(body.warranty_uid ?? ""));
         if (w.status !== "validated") d.fail(400, "Warranty is not approved yet");
         const cov = coverage(w);
-        const p = readProblem(body, cov.covered);
+        /* An old warranty with no cover recorded may still be claimed; head office confirms the cover. */
+        if (w.__cover_unknown) body.remarks = ["Old portal warranty, cover not recorded: please confirm the cover.", String(body.remarks ?? "").trim()].filter(Boolean).join(" ");
+        const p = readProblem(body, cov.covered || Boolean(w.__cover_unknown));
         if ("error" in p) d.fail(400, p.error);
         const v = readVehicle(body, w.product_type);
         if ("error" in v) d.fail(400, v.error);

@@ -9,6 +9,7 @@ import { displayName } from "@/lib/asmStores";
 import { AsmStoreDetail } from "./AsmStoreDetail";
 import { StorePulse } from "./StorePulse";
 import { AsmSelect } from "./AsmSelect";
+import { AsmOldWarranties } from "./AsmOldWarranties";
 
 /**
  * Warranties for the ASM, built around their stores: how the period compares
@@ -63,7 +64,7 @@ function Change({ v, flat = 5 }: { v: number | null; flat?: number }) {
 }
 
 export function AsmWarranties() {
-    const [tab, setTab] = useState<"stores" | "list">("stores");
+    const [tab, setTab] = useState<"stores" | "list" | "old">("stores");
     const [period, setPeriod] = useState<PeriodId>("mtd");
     /* Custom dates: what is typed, and what was applied (the numbers follow only the applied range). */
     const [draft, setDraft] = useState(() => ({ from: `${istToday().slice(0, 8)}01`, to: istToday() }));
@@ -80,15 +81,15 @@ export function AsmWarranties() {
         <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
                 <div className="inline-flex rounded-full bg-white p-1 ring-1 ring-slate-200" role="tablist">
-                    {([["stores", "By store"], ["list", "All warranties"]] as const).map(([k, l]) => (
+                    {([["stores", "By store"], ["list", "All warranties"], ["old", "Old warranties"]] as const).map(([k, l]) => (
                         <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => { setTab(k); if (k === "list") setListFilter({}); }}
                             className={cn("rounded-full px-4 py-1.5 text-sm font-semibold", tab === k ? "bg-orange-500 text-white" : "text-slate-600 hover:bg-orange-50")}>{l}</button>
                     ))}
                 </div>
-                <AsmSelect value={period} onChange={v => setPeriod(v as PeriodId)} label="Period" className="ml-auto"
-                    options={PERIODS.map(p => ({ value: p.id, label: p.label }))} />
+                {tab !== "old" && <AsmSelect value={period} onChange={v => setPeriod(v as PeriodId)} label="Period" className="ml-auto"
+                    options={PERIODS.map(p => ({ value: p.id, label: p.label }))} />}
             </div>
-            {period === "custom" && (
+            {tab !== "old" && period === "custom" && (
                 <form onSubmit={e => { e.preventDefault(); if (draftOk) setRange(draft); }}
                     className="flex flex-wrap items-end gap-2 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
                     <CalendarDays className="mb-2 hidden h-4 w-4 text-orange-500 sm:block" aria-hidden />
@@ -105,7 +106,7 @@ export function AsmWarranties() {
                     {!draftOk && draft.from && draft.to && <p className="w-full text-xs text-red-600">The start must be on or before the end, and not after today.</p>}
                 </form>
             )}
-            {tab === "stores"
+            {tab === "old" ? <AsmOldWarranties onOpenStore={openStore} /> : tab === "stores"
                 ? <ByStore period={query} onOpenStore={openStore} onShowList={showList} />
                 : <WarrantyList period={query} filter={listFilter} onClearStore={() => setListFilter(f => ({ ...f, store: undefined, storeName: undefined }))} onOpenStore={openStore} />}
         </div>
