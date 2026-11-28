@@ -9,6 +9,7 @@ import { Search, Download, ExternalLink, ChevronLeft, ChevronRight, Calendar, St
 import { formatToIST } from "@/lib/utils";
 import api from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { OldWarrantyPlacement, OldWarrantyTabs, type OwTab } from "./AdminOldWarrantyPlacement";
 
 interface OldWarranty {
     id: number;
@@ -22,6 +23,8 @@ interface OldWarranty {
     purchase_date: string;
     store_name: string;
     file_proof_url: string;
+    /** The portal store this warranty is placed on, if any. */
+    franchise_name?: string | null;
 }
 
 interface Stats {
@@ -42,6 +45,9 @@ interface Pagination {
 }
 
 export function AdminOldWarranties() {
+    /* By franchise / Store not found / To confirm, then the full table as All warranties. */
+    const [owTab, setOwTab] = useState<OwTab>("stores");
+    const [owReload, setOwReload] = useState(0);
     const { toast } = useToast();
     const [warranties, setWarranties] = useState<OldWarranty[]>([]);
     const [stats, setStats] = useState<Stats | null>(null);
@@ -203,13 +209,16 @@ export function AdminOldWarranties() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-2xl font-bold">Old Warranties - Seat Covers</h2>
-                    <p className="text-muted-foreground">Archived warranty records (read-only)</p>
+                    <p className="text-muted-foreground">Seat cover warranties from the old portal, and the store each one is placed on</p>
                 </div>
                 <Button onClick={handleExport} variant="outline" className="gap-2">
                     <Download className="h-4 w-4" />
                     Export CSV
                 </Button>
             </div>
+
+            <OldWarrantyTabs tab={owTab} onTab={setOwTab} reload={owReload} />
+            {owTab !== "all" ? <OldWarrantyPlacement tab={owTab} onChanged={() => setOwReload(n => n + 1)} /> : <>
 
             {/* Stats Cards */}
             {stats && (
@@ -361,7 +370,8 @@ export function AdminOldWarranties() {
                                     <TableHead>Mobile</TableHead>
                                     <TableHead>Product</TableHead>
                                     <TableHead>Type</TableHead>
-                                    <TableHead>Store</TableHead>
+                                    <TableHead>Store (old portal)</TableHead>
+                                    <TableHead>Franchise</TableHead>
                                     <TableHead>Purchase Date</TableHead>
                                     <TableHead className="w-[80px]">Proof</TableHead>
                                 </TableRow>
@@ -394,6 +404,7 @@ export function AdminOldWarranties() {
                                                 <Badge variant="outline">{w.warranty_type || "-"}</Badge>
                                             </TableCell>
                                             <TableCell className="text-sm max-w-[150px] truncate">{w.store_name || "-"}</TableCell>
+                                            <TableCell className="text-sm max-w-[150px] truncate">{w.franchise_name || <span className="text-muted-foreground">Not placed</span>}</TableCell>
                                             <TableCell className="text-sm">{w.purchase_date ? formatToIST(w.purchase_date) : "-"}</TableCell>
                                             <TableCell>
                                                 {w.file_proof_url ? (
@@ -444,6 +455,7 @@ export function AdminOldWarranties() {
                     )}
                 </CardContent>
             </Card>
+            </>}
         </div>
     );
 }

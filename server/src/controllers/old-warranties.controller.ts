@@ -69,6 +69,9 @@ export class OldWarrantiesController {
             }
 
             // Filter by store name (exact or partial)
+            /* One store's old warranties (Admin › Old Warranties › a store, and the franchise page). */
+            if (req.query.store_id) { whereConditions.push('store_id = ?'); params.push(String(req.query.store_id)); }
+
             if (store_name && (store_name as string).trim()) {
                 whereConditions.push('store_name LIKE ?');
                 params.push(`%${store_name}%`);
@@ -98,7 +101,7 @@ export class OldWarrantiesController {
 
             // Get paginated results
             const [warranties]: any = await db.execute(
-                `SELECT * FROM old_warranties_seatcovers 
+                `SELECT *, (SELECT TRIM(v.store_name) FROM vendor_details v WHERE v.id = old_warranties_seatcovers.store_id) AS franchise_name FROM old_warranties_seatcovers 
                  ${whereClause}
                  ORDER BY ${sortColumn} ${sortDir}
                  LIMIT ? OFFSET ?`,

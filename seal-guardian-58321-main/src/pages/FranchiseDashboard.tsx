@@ -36,6 +36,7 @@ import B2BOrderManagement from "@/components/fms/B2BOrderManagement";
 import Profile from "./Profile";
 import Terms from "./Terms";
 import { FranchiseClaims } from "@/components/fms/FranchiseClaims";
+import { FranchiseOldWarranties } from "@/components/fms/FranchiseOldWarranties";
 import { ClaimProcessAnnouncement } from "@/components/fms/ClaimProcessAnnouncement";
 import { useB2BCart } from "@/contexts/B2BCartContext";
 import CategoryPage from "./eshop/CategoryPage";
@@ -84,7 +85,7 @@ const FranchiseDashboard = () => {
     const filteredMenuGroups = menuGroups.map(group => {
         if (isDistributor && !isFranchise) {
             const filteredItems = group.items.filter(item => {
-                const franchiseOnly = ['warranty', 'leads', 'register', 'manpower', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback'];
+                const franchiseOnly = ['warranty', 'old-warranties', 'leads', 'register', 'manpower', ...(distributorScheme ? [] : ['offers']), 'audit', 'targets', 'feedback'];
                 return !franchiseOnly.includes(item.id);
             });
             return { ...group, items: filteredItems };
@@ -778,6 +779,8 @@ const FranchiseDashboard = () => {
                         <Terms />
                     </div>
                 );
+            case 'old-warranties':
+                return <div className="-mt-8 md:-mt-14"><FranchiseOldWarranties /></div>;
             case 'claim-info':
                 // How claims work and the terms: always available, whether or not claims are open.
                 return <ClaimProcess />;

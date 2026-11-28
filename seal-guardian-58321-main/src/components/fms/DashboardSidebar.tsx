@@ -19,7 +19,7 @@ import {
     ChevronLeft,
     LogOut,
     User,
-    PhoneIncoming, MessageSquareHeart }
+    PhoneIncoming, MessageSquareHeart, History }
     from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNotifications } from "@/contexts/NotificationContext";
@@ -36,6 +36,7 @@ import {
 export type FmsModule =
     | 'home'
     | 'warranty'
+    | 'old-warranties'
     | 'leads'
     | 'register'
     | 'orders'
@@ -158,6 +159,8 @@ export const menuGroups = [
                 label: "Warranty Management",
                 icon: ShieldCheck,
             },
+            /* Warranties from the old portal, placed with this store. */
+            { id: 'old-warranties' as const, label: "Old Warranties", icon: History },
             /* Leads this store was sent, and how the auditor's call went. */
             { id: 'leads' as const, label: "My Leads", icon: PhoneIncoming },
         ]
